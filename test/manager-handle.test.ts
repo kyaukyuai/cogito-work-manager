@@ -188,13 +188,13 @@ describe("handleManagerMessage clarification flow", () => {
     expect(second.handled).toBe(true);
     expect(second.reply).toContain("Linear に登録しました");
     expect(second.reply).toContain("AIC-100");
-    expect(second.reply).toContain("AIC-101 API レート制限の確認");
-    expect(second.reply).toContain("AIC-102 修正対応");
+    expect(second.reply).toContain("- AIC-101 / API レート制限の確認 / 担当: y.kakui");
+    expect(second.reply).toContain("- AIC-102 / 修正対応 / 担当: y.kakui");
     expect(second.reply).not.toContain("暫定で kyaukyuai に寄せています");
     expect(second.reply).toContain("この thread で進捗・完了・blocked をそのまま返してください");
 
     expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(3);
-    expect(linearMocks.assignLinearIssue).toHaveBeenCalledTimes(3);
+    expect(linearMocks.assignLinearIssue).toHaveBeenCalledTimes(1);
     expect(linearMocks.addLinearRelation).toHaveBeenCalledWith("AIC-101", "blocks", "AIC-102", expect.any(Object));
 
     ledger = await loadIntakeLedger(systemPaths);
@@ -253,6 +253,85 @@ describe("handleManagerMessage clarification flow", () => {
     const ledger = await loadIntakeLedger(systemPaths);
     expect(ledger.at(-1)?.status).toBe("progressed");
     expect(ledger.at(-1)?.lastResolvedIssueId).toBe("AIC-110");
+  });
+
+  it("imports numbered task lists without mangling titles and applies inline assignee metadata", async () => {
+    linearMocks.createManagedLinearIssue
+      .mockResolvedValueOnce({
+        id: "parent-1",
+        identifier: "AIC-200",
+        title: "2ヶ月版の見積もり書作成 ほか1件",
+        url: "https://linear.app/kyaukyuai/issue/AIC-200",
+        relations: [],
+        inverseRelations: [],
+      })
+      .mockResolvedValueOnce({
+        id: "child-1",
+        identifier: "AIC-201",
+        title: "2ヶ月版の見積もり書作成",
+        url: "https://linear.app/kyaukyuai/issue/AIC-201",
+        assignee: { id: "user-1", displayName: "角井 勇哉" },
+        relations: [],
+        inverseRelations: [],
+      })
+      .mockResolvedValueOnce({
+        id: "child-2",
+        identifier: "AIC-202",
+        title: "4月・5月の2ヶ月間でのクローン成果物の作成",
+        url: "https://linear.app/kyaukyuai/issue/AIC-202",
+        assignee: { id: "user-1", displayName: "角井 勇哉" },
+        dueDate: "2026-05-31",
+        relations: [],
+        inverseRelations: [],
+      });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-list-import",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: `3. タスク一覧
+1. 2ヶ月版の見積もり書作成（担当：角井 勇哉, 期限：未定）
+2. 4月・5月の2ヶ月間でのクローン成果物の作成（担当：角井 勇哉, 期限：2026-05-31）`,
+      },
+      new Date("2026-03-17T04:00:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("親 issue は AIC-200 2ヶ月版の見積もり書作成 ほか1件 です。");
+    expect(result.reply).toContain("- AIC-201 / 2ヶ月版の見積もり書作成 / 担当: 角井 勇哉");
+    expect(result.reply).toContain("- AIC-202 / 4月・5月の2ヶ月間でのクローン成果物の作成 / 担当: 角井 勇哉 / 期限: 2026-05-31");
+    expect(result.reply).not.toContain("暫定で kyaukyuai に寄せています");
+
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        title: "2ヶ月版の見積もり書作成 ほか1件",
+        dueDate: undefined,
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        title: "2ヶ月版の見積もり書作成",
+        assignee: "角井 勇哉",
+        dueDate: undefined,
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        title: "4月・5月の2ヶ月間でのクローン成果物の作成",
+        assignee: "角井 勇哉",
+        dueDate: "2026-05-31",
+      }),
+      expect.any(Object),
+    );
   });
 
   it("asks for an issue id when the thread maps to multiple issues for completion", async () => {
@@ -504,7 +583,7 @@ describe("handleManagerMessage clarification flow", () => {
       }),
       expect.any(Object),
     );
-    expect(linearMocks.assignLinearIssue).toHaveBeenCalledTimes(1);
+    expect(linearMocks.assignLinearIssue).not.toHaveBeenCalled();
 
     const ledger = await loadIntakeLedger(systemPaths);
     expect(ledger.at(-1)?.parentIssueId).toBe("AIC-11");

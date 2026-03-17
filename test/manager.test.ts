@@ -75,6 +75,21 @@ describe("manager helpers", () => {
     expect(segments).toEqual(["ログイン画面の調査", "API 仕様の確認"]);
   });
 
+  it("keeps numeric prefixes that are part of the task title and drops list headings", () => {
+    const segments = extractTaskSegments(`
+3. タスク一覧
+1. 2ヶ月版の見積もり書作成（担当：角井 勇哉, 期限：未定）
+2. 4月・5月の2ヶ月間でのクローン成果物の作成（担当：角井 勇哉, 期限：2026-05-31）
+    `);
+
+    expect(segments).toEqual([
+      "2ヶ月版の見積もり書作成（担当：角井 勇哉, 期限：未定）",
+      "4月・5月の2ヶ月間でのクローン成果物の作成（担当：角井 勇哉, 期限：2026-05-31）",
+    ]);
+    expect(deriveIssueTitle("1. 2ヶ月版の見積もり書作成")).toBe("2ヶ月版の見積もり書作成");
+    expect(deriveIssueTitle("2. 4月・5月の2ヶ月間でのクローン成果物の作成")).toBe("4月・5月の2ヶ月間でのクローン成果物の作成");
+  });
+
   it("derives stable issue titles and fingerprints", () => {
     expect(deriveIssueTitle("明日の会議準備のタスクを追加しておいて")).toBe("明日の会議準備");
     expect(fingerprintText("ログイン画面の issue を作って")).toContain("ログイン画面");
