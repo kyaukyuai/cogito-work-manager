@@ -4,7 +4,7 @@ import type { AppConfig } from "./config.js";
 import {
   createLinearIssue,
   listActiveLinearIssues,
-  updateLinearIssueState,
+  updateLinearIssue,
   type LinearCommandEnv,
   type LinearIssueResult,
   type LinearListResult,
@@ -38,7 +38,7 @@ function formatListIssuesResult(result: LinearListResult): string {
 }
 
 function formatUpdateIssueStateResult(result: LinearIssueResult, state: string): string {
-  const lines = [`Linear issue moved to ${state}.`];
+  const lines = [state ? `Linear issue updated (${state}).` : "Linear issue updated."];
 
   if (result.issueId) lines.push(`ID: ${result.issueId}`);
   if (result.url) lines.push(`URL: ${result.url}`);
@@ -59,12 +59,14 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       promptGuidelines: [
         "Use this when the user explicitly asks to add or create a tracked task.",
         "Provide a concise title and a short markdown description that captures the Slack context.",
+        "If the user specifies a due date, convert it to YYYY-MM-DD in Asia/Tokyo and pass it as dueDate.",
         "Do not ask the user for API keys or workspace/team identifiers.",
       ],
       parameters: Type.Object({
         title: Type.String({ description: "A concise Linear issue title." }),
         description: Type.String({ description: "A short markdown description for the issue." }),
         state: Type.Optional(Type.String({ description: "Optional initial issue state, such as backlog or started." })),
+        dueDate: Type.Optional(Type.String({ description: "Optional due date in YYYY-MM-DD format." })),
       }),
       async execute(_toolCallId, params, signal) {
         const result = await createLinearIssue(params as Parameters<typeof createLinearIssue>[0], env, signal);
@@ -96,23 +98,26 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       },
     },
     {
-      name: "linear_update_issue_state",
-      label: "Linear Update Issue State",
-      description: "Move a Linear issue to a new state, such as started or completed.",
-      promptSnippet: "Update the state of an existing Linear issue.",
+      name: "linear_update_issue",
+      label: "Linear Update Issue",
+      description: "Update an existing Linear issue, including state and due date.",
+      promptSnippet: "Update the state or due date of an existing Linear issue.",
       promptGuidelines: [
-        "Use this when the user wants to complete, start, or otherwise move an existing tracked task.",
+        "Use this when the user wants to complete, start, reschedule, or otherwise update an existing tracked task.",
+        "Convert relative dates like 明日 or 来週金曜 to YYYY-MM-DD in Asia/Tokyo.",
         "If the issue ID is ambiguous, inspect active issues first and ask one concise follow-up question.",
       ],
       parameters: Type.Object({
         issueId: Type.String({ description: "Issue ID like AIC-123." }),
-        state: Type.String({ description: "Target workflow state type or name, such as completed or started." }),
+        state: Type.Optional(Type.String({ description: "Target workflow state type or name, such as completed or started." })),
+        dueDate: Type.Optional(Type.String({ description: "New due date in YYYY-MM-DD format." })),
+        clearDueDate: Type.Optional(Type.Boolean({ description: "Set true to remove the current due date." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const typedParams = params as Parameters<typeof updateLinearIssueState>[0];
-        const result = await updateLinearIssueState(typedParams, env, signal);
+        const typedParams = params as Parameters<typeof updateLinearIssue>[0];
+        const result = await updateLinearIssue(typedParams, env, signal);
         return {
-          content: [{ type: "text", text: formatUpdateIssueStateResult(result, typedParams.state) }],
+          content: [{ type: "text", text: formatUpdateIssueStateResult(result, typedParams.state ?? "updated") }],
           details: result,
         };
       },

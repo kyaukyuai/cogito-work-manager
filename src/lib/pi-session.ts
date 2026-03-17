@@ -50,12 +50,22 @@ function buildSystemPrompt(config: AppConfig): string {
     "Only create, list, or update Linear issues when the user clearly asks for task tracking work.",
     "If the request is ambiguous, ask exactly one concise follow-up question before taking action.",
     "Do not ask the user for API keys. Slack and Linear credentials are already configured in the environment.",
-    "Use the dedicated linear_create_issue, linear_list_active_issues, and linear_update_issue_state tools for tracked task work.",
+    "Use the dedicated linear_create_issue, linear_list_active_issues, and linear_update_issue tools for tracked task work.",
     `The fixed Linear workspace slug is ${config.linearWorkspace}.`,
     `The fixed Linear team key is ${config.linearTeamKey}.`,
+    "Interpret relative dates in Asia/Tokyo and convert them to YYYY-MM-DD before passing due dates to Linear.",
     "The Linear tools already target the configured workspace and team. Do not ask for workspace, team, or API credentials.",
     "Keep public Slack replies short. Do not expose tool logs or raw shell output unless the user asks.",
   ].join("\n");
+}
+
+function currentDateInJst(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function buildPrompt(input: AgentInput, config: AppConfig, paths: ThreadPaths): string {
@@ -74,6 +84,7 @@ function buildPrompt(input: AgentInput, config: AppConfig, paths: ThreadPaths): 
     `- intentHint: ${input.intent}`,
     `- fixedLinearWorkspace: ${config.linearWorkspace}`,
     `- fixedLinearTeamKey: ${config.linearTeamKey}`,
+    `- currentDateJst: ${currentDateInJst()}`,
     "",
     "Attachments:",
     attachmentLines,

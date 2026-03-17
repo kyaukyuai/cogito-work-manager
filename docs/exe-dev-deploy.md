@@ -151,10 +151,17 @@ Linear issue 作成:
 AIC-2 を完了にして
 ```
 
+期限変更:
+
+```text
+AIC-2 の期限を 2026-03-20 にして
+```
+
 期待する挙動:
 
 - bot は thread で返信する
 - tracked task は Linear に作成される
+- relative date を含む依頼では due date が設定される
 - `タスク確認` は active issue を返す
 - 同じ Slack thread では会話が継続する
 
@@ -182,4 +189,3 @@ docker compose down
 - `exe.dev` は VM なので Docker をそのまま使えます。
 - public HTTP proxy は不要です。Slack Socket Mode は outbound 接続だけで動きます。
 - もし別途 web UI や health endpoint を出すなら、`3000-9999` の port を `exe.dev` proxy に載せられます。
-

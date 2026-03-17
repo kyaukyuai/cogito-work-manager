@@ -11,8 +11,10 @@ Keep this file as behavioral documentation and as a fallback reference for the e
 Typical triggers:
 
 - "タスク追加して"
+- "明日の会議準備を追加して"
 - "タスク確認して"
 - "完了にして"
+- "期限を金曜にして"
 - "issue 作って"
 - "チケット切って"
 - "create a Linear issue"
@@ -27,6 +29,7 @@ Do not use this skill for normal conversation.
 - `LINEAR_API_KEY` is already configured
 - `LINEAR_TEAM_KEY` is fixed by the environment
 - `LINEAR_WORKSPACE` is informational only when `LINEAR_API_KEY` is set
+- Due dates should be converted to `YYYY-MM-DD` in Asia/Tokyo before calling Linear
 
 Important:
 

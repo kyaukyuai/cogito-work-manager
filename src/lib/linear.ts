@@ -14,6 +14,7 @@ export interface CreateIssueInput {
   title: string;
   description: string;
   state?: string;
+  dueDate?: string;
 }
 
 export interface LinearIssueResult {
@@ -27,9 +28,11 @@ export interface LinearListResult {
   output: string;
 }
 
-export interface UpdateIssueStateInput {
+export interface UpdateIssueInput {
   issueId: string;
-  state: string;
+  state?: string;
+  dueDate?: string;
+  clearDueDate?: boolean;
 }
 
 function stripAnsi(text: string): string {
@@ -139,6 +142,10 @@ export function buildCreateIssueArgs(input: CreateIssueInput, env: LinearCommand
     args.push("--state", input.state.trim());
   }
 
+  if (input.dueDate?.trim()) {
+    args.push("--due-date", input.dueDate.trim());
+  }
+
   return args;
 }
 
@@ -166,22 +173,36 @@ export function buildListActiveIssuesArgs(limit = 20, env: LinearCommandEnv = pr
   ];
 }
 
-export function buildUpdateIssueStateArgs(
-  input: UpdateIssueStateInput,
-  env: LinearCommandEnv = process.env,
-): string[] {
+export function buildUpdateIssueArgs(input: UpdateIssueInput, env: LinearCommandEnv = process.env): string[] {
   ensureLinearAuthConfigured(env);
 
   const issueId = input.issueId.trim();
-  const state = input.state.trim();
   if (!issueId) {
     throw new Error("Issue ID is required");
   }
-  if (!state) {
-    throw new Error("Issue state is required");
+
+  const workspace = workspaceArgs(env);
+  const args = ["issue", "update", ...workspace, issueId];
+  const state = input.state?.trim();
+  const dueDate = input.dueDate?.trim();
+
+  if (state) {
+    args.push("--state", state);
   }
 
-  return ["issue", "move", ...workspaceArgs(env), issueId, state];
+  if (dueDate) {
+    args.push("--due-date", dueDate);
+  }
+
+  if (input.clearDueDate) {
+    args.push("--clear-due-date");
+  }
+
+  if (args.length === 3 + workspace.length) {
+    throw new Error("At least one update field is required");
+  }
+
+  return args;
 }
 
 export function buildIssueUrlArgs(issueId: string, env: LinearCommandEnv = process.env): string[] {
@@ -221,12 +242,12 @@ export async function listActiveLinearIssues(
   };
 }
 
-export async function updateLinearIssueState(
-  input: UpdateIssueStateInput,
+export async function updateLinearIssue(
+  input: UpdateIssueInput,
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
 ): Promise<LinearIssueResult> {
-  const moved = await execLinear(buildUpdateIssueStateArgs(input, env), env, signal);
+  const moved = await execLinear(buildUpdateIssueArgs(input, env), env, signal);
   const url = await bestEffortIssueUrl(input.issueId, env, signal);
 
   return {

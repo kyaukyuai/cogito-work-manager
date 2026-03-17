@@ -3,7 +3,7 @@ import {
   buildCreateIssueArgs,
   buildIssueUrlArgs,
   buildListActiveIssuesArgs,
-  buildUpdateIssueStateArgs,
+  buildUpdateIssueArgs,
 } from "../src/lib/linear.js";
 
 describe("linear command builders", () => {
@@ -24,6 +24,23 @@ describe("linear command builders", () => {
     expect(args).toContain("KYA");
     expect(args).not.toContain("-w");
     expect(args).toContain("--description");
+  });
+
+  it("passes due date during issue creation when provided", () => {
+    const args = buildCreateIssueArgs(
+      {
+        title: "Prepare meeting",
+        description: "# Summary\n- prepare",
+        dueDate: "2026-03-20",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "KYA",
+      },
+    );
+
+    expect(args).toContain("--due-date");
+    expect(args).toContain("2026-03-20");
   });
 
   it("falls back to workspace args when api key is absent", () => {
@@ -52,8 +69,8 @@ describe("linear command builders", () => {
     expect(args).toContain("started");
   });
 
-  it("updates issue state with the expected move command", () => {
-    const args = buildUpdateIssueStateArgs(
+  it("updates issue state with the expected update command", () => {
+    const args = buildUpdateIssueArgs(
       {
         issueId: "KYA-123",
         state: "completed",
@@ -64,7 +81,33 @@ describe("linear command builders", () => {
       },
     );
 
-    expect(args).toEqual(["issue", "move", "KYA-123", "completed"]);
+    expect(args).toEqual(["issue", "update", "KYA-123", "--state", "completed"]);
+  });
+
+  it("updates due date and supports clearing it", () => {
+    const setArgs = buildUpdateIssueArgs(
+      {
+        issueId: "KYA-123",
+        dueDate: "2026-03-20",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "KYA",
+      },
+    );
+    const clearArgs = buildUpdateIssueArgs(
+      {
+        issueId: "KYA-123",
+        clearDueDate: true,
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "KYA",
+      },
+    );
+
+    expect(setArgs).toEqual(["issue", "update", "KYA-123", "--due-date", "2026-03-20"]);
+    expect(clearArgs).toEqual(["issue", "update", "KYA-123", "--clear-due-date"]);
   });
 
   it("builds issue url args", () => {
