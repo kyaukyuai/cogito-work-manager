@@ -75,6 +75,17 @@ const schedulerJobSchema = z
 
 const schedulerJobsSchema = z.array(schedulerJobSchema);
 
+const DEFAULT_HEARTBEAT_INSTRUCTIONS = [
+  "You are running a periodic heartbeat for this Slack channel.",
+  "Review the current Linear task situation using the available Linear tools.",
+  "Return at most one issue-centric update.",
+  "Only post when there is one short actionable update worth the team's attention right now.",
+  "If you post, include: the issue ID, what is wrong now, and what the team should reply with in the control room.",
+  "Only consider overdue, due today, blocked, or important stale work.",
+  "Keep the reply short and in Japanese.",
+  "If there is nothing worth broadcasting, reply with exactly HEARTBEAT_OK.",
+].join("\n");
+
 export type SchedulerJob = z.infer<typeof schedulerJobSchema>;
 
 function sanitizeSegment(value: string): string {
@@ -128,9 +139,19 @@ export async function ensureSystemWorkspace(paths: SystemPaths): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       await writeFile(paths.jobsFile, "[]\n", "utf8");
-      return;
+    } else {
+      throw error;
     }
-    throw error;
+  }
+
+  try {
+    await stat(paths.heartbeatPromptFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await writeFile(paths.heartbeatPromptFile, `${DEFAULT_HEARTBEAT_INSTRUCTIONS}\n`, "utf8");
+    } else {
+      throw error;
+    }
   }
 }
 

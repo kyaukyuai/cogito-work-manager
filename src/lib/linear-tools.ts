@@ -131,8 +131,13 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
     {
       name: "linear_search_issues",
       label: "Linear Search Issues",
-      description: "Search active Linear issues in the fixed team by title.",
-      promptSnippet: "Search existing issues before creating duplicates.",
+      description: "Search active Linear issues in the fixed team before creating a new issue or attaching research work.",
+      promptSnippet: "Search existing issues before creating duplicates or choosing a parent issue.",
+      promptGuidelines: [
+        "Use this before creating tracked work.",
+        "Use this for research requests too, so existing parent issues can be reused.",
+        "Prefer reusing an existing thread-linked or duplicate issue over creating a new one.",
+      ],
       parameters: Type.Object({
         query: Type.String({ description: "Search text." }),
         states: Type.Optional(Type.Array(Type.String({ description: "Optional state type filters." }))),
@@ -155,6 +160,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Linear Get Issue",
       description: "Load a Linear issue with parent, children, and relations.",
       promptSnippet: "Inspect the issue before updating it.",
+      promptGuidelines: [
+        "Use this before status updates when the thread may contain multiple parent and child issues.",
+        "Use this to confirm parent-child structure before attaching new child work.",
+      ],
       parameters: Type.Object({
         issueId: Type.String({ description: "Issue identifier like AIC-123." }),
       }),
@@ -266,6 +275,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Linear List Risky Issues",
       description: "List issues that are overdue, stale, blocked, or missing owner/due date according to policy.",
       promptSnippet: "Use this for reviews, follow-ups, and progress checks.",
+      promptGuidelines: [
+        "Use this for reviews, heartbeat-style follow-ups, and progress checks.",
+        "Treat blocked as blocked state or blocked-by dependency; do not treat plain outgoing blocks relations as blocked.",
+      ],
       parameters: Type.Object({}),
       async execute(_toolCallId, _params, signal) {
         const policy = await loadManagerPolicy(systemPaths);
@@ -414,6 +427,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Slack Get Thread Context",
       description: "Read the recent stored message log for a Slack thread in the local workspace.",
       promptSnippet: "Use this before researching or summarizing a thread.",
+      promptGuidelines: [
+        "Use this before research or planning, not for every message.",
+        "Prefer this when Slack context may change issue scope or next actions.",
+      ],
       parameters: Type.Object({
         channelId: Type.String({ description: "Slack channel ID." }),
         threadTs: Type.String({ description: "Root thread timestamp." }),
@@ -436,6 +453,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Slack Get Recent Channel Context",
       description: "Read recent stored thread summaries for an allowed channel.",
       promptSnippet: "Use this to understand nearby work before planning or researching.",
+      promptGuidelines: [
+        "Use this only when nearby work may affect research or planning.",
+        "Do not read broad channel context unless it materially changes the next task decision.",
+      ],
       parameters: Type.Object({
         channelId: Type.String({ description: "Slack channel ID." }),
         limit: Type.Optional(Type.Number({ description: "Maximum number of recent threads to inspect." })),
@@ -457,6 +478,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Web Search Fetch",
       description: "Run a lightweight web search and return structured results.",
       promptSnippet: "Use this for lightweight research without external search API keys.",
+      promptGuidelines: [
+        "Use this only when research is required.",
+        "Keep the search narrow and inspect only a small number of top results.",
+      ],
       parameters: Type.Object({
         query: Type.String({ description: "Search query." }),
         limit: Type.Optional(Type.Number({ description: "Maximum number of search results." })),
@@ -478,6 +503,10 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
       label: "Web Fetch URL",
       description: "Fetch a web page and return a short summary.",
       promptSnippet: "Use this after web_search_fetch when one result needs a closer read.",
+      promptGuidelines: [
+        "Use this only after web_search_fetch identifies a promising result.",
+        "Fetch only the small number of pages needed to support the research summary.",
+      ],
       parameters: Type.Object({
         url: Type.String({ description: "URL to fetch." }),
       }),

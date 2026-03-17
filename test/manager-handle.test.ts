@@ -30,6 +30,10 @@ const webResearchMocks = vi.hoisted(() => ({
   webFetchUrl: vi.fn(),
 }));
 
+const piSessionMocks = vi.hoisted(() => ({
+  runResearchSynthesisTurn: vi.fn(),
+}));
+
 vi.mock("../src/lib/linear.js", () => ({
   searchLinearIssues: linearMocks.searchLinearIssues,
   createManagedLinearIssue: linearMocks.createManagedLinearIssue,
@@ -52,6 +56,10 @@ vi.mock("../src/lib/slack-context.js", () => ({
 vi.mock("../src/lib/web-research.js", () => ({
   webSearchFetch: webResearchMocks.webSearchFetch,
   webFetchUrl: webResearchMocks.webFetchUrl,
+}));
+
+vi.mock("../src/lib/pi-session.js", () => ({
+  runResearchSynthesisTurn: piSessionMocks.runResearchSynthesisTurn,
 }));
 
 describe("handleManagerMessage clarification flow", () => {
@@ -122,6 +130,11 @@ describe("handleManagerMessage clarification flow", () => {
       url: "https://example.com",
       title: "Example",
       snippet: "Example snippet",
+    });
+    piSessionMocks.runResearchSynthesisTurn.mockReset().mockResolvedValue({
+      findings: ["関連情報の洗い出しを開始しました。"],
+      uncertainties: ["スコープや対処方針の確定が必要なら、この thread で詰めます。"],
+      nextActions: [],
     });
   });
 
@@ -553,6 +566,93 @@ describe("handleManagerMessage clarification flow", () => {
     expect(linearMocks.updateLinearIssueState).toHaveBeenCalledWith("AIC-221", "completed", expect.any(Object));
   });
 
+  it("uses recent thread context to resolve generic progress updates to the right child issue", async () => {
+    linearMocks.createManagedLinearIssueBatch.mockResolvedValueOnce({
+      parent: {
+        id: "parent-1",
+        identifier: "AIC-320",
+        title: "複雑な依頼",
+        url: "https://linear.app/kyaukyuai/issue/AIC-320",
+        relations: [],
+        inverseRelations: [],
+      },
+      children: [
+        {
+          id: "child-1",
+          identifier: "AIC-321",
+          title: "設計整理",
+          url: "https://linear.app/kyaukyuai/issue/AIC-321",
+          assignee: { id: "user-1", displayName: "y.kakui" },
+          relations: [],
+          inverseRelations: [],
+        },
+        {
+          id: "child-2",
+          identifier: "AIC-322",
+          title: "API 実装",
+          url: "https://linear.app/kyaukyuai/issue/AIC-322",
+          assignee: { id: "user-1", displayName: "y.kakui" },
+          relations: [],
+          inverseRelations: [],
+        },
+      ],
+    });
+    linearMocks.getLinearIssue.mockImplementation(async (issueId: string) => ({
+      id: issueId,
+      identifier: issueId,
+      title: issueId === "AIC-321" ? "設計整理" : issueId === "AIC-322" ? "API 実装" : "複雑な依頼",
+      url: `https://linear.app/kyaukyuai/issue/${issueId}`,
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      state: { id: "state-1", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    }));
+    slackContextMocks.getSlackThreadContext.mockResolvedValue({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-complex-recent-focus",
+      entries: [
+        { type: "user", ts: "1", threadTs: "thread-complex-recent-focus", text: "API 実装を進めています" },
+        { type: "assistant", ts: "2", threadTs: "thread-complex-recent-focus", text: "承知しました" },
+        { type: "user", ts: "3", threadTs: "thread-complex-recent-focus", text: "進捗です" },
+      ],
+    });
+
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-complex-recent-focus",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "期限は 2026-03-20 で、作業は\n- 設計整理\n- API 実装\nに分けて進めて",
+      },
+      new Date("2026-03-17T04:00:00.000Z"),
+    );
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-complex-recent-focus",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "進捗です",
+      },
+      new Date("2026-03-17T04:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("進捗を Linear に反映しました");
+    expect(result.reply).toContain("AIC-322");
+    expect(linearMocks.addLinearProgressComment).toHaveBeenCalledWith(
+      "AIC-322",
+      expect.any(String),
+      expect.any(Object),
+    );
+  });
+
   it("marks a thread-linked issue as blocked", async () => {
     linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-1",
@@ -652,6 +752,11 @@ describe("handleManagerMessage clarification flow", () => {
       title: "Login troubleshooting",
       snippet: "Fetched snippet",
     });
+    piSessionMocks.runResearchSynthesisTurn.mockResolvedValue({
+      findings: ["関連 issue として AIC-050 過去のログイン不具合 を確認しました。"],
+      uncertainties: ["スコープや対処方針の確定が必要なら、この thread で詰めます。"],
+      nextActions: ["API 仕様の確認"],
+    });
 
     const result = await handleManagerMessage(
       { ...config, workspaceDir },
@@ -669,10 +774,11 @@ describe("handleManagerMessage clarification flow", () => {
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("調査内容を Linear に記録しました");
     expect(result.reply).toContain("調べた範囲: Slack thread / 関連 Linear issue / Web");
-    expect(result.reply).toContain("次アクション");
+    expect(result.reply).toContain("分かったこと: 関連 issue として AIC-050 過去のログイン不具合 を確認しました。");
+    expect(result.reply).toContain("次アクション: API 仕様の確認");
     expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
       "AIC-141",
-      expect.stringContaining("## 分かったこと"),
+      expect.stringContaining("関連 issue として AIC-050 過去のログイン不具合 を確認しました。"),
       expect.any(Object),
     );
     expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
@@ -731,6 +837,11 @@ describe("handleManagerMessage clarification flow", () => {
         { type: "assistant", ts: "2", threadTs: "thread-research-followups", text: "- API 仕様の確認\n- 修正方針の整理" },
       ],
     });
+    piSessionMocks.runResearchSynthesisTurn.mockResolvedValue({
+      findings: ["API 仕様の確認と修正方針の整理が必要です。"],
+      uncertainties: ["仕様の確定が必要です。"],
+      nextActions: ["API 仕様の確認", "修正方針の整理"],
+    });
 
     const result = await handleManagerMessage(
       { ...config, workspaceDir },
@@ -788,6 +899,11 @@ describe("handleManagerMessage clarification flow", () => {
       relations: [],
       inverseRelations: [],
     });
+    piSessionMocks.runResearchSynthesisTurn.mockResolvedValue({
+      findings: ["既存 issue 配下で調査すべきです。"],
+      uncertainties: ["詳細な対処方針は未確定です。"],
+      nextActions: [],
+    });
 
     const result = await handleManagerMessage(
       { ...config, workspaceDir },
@@ -821,6 +937,28 @@ describe("handleManagerMessage clarification flow", () => {
   });
 
   it("adds one explicit follow-up to reviews and suppresses the same issue in heartbeat", async () => {
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-1",
+      identifier: "AIC-300",
+      title: "期限超過のタスク",
+      url: "https://linear.app/kyaukyuai/issue/AIC-300",
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      relations: [],
+      inverseRelations: [],
+    });
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-review-followup",
+        messageTs: "msg-review-1",
+        userId: "U1",
+        text: "期限超過のタスクを対応しておいて",
+      },
+      new Date("2026-03-17T00:30:00.000Z"),
+    );
+
     linearMocks.listRiskyLinearIssues.mockResolvedValue([
       {
         id: "issue-1",
@@ -843,9 +981,17 @@ describe("handleManagerMessage clarification flow", () => {
       new Date("2026-03-17T01:00:00.000Z"),
     );
 
-    expect(morning).toContain("朝の execution review です。");
-    expect(morning).toContain("AIC-300");
-    expect(morning).toContain("確認したいこと:");
+    expect(morning?.text).toContain("朝の execution review です。");
+    expect(morning?.text).toContain("AIC-300");
+    expect(morning?.followup).toEqual(expect.objectContaining({
+      issueId: "AIC-300",
+      request: "次の一手と完了見込みを共有してください。",
+      source: expect.objectContaining({
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-review-followup",
+        sourceMessageTs: "msg-review-1",
+      }),
+    }));
 
     const followups = await loadFollowupsLedger(systemPaths);
     expect(followups).toEqual(expect.arrayContaining([

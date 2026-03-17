@@ -12,8 +12,11 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import type { AppConfig } from "./config.js";
+import { getLinearIssue } from "./linear.js";
 import { createLinearCustomTools } from "./linear-tools.js";
+import { loadIntakeLedger, type IntakeLedgerEntry } from "./manager-state.js";
 import type { TaskIntent } from "./slack.js";
+import { buildSystemPaths } from "./system-workspace.js";
 import type { AttachmentRecord, ThreadPaths } from "./thread-workspace.js";
 
 export interface AgentInput {
@@ -32,6 +35,24 @@ export interface SystemAgentInput {
   metadata?: Record<string, string>;
 }
 
+export interface ResearchSynthesisInput {
+  channelId: string;
+  rootThreadTs: string;
+  taskTitle: string;
+  sourceMessage: string;
+  slackThreadSummary: string;
+  recentChannelSummary: string;
+  relatedIssuesSummary: string;
+  webSummary: string;
+  taskKey?: string;
+}
+
+export interface ResearchSynthesisResult {
+  findings: string[];
+  uncertainties: string[];
+  nextActions: string[];
+}
+
 interface SharedRuntime {
   agentDir: string;
   authStorage: AuthStorage;
@@ -48,18 +69,113 @@ const DEFAULT_THREAD_IDLE_MS = 15 * 60 * 1000;
 let sharedRuntimePromise: Promise<SharedRuntime> | undefined;
 const threadRuntimePromises = new Map<string, Promise<ThreadRuntime>>();
 
-function buildSystemPrompt(config: AppConfig): string {
+export interface ThreadPromptCandidateIssue {
+  issueId: string;
+  title?: string;
+}
+
+export interface ThreadPromptContext {
+  lastResolvedIssueId?: string;
+  parentIssueId?: string;
+  childIssueIds: string[];
+  duplicateReuse: boolean;
+  pendingClarification: boolean;
+  preferredIssueIds: string[];
+  candidateIssues: ThreadPromptCandidateIssue[];
+}
+
+function unique<T>(values: T[]): T[] {
+  return Array.from(new Set(values));
+}
+
+function findThreadLedgerEntries(
+  entries: IntakeLedgerEntry[],
+  channelId: string,
+  rootThreadTs: string,
+): IntakeLedgerEntry[] {
+  return entries.filter((entry) => entry.sourceChannelId === channelId && entry.sourceThreadTs === rootThreadTs);
+}
+
+async function loadThreadPromptContext(config: AppConfig, input: AgentInput): Promise<ThreadPromptContext | undefined> {
+  const systemPaths = buildSystemPaths(config.workspaceDir);
+  const ledger = await loadIntakeLedger(systemPaths).catch(() => []);
+  const threadEntries = findThreadLedgerEntries(ledger, input.channelId, input.rootThreadTs);
+  if (threadEntries.length === 0) {
+    return undefined;
+  }
+
+  const latestEntry = threadEntries[threadEntries.length - 1];
+  const childIssueIds = unique(threadEntries.flatMap((entry) => entry.childIssueIds ?? []).filter(Boolean)) as string[];
+  const parentIssueIds = unique(threadEntries.map((entry) => entry.parentIssueId).filter(Boolean)) as string[];
+  const candidateIds = unique(
+    threadEntries.flatMap((entry) => [
+      entry.lastResolvedIssueId,
+      entry.parentIssueId,
+      ...(entry.childIssueIds ?? []),
+    ].filter(Boolean)),
+  ) as string[];
+
+  const preferredIssueIds = unique([
+    ...childIssueIds,
+    latestEntry.lastResolvedIssueId,
+    ...latestEntry.childIssueIds,
+    latestEntry.parentIssueId,
+    ...parentIssueIds,
+    ...candidateIds,
+  ].filter(Boolean)) as string[];
+
+  const env = {
+    ...process.env,
+    LINEAR_API_KEY: config.linearApiKey,
+    LINEAR_WORKSPACE: config.linearWorkspace,
+    LINEAR_TEAM_KEY: config.linearTeamKey,
+  };
+
+  const candidateIssues = candidateIds.length > 1
+    ? (await Promise.all(
+        candidateIds.slice(0, 6).map(async (issueId) => {
+          try {
+            const issue = await getLinearIssue(issueId, env);
+            return {
+              issueId,
+              title: issue.title.length > 96 ? `${issue.title.slice(0, 93)}...` : issue.title,
+            };
+          } catch {
+            return { issueId };
+          }
+        }),
+      ))
+    : [];
+
+  return {
+    lastResolvedIssueId: latestEntry.lastResolvedIssueId,
+    parentIssueId: latestEntry.parentIssueId ?? parentIssueIds[0],
+    childIssueIds,
+    duplicateReuse: threadEntries.some((entry) => entry.status === "linked-existing"),
+    pendingClarification: threadEntries.some((entry) => entry.status === "needs-clarification"),
+    preferredIssueIds,
+    candidateIssues,
+  };
+}
+
+export function buildSystemPrompt(config: AppConfig): string {
   return [
     "You are a Japanese Slack execution manager for task management.",
     "Reply in Japanese.",
     "Linear is the only system of record for tracked tasks.",
+    "Slack thread is the primary operator surface for day-to-day work.",
     "Do not use or invent any internal todo list.",
     "Treat the allowed Slack channel as a control room for task execution.",
+    "Use Linear to store truth, but return normal task execution results to the originating Slack thread.",
+    "Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.",
     "Create, search, inspect, assign, and update Linear issues when task progression requires it.",
+    "Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.",
+    "Search before creating, and inspect the issue hierarchy before updating tracked work.",
     "If a thread already maps to an issue, prefer updating that issue for progress, completion, and blocked signals.",
-    "Prefer checking for existing work before creating new issues.",
+    "For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.",
     "For larger requests, create a parent issue and execution-sized child issues.",
     "When research is required, gather evidence from Slack thread context, related Linear issues, and lightweight web search before proposing follow-up tasks.",
+    "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
     "Use owner hints from the conversation when assigning work, but do not ask for API keys or workspace/team identifiers.",
     "If the request is ambiguous, ask exactly one concise follow-up question before taking action.",
     "Do not ask the user for API keys. Slack and Linear credentials are already configured in the environment.",
@@ -69,6 +185,7 @@ function buildSystemPrompt(config: AppConfig): string {
     "Interpret relative dates in Asia/Tokyo and convert them to YYYY-MM-DD before passing due dates to Linear.",
     "The Linear tools already target the configured workspace and team. Do not ask for workspace, team, or API credentials.",
     "Keep public Slack replies short. Do not expose tool logs or raw shell output unless the user asks.",
+    "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
   ].join("\n");
 }
 
@@ -81,13 +198,139 @@ function currentDateInJst(): string {
   }).format(new Date());
 }
 
-function buildPrompt(input: AgentInput, config: AppConfig, paths: ThreadPaths): string {
+function sanitizeSessionSuffix(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "default";
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function extractJsonObject(text: string): string | undefined {
+  const fenced = text.match(/```json\s*([\s\S]*?)```/i) ?? text.match(/```\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
+
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return text.slice(start, end + 1);
+  }
+
+  return undefined;
+}
+
+function normalizeResearchSynthesisResult(value: unknown): ResearchSynthesisResult | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const findings = normalizeStringList(record.findings);
+  const uncertainties = normalizeStringList(record.uncertainties);
+  const nextActions = normalizeStringList(record.nextActions);
+
+  if (findings.length === 0 && uncertainties.length === 0 && nextActions.length === 0) {
+    return undefined;
+  }
+
+  return {
+    findings,
+    uncertainties,
+    nextActions,
+  };
+}
+
+export function parseResearchSynthesisReply(reply: string): ResearchSynthesisResult {
+  const jsonText = extractJsonObject(reply);
+  if (jsonText) {
+    try {
+      const parsed = normalizeResearchSynthesisResult(JSON.parse(jsonText));
+      if (parsed) return parsed;
+    } catch {
+      // Fall back to line-based parsing below.
+    }
+  }
+
+  const lines = reply
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^[-*・•]\s*/, "").trim());
+
+  const nextActions = lines.filter((line) => /(確認|修正|対応|実装|調査|整理|洗い出し|作成|更新|共有|再現|検証|比較)/.test(line)).slice(0, 5);
+
+  return {
+    findings: lines.slice(0, 3),
+    uncertainties: [],
+    nextActions,
+  };
+}
+
+export function buildResearchSynthesisPrompt(input: ResearchSynthesisInput): string {
+  return [
+    "Summarize the following collected research evidence for a Slack-first execution manager.",
+    "Reply with a single JSON object only.",
+    'Use exactly this schema: {"findings": string[], "uncertainties": string[], "nextActions": string[]}.',
+    "Keep all strings in Japanese.",
+    "findings should be concrete observations grounded in the provided evidence.",
+    "uncertainties should capture what is still unclear or needs confirmation.",
+    "nextActions should contain only concrete executable task candidates, not questions.",
+    "Only include nextActions when they are specific enough to become Linear child issues.",
+    "Do not repeat raw evidence verbatim when a short synthesis is enough.",
+    "",
+    "Research request context:",
+    `- channelId: ${input.channelId}`,
+    `- rootThreadTs: ${input.rootThreadTs}`,
+    `- taskTitle: ${input.taskTitle}`,
+    `- currentDateJst: ${currentDateInJst()}`,
+    "",
+    "Source message:",
+    input.sourceMessage || "(none)",
+    "",
+    "Slack thread context:",
+    input.slackThreadSummary || "- none",
+    "",
+    "Recent channel context:",
+    input.recentChannelSummary || "- none",
+    "",
+    "Related Linear issues:",
+    input.relatedIssuesSummary || "- none",
+    "",
+    "Web evidence:",
+    input.webSummary || "- none",
+  ].join("\n");
+}
+
+export function buildAgentPrompt(
+  input: AgentInput,
+  config: AppConfig,
+  paths: ThreadPaths,
+  context?: ThreadPromptContext,
+): string {
   const attachmentLines =
     input.attachments.length > 0
       ? input.attachments
           .map((attachment) => `- ${attachment.name}: ${relative(paths.rootDir, attachment.storedPath)}`)
           .join("\n")
       : "- none";
+
+  const threadContextLines = context
+    ? [
+        `- lastResolvedIssueId: ${context.lastResolvedIssueId ?? "none"}`,
+        `- parentIssueId: ${context.parentIssueId ?? "none"}`,
+        `- childIssueIds: ${context.childIssueIds.length > 0 ? context.childIssueIds.join(", ") : "none"}`,
+        `- duplicateReuse: ${context.duplicateReuse ? "yes" : "no"}`,
+        `- pendingClarification: ${context.pendingClarification ? "yes" : "no"}`,
+        `- preferredIssueIds: ${context.preferredIssueIds.length > 0 ? context.preferredIssueIds.join(", ") : "none"}`,
+      ]
+    : ["- none"];
+
+  const candidateIssueLines = context && context.candidateIssues.length > 0
+    ? context.candidateIssues.map((issue) => `- ${issue.issueId}${issue.title ? ` / ${issue.title}` : ""}`)
+    : ["- none"];
 
   return [
     "Slack message metadata:",
@@ -101,6 +344,12 @@ function buildPrompt(input: AgentInput, config: AppConfig, paths: ThreadPaths): 
     "",
     "Attachments:",
     attachmentLines,
+    "",
+    "Thread-linked issue context:",
+    ...threadContextLines,
+    "",
+    "Candidate issue summaries:",
+    ...candidateIssueLines,
     "",
     "Current user message:",
     input.text || "(no text, attachments only)",
@@ -148,6 +397,68 @@ function extractAssistantText(messages: unknown[]): string {
   }
 
   return "";
+}
+
+async function runIsolatedPromptTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  prompt: string,
+  systemPrompt: string,
+  sessionSuffix: string,
+): Promise<string> {
+  const shared = await getSharedRuntime(config);
+  const settingsManager = SettingsManager.inMemory({
+    compaction: { enabled: true },
+    retry: { enabled: true, maxRetries: 1 },
+  });
+
+  const loader = new DefaultResourceLoader({
+    cwd: paths.rootDir,
+    agentDir: shared.agentDir,
+    settingsManager,
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    systemPromptOverride: () => systemPrompt,
+  });
+  await loader.reload();
+
+  const sessionFile = join(paths.scratchDir, `isolated-${sanitizeSessionSuffix(sessionSuffix)}.jsonl`);
+  const sessionManager = SessionManager.open(sessionFile, paths.rootDir);
+  const { session } = await createAgentSession({
+    cwd: paths.rootDir,
+    agentDir: shared.agentDir,
+    model: shared.model,
+    thinkingLevel: "minimal",
+    authStorage: shared.authStorage,
+    modelRegistry: shared.modelRegistry,
+    resourceLoader: loader,
+    sessionManager,
+    settingsManager,
+    tools: [],
+    customTools: [],
+  });
+
+  const deltas: string[] = [];
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      deltas.push(event.assistantMessageEvent.delta);
+    }
+  });
+
+  try {
+    await session.prompt(prompt);
+    await session.agent.waitForIdle();
+    const text = deltas.join("").trim() || extractAssistantText(session.messages as unknown[]);
+    if (!text) {
+      throw new Error("Agent finished without producing a research synthesis reply");
+    }
+    return text;
+  } finally {
+    unsubscribe();
+    session.dispose();
+  }
 }
 
 function buildThreadRuntimeKey(paths: ThreadPaths): string {
@@ -285,11 +596,34 @@ export async function disposeAllThreadRuntimes(): Promise<void> {
 }
 
 export async function runAgentTurn(config: AppConfig, paths: ThreadPaths, input: AgentInput): Promise<string> {
-  return runPromptTurn(config, paths, buildPrompt(input, config, paths));
+  const context = await loadThreadPromptContext(config, input);
+  return runPromptTurn(config, paths, buildAgentPrompt(input, config, paths, context));
 }
 
 export async function runSystemTurn(config: AppConfig, paths: ThreadPaths, input: SystemAgentInput): Promise<string> {
   return runPromptTurn(config, paths, buildSystemPromptInput(input, config));
+}
+
+export async function runResearchSynthesisTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: ResearchSynthesisInput,
+): Promise<ResearchSynthesisResult> {
+  const reply = await runIsolatedPromptTurn(
+    config,
+    paths,
+    buildResearchSynthesisPrompt(input),
+    [
+      "You are a research synthesis helper for a Slack-first execution manager.",
+      "Reply with valid JSON only.",
+      "The JSON schema is {\"findings\": string[], \"uncertainties\": string[], \"nextActions\": string[]}.",
+      "Keep output concise, grounded in the provided evidence, and in Japanese.",
+      "nextActions must be concrete executable task candidates, not vague summaries.",
+    ].join("\n"),
+    input.taskKey ?? `${input.channelId}-${input.rootThreadTs}-research-synthesis`,
+  );
+
+  return parseResearchSynthesisReply(reply);
 }
 
 async function runPromptTurn(config: AppConfig, paths: ThreadPaths, prompt: string): Promise<string> {

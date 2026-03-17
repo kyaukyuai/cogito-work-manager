@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ensureManagerSystemFiles, loadManagerPolicy, loadOwnerMap } from "../src/lib/manager-state.js";
-import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace } from "../src/lib/system-workspace.js";
 
 describe("system workspace helpers", () => {
   it("builds system root paths", () => {
@@ -49,5 +49,16 @@ describe("system workspace helpers", () => {
         "manager-review-weekly",
       ]),
     );
+  });
+
+  it("writes a default heartbeat prompt for fresh workspaces", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-heartbeat-"));
+    const paths = buildSystemPaths(workspaceDir);
+
+    await ensureSystemWorkspace(paths);
+
+    const heartbeatPrompt = await readFile(paths.heartbeatPromptFile, "utf8");
+    expect(heartbeatPrompt).toContain("Return at most one issue-centric update.");
+    expect(heartbeatPrompt).toContain("HEARTBEAT_OK");
   });
 });

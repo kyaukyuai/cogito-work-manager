@@ -7,7 +7,7 @@ import { loadConfig } from "./lib/config.js";
 import { HeartbeatService } from "./lib/heartbeat.js";
 import { verifyLinearCli } from "./lib/linear.js";
 import { Logger } from "./lib/logger.js";
-import { buildManagerReview, handleManagerMessage } from "./lib/manager.js";
+import { buildManagerReview, formatManagerReviewFollowupLine, handleManagerMessage, type ManagerReviewResult } from "./lib/manager.js";
 import { ensureManagerSystemFiles, loadManagerPolicy } from "./lib/manager-state.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runAgentTurn, runSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
@@ -36,6 +36,40 @@ class ThreadQueue {
 
     this.jobs.set(key, current);
   }
+}
+
+async function formatManagerReviewForSlack(
+  webClient: WebClient,
+  logger: Logger,
+  result: ManagerReviewResult,
+): Promise<string> {
+  if (!result.followup) {
+    return result.text;
+  }
+
+  const fallbackThreadRef = result.followup.source
+    ? `${result.followup.source.channelId} / ${result.followup.source.rootThreadTs}`
+    : "source thread unavailable";
+  let threadReference = fallbackThreadRef;
+
+  if (result.followup.source) {
+    try {
+      const permalink = await webClient.chat.getPermalink({
+        channel: result.followup.source.channelId,
+        message_ts: result.followup.source.sourceMessageTs,
+      });
+      if (permalink.permalink) {
+        threadReference = permalink.permalink;
+      }
+    } catch (error) {
+      logger.warn("Failed to resolve Slack permalink for manager follow-up", {
+        issueId: result.followup.issueId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return `${result.text}\n${formatManagerReviewFollowupLine(result.followup, threadReference)}`;
 }
 
 async function downloadAttachments(
@@ -233,10 +267,11 @@ async function main(): Promise<void> {
         text: prompt,
       });
 
-      const reply = await buildManagerReview(config, systemPaths, "heartbeat");
-      if (!reply) {
+      const review = await buildManagerReview(config, systemPaths, "heartbeat");
+      if (!review) {
         return { reply: "HEARTBEAT_OK" };
       }
+      const reply = await formatManagerReviewForSlack(webClient, logger, review);
 
       if (reply.trim() !== "HEARTBEAT_OK") {
         await webClient.chat.postMessage({
@@ -268,13 +303,14 @@ async function main(): Promise<void> {
 
       if (job.action) {
         const mappedKind = job.action;
-        const reply = await buildManagerReview(config, systemPaths, mappedKind);
-        if (!reply) {
+        const review = await buildManagerReview(config, systemPaths, mappedKind);
+        if (!review) {
           return {
             delivered: false,
             summary: "No review output",
           };
         }
+        const reply = await formatManagerReviewForSlack(webClient, logger, review);
 
         await webClient.chat.postMessage({
           channel: job.channelId,

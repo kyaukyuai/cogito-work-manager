@@ -21,10 +21,14 @@ export interface HeartbeatServiceOptions {
   executeHeartbeat: (context: HeartbeatExecutionContext) => Promise<HeartbeatExecutionResult>;
 }
 
-const DEFAULT_HEARTBEAT_PROMPT = [
+export const DEFAULT_HEARTBEAT_PROMPT = [
   "You are running a periodic heartbeat for this Slack channel.",
   "Review the current Linear task situation using the available Linear tools.",
-  "If there is one short, actionable update that the team should see now, return it in Japanese.",
+  "Return at most one issue-centric update.",
+  "Only post when there is one short actionable update worth the team's attention right now.",
+  "If you post, include: the issue ID, what is wrong now, and what the team should reply with in the control room.",
+  "Only consider overdue, due today, blocked, or important stale work.",
+  "Keep the reply short and in Japanese.",
   "If there is nothing worth broadcasting, reply with exactly HEARTBEAT_OK.",
 ].join("\n");
 
