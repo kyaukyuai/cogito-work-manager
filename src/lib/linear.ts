@@ -105,6 +105,12 @@ export interface RiskyLinearIssue extends LinearIssue {
   blocked: boolean;
 }
 
+export interface LinearBlockedUpdateResult {
+  issue: LinearIssue;
+  commentId?: string;
+  blockedStateApplied: boolean;
+}
+
 function stripAnsi(text: string): string {
   return text.replace(/\u001B\[[0-9;]*m/g, "");
 }
@@ -866,6 +872,15 @@ export async function assignLinearIssue(
   return updateManagedLinearIssue({ issueId, assignee }, env, signal);
 }
 
+export async function updateLinearIssueState(
+  issueId: string,
+  state: string,
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<LinearIssue> {
+  return updateManagedLinearIssue({ issueId, state }, env, signal);
+}
+
 export async function addLinearComment(
   issueId: string,
   body: string,
@@ -906,6 +921,39 @@ export async function addLinearComment(
   }
 
   return data.commentCreate.comment;
+}
+
+export async function addLinearProgressComment(
+  issueId: string,
+  body: string,
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<{ id: string; url?: string | null; body: string }> {
+  return addLinearComment(issueId, `## Progress update\n${body.trim()}`, env, signal);
+}
+
+export async function markLinearIssueBlocked(
+  issueId: string,
+  body: string,
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<LinearBlockedUpdateResult> {
+  const comment = await addLinearComment(issueId, `## Blocked update\n${body.trim()}`, env, signal);
+  try {
+    const issue = await updateManagedLinearIssue({ issueId, state: "blocked" }, env, signal);
+    return {
+      issue,
+      commentId: comment.id,
+      blockedStateApplied: true,
+    };
+  } catch {
+    const issue = await getLinearIssue(issueId, env, signal);
+    return {
+      issue,
+      commentId: comment.id,
+      blockedStateApplied: false,
+    };
+  }
 }
 
 export async function addLinearRelation(

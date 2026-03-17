@@ -1,11 +1,15 @@
 import type { AppConfig } from "./config.js";
 import {
   addLinearComment,
+  addLinearProgressComment,
   addLinearRelation,
   assignLinearIssue,
   createManagedLinearIssue,
+  getLinearIssue,
   listRiskyLinearIssues,
+  markLinearIssueBlocked,
   searchLinearIssues,
+  updateLinearIssueState,
   type LinearIssue,
 } from "./linear.js";
 import {
@@ -24,7 +28,9 @@ import {
   type OwnerMapEntry,
   type PlanningLedgerEntry,
 } from "./manager-state.js";
+import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
 import type { SystemPaths } from "./system-workspace.js";
+import { webFetchUrl, webSearchFetch } from "./web-research.js";
 
 export type ManagerMessageKind = "request" | "progress" | "completed" | "blocked" | "conversation";
 export type ManagerReviewKind = "morning-review" | "evening-review" | "weekly-review" | "heartbeat";
@@ -93,6 +99,7 @@ export function classifyManagerSignal(text: string): ManagerMessageKind {
   if (BLOCKED_PATTERN.test(normalized)) return "blocked";
   if (COMPLETED_PATTERN.test(normalized)) return "completed";
   if (PROGRESS_PATTERN.test(normalized)) return "progress";
+  if (RESEARCH_PATTERN.test(normalized)) return "request";
   if (REQUEST_PATTERN.test(normalized)) return "request";
   return "conversation";
 }
@@ -154,6 +161,38 @@ export function deriveIssueTitle(text: string): string {
   title = title.replace(/\s+/g, " ").trim();
   title = title.replace(/を$/, "");
   return title || "Slack からの依頼";
+}
+
+function deriveResearchTitle(text: string): string {
+  const normalized = text.replace(/(を)?(調査|確認|検証|比較|リサーチ|洗い出し|調べ)(しておいて|して|お願いします|お願い)?/g, " ");
+  const title = deriveIssueTitle(normalized);
+  return title || deriveIssueTitle(text);
+}
+
+function chooseExistingResearchParent(duplicates: LinearIssue[], baseTitle: string): LinearIssue | undefined {
+  if (duplicates.length === 0) return undefined;
+
+  const normalizedBase = normalizeText(baseTitle);
+  return [...duplicates]
+    .sort((left, right) => {
+      const leftTitle = normalizeText(left.title);
+      const rightTitle = normalizeText(right.title);
+      const leftIsResearch = needsResearchTask(left.title);
+      const rightIsResearch = needsResearchTask(right.title);
+      const leftIncludesBase = leftTitle.includes(normalizedBase) || normalizedBase.includes(leftTitle);
+      const rightIncludesBase = rightTitle.includes(normalizedBase) || normalizedBase.includes(rightTitle);
+
+      const leftScore =
+        (leftIsResearch ? 0 : 10)
+        + (leftIncludesBase ? 4 : 0)
+        - leftTitle.length / 100;
+      const rightScore =
+        (rightIsResearch ? 0 : 10)
+        + (rightIncludesBase ? 4 : 0)
+        - rightTitle.length / 100;
+
+      return rightScore - leftScore;
+    })[0];
 }
 
 export function isComplexRequest(text: string): boolean {
@@ -288,6 +327,232 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function normalizeRelationType(type: string | null | undefined): string {
+  return (type ?? "").toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function extractIssueIdentifiers(text: string): string[] {
+  return unique(Array.from(text.matchAll(/\b([A-Z][A-Z0-9]+-\d+)\b/g)).map((match) => match[1] ?? "").filter(Boolean));
+}
+
+function collectEntryIssueIds(entry: IntakeLedgerEntry): string[] {
+  return unique([
+    entry.lastResolvedIssueId,
+    entry.parentIssueId,
+    ...entry.childIssueIds,
+  ].filter(Boolean)) as string[];
+}
+
+function findThreadEntries(
+  intakeLedger: IntakeLedgerEntry[],
+  message: Pick<ManagerSlackMessage, "channelId" | "rootThreadTs">,
+): IntakeLedgerEntry[] {
+  return intakeLedger.filter((entry) => entry.sourceChannelId === message.channelId && entry.sourceThreadTs === message.rootThreadTs);
+}
+
+function selectIssueTargetsFromThread(
+  intakeLedger: IntakeLedgerEntry[],
+  message: Pick<ManagerSlackMessage, "channelId" | "rootThreadTs" | "text">,
+): { issueIds: string[]; reason: "explicit" | "thread" | "missing" | "ambiguous" } {
+  const explicitIssueIds = extractIssueIdentifiers(message.text);
+  if (explicitIssueIds.length > 0) {
+    return {
+      issueIds: explicitIssueIds,
+      reason: "explicit",
+    };
+  }
+
+  const threadEntries = [...findThreadEntries(intakeLedger, message)].reverse();
+  for (const entry of threadEntries) {
+    if (entry.lastResolvedIssueId) {
+      return {
+        issueIds: [entry.lastResolvedIssueId],
+        reason: "thread",
+      };
+    }
+
+    const issueIds = collectEntryIssueIds(entry);
+    if (issueIds.length === 1) {
+      return {
+        issueIds,
+        reason: "thread",
+      };
+    }
+  }
+
+  const candidates = unique(threadEntries.flatMap((entry) => collectEntryIssueIds(entry)));
+  if (candidates.length === 0) {
+    return {
+      issueIds: [],
+      reason: "missing",
+    };
+  }
+
+  if (candidates.length === 1) {
+    return {
+      issueIds: candidates,
+      reason: "thread",
+    };
+  }
+
+  return {
+    issueIds: candidates,
+    reason: "ambiguous",
+  };
+}
+
+function formatIssueSelectionReply(kind: Exclude<ManagerMessageKind, "conversation" | "request">, issueIds: string[]): string {
+  const prefix = kind === "completed"
+    ? "完了を反映したい issue を特定できませんでした。"
+    : kind === "blocked"
+      ? "blocked 状態を反映したい issue を特定できませんでした。"
+      : "進捗を反映したい issue を特定できませんでした。";
+
+  const lines = [prefix];
+  if (issueIds.length > 0) {
+    lines.push("対象の issue ID を 1 つ指定してください。候補:");
+    for (const issueId of issueIds.slice(0, 5)) {
+      lines.push(`- ${issueId}`);
+    }
+  } else {
+    lines.push("同じ thread に紐づく issue が無かったため、`AIC-123` のように issue ID を含めてください。");
+  }
+  return lines.join("\n");
+}
+
+function formatStatusSourceComment(message: ManagerSlackMessage, heading: string): string {
+  return [
+    heading,
+    `- channelId: ${message.channelId}`,
+    `- rootThreadTs: ${message.rootThreadTs}`,
+    `- sourceMessageTs: ${message.messageTs}`,
+    "",
+    message.text.trim(),
+  ].join("\n");
+}
+
+function upsertThreadIntakeEntry(
+  intakeLedger: IntakeLedgerEntry[],
+  message: Pick<ManagerSlackMessage, "channelId" | "rootThreadTs" | "messageTs" | "text">,
+  patch: Partial<IntakeLedgerEntry>,
+  now: Date,
+): IntakeLedgerEntry[] {
+  const threadEntries = findThreadEntries(intakeLedger, message);
+  const latest = threadEntries[threadEntries.length - 1];
+
+  if (!latest) {
+    return [
+      ...intakeLedger,
+      {
+        sourceChannelId: message.channelId,
+        sourceThreadTs: message.rootThreadTs,
+        sourceMessageTs: message.messageTs,
+        messageFingerprint: fingerprintText(message.text) || message.messageTs,
+        childIssueIds: [],
+        status: patch.status ?? "created",
+        clarificationReasons: [],
+        originalText: message.text,
+        createdAt: nowIso(now),
+        updatedAt: nowIso(now),
+        ...patch,
+      },
+    ];
+  }
+
+  return intakeLedger.map((entry) => entry === latest
+    ? {
+        ...entry,
+        ...patch,
+        updatedAt: nowIso(now),
+      }
+    : entry);
+}
+
+function formatSlackContextSummary(entries: Awaited<ReturnType<typeof getSlackThreadContext>>["entries"]): string {
+  if (entries.length === 0) {
+    return "- thread 内の追加文脈は見つかりませんでした。";
+  }
+
+  return entries
+    .slice(-8)
+    .map((entry) => `- [${entry.type}] ${entry.text.replace(/\s+/g, " ").slice(0, 180)}`)
+    .join("\n");
+}
+
+function formatRelatedIssuesSummary(issues: LinearIssue[]): string {
+  if (issues.length === 0) {
+    return "- 関連 issue は見つかりませんでした。";
+  }
+
+  return issues.slice(0, 5).map((issue) => {
+    const state = issue.state?.name ?? "state unknown";
+    return `- ${issue.identifier} / ${issue.title} / ${state}`;
+  }).join("\n");
+}
+
+function formatWebSummary(
+  searchResults: Awaited<ReturnType<typeof webSearchFetch>>,
+  fetchedPages: Awaited<ReturnType<typeof webFetchUrl>>[],
+): string {
+  if (searchResults.length === 0) {
+    return "- Web 検索では有意な結果を取得できませんでした。";
+  }
+
+  return searchResults.slice(0, 3).map((result, index) => {
+    const page = fetchedPages[index];
+    const snippet = page?.snippet ?? result.snippet ?? "";
+    return `- ${result.title}\n  - URL: ${result.url}\n  - 要約: ${snippet.slice(0, 180)}`;
+  }).join("\n");
+}
+
+function buildResearchComment(args: {
+  sourceMessage: ManagerSlackMessage;
+  slackThreadEntries: Awaited<ReturnType<typeof getSlackThreadContext>>["entries"];
+  recentChannelContexts: Awaited<ReturnType<typeof getRecentChannelContext>>;
+  relatedIssues: LinearIssue[];
+  searchResults: Awaited<ReturnType<typeof webSearchFetch>>;
+  fetchedPages: Awaited<ReturnType<typeof webFetchUrl>>[];
+}): string {
+  const recentContextSummary = args.recentChannelContexts.length > 0
+    ? args.recentChannelContexts
+      .slice(0, 3)
+      .map((context) => `- ${context.rootThreadTs}: ${context.entries.slice(-1)[0]?.text.replace(/\s+/g, " ").slice(0, 120) ?? "(no messages)"}`)
+      .join("\n")
+    : "- 直近 thread 文脈は取得できませんでした。";
+
+  return [
+    "## Slack source",
+    `- channelId: ${args.sourceMessage.channelId}`,
+    `- rootThreadTs: ${args.sourceMessage.rootThreadTs}`,
+    `- sourceMessageTs: ${args.sourceMessage.messageTs}`,
+    "",
+    "## 調べた範囲",
+    "- Slack thread context",
+    "- Slack recent channel context",
+    "- Linear related issues / comments / relations",
+    "- Lightweight web search",
+    "",
+    "## 分かったこと",
+    "### Slack thread context",
+    formatSlackContextSummary(args.slackThreadEntries),
+    "",
+    "### Related Linear issues",
+    formatRelatedIssuesSummary(args.relatedIssues),
+    "",
+    "### Recent channel context",
+    recentContextSummary,
+    "",
+    "### Web results",
+    formatWebSummary(args.searchResults, args.fetchedPages),
+    "",
+    "## 未確定事項",
+    "- スコープ・期限・実行順の確定が必要なら control room で確認する。",
+    "",
+    "## 次アクション",
+    "- 調査結果をもとに必要な実行子 issue を追加する。",
+  ].join("\n");
+}
+
 function formatIssueLine(issue: LinearIssue): string {
   const parts = [issue.identifier, issue.title];
   if (issue.assignee?.displayName || issue.assignee?.name) {
@@ -299,37 +564,120 @@ function formatIssueLine(issue: LinearIssue): string {
   return `- ${parts.join(" / ")}`;
 }
 
-function formatAutonomousCreateReply(parent: LinearIssue | undefined, children: LinearIssue[], reason: string, usedFallback: boolean): string {
-  const lines = ["Linear に自律起票しました。", `- 理由: ${reason}`];
-  if (parent) {
-    lines.push(`- 親issue: ${parent.identifier} ${parent.title}`);
-  }
-  if (children.length > 0) {
-    lines.push(`- 子issue数: ${children.length}`);
-    for (const child of children) {
-      lines.push(formatIssueLine(child));
-    }
-  }
-  if (!parent && children.length === 1) {
-    lines.push(`- Issue: ${children[0].identifier} ${children[0].title}`);
-  }
-  if (usedFallback) {
-    lines.push("- 担当未定義のため暫定で kyaukyuai に寄せています。");
-  }
+function formatIssueReference(issue: Pick<LinearIssue, "identifier" | "title">): string {
+  return `${issue.identifier} ${issue.title}`;
+}
+
+function formatAutonomousCreateReply(
+  parent: LinearIssue | undefined,
+  children: LinearIssue[],
+  reason: string,
+  usedFallback: boolean,
+  options?: { reusedParent?: boolean },
+): string {
   const primary = parent ?? children[0];
-  if (primary?.url) {
-    lines.push(`- URL: ${primary.url}`);
+  const lines = ["Linear に登録しました。"];
+
+  if (reason === "research-first" && parent && children[0]) {
+    if (options?.reusedParent) {
+      lines.push(`既存の親 issue ${formatIssueReference(parent)} 配下に、調査 task ${formatIssueReference(children[0])} を追加しました。`);
+    } else {
+      lines.push(`親 issue ${formatIssueReference(parent)} と、調査 task ${formatIssueReference(children[0])} を作成しました。`);
+    }
+  } else if (parent && children.length > 0) {
+    lines.push(`親 issue は ${formatIssueReference(parent)} です。`);
+    lines.push(`今回の実行 task は ${children.map((child) => formatIssueReference(child)).join(" / ")} です。`);
+  } else if (children.length === 1) {
+    lines.push(`今回の task は ${formatIssueReference(children[0])} です。`);
+  } else if (children.length > 1) {
+    lines.push(`実行 task は ${children.map((child) => formatIssueReference(child)).join(" / ")} です。`);
   }
+
+  if (usedFallback) {
+    lines.push("担当が未定義だったため、暫定で kyaukyuai に寄せています。");
+  }
+
+  lines.push("この thread で進捗・完了・blocked をそのまま返してください。");
+  if (primary?.url) {
+    lines.push(`URL: ${primary.url}`);
+  }
+
   return lines.join("\n");
 }
 
 function formatExistingIssueReply(duplicates: LinearIssue[]): string {
   const lines = ["既存の Linear issue が見つかったため、新規起票は行いませんでした。"];
-  for (const issue of duplicates.slice(0, 3)) {
-    lines.push(formatIssueLine(issue));
-    if (issue.url) {
-      lines.push(`  ${issue.url}`);
+  if (duplicates.length === 1) {
+    lines.push(`この thread では ${formatIssueReference(duplicates[0])} を扱います。`);
+    lines.push("進捗・完了・blocked はこのまま thread に返してください。");
+    if (duplicates[0]?.url) {
+      lines.push(`URL: ${duplicates[0].url}`);
     }
+    return lines.join("\n");
+  }
+
+  lines.push("候補が複数あるため、必要なら対象 issue を明示してください。");
+  for (const issue of duplicates.slice(0, 3)) {
+    lines.push(`- ${formatIssueReference(issue)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatStatusReply(
+  kind: Exclude<ManagerMessageKind, "conversation" | "request">,
+  issues: LinearIssue[],
+  extras: string[] = [],
+): string {
+  const references = issues.map((issue) => formatIssueReference(issue)).join(" / ");
+  const lines =
+    kind === "completed"
+      ? [
+          "完了を Linear に反映しました。",
+          `対象: ${references}`,
+          "残っている作業や次に進めることがあれば、この thread で続けてください。",
+        ]
+      : kind === "blocked"
+        ? [
+            "blocked 状態を Linear に反映しました。",
+            `対象: ${references}`,
+            "誰の返答待ちか、何がそろえば再開できるかが分かったら、この thread で追記してください。",
+          ]
+        : [
+            "進捗を Linear に反映しました。",
+            `対象: ${references}`,
+            "次に進めることや追加で詰まっている点があれば、この thread で続けてください。",
+          ];
+
+  return [...lines, ...extras].join("\n");
+}
+
+function buildResearchSlackSummary(args: {
+  parent: LinearIssue;
+  researchChild: LinearIssue;
+  reusedParent: boolean;
+  relatedIssues: LinearIssue[];
+  searchResults: Awaited<ReturnType<typeof webSearchFetch>>;
+}): string {
+  const lines = ["調査内容を Linear に記録しました。"];
+
+  if (args.reusedParent) {
+    lines.push(`既存の親 issue ${formatIssueReference(args.parent)} 配下に、調査 task ${formatIssueReference(args.researchChild)} を追加しています。`);
+  } else {
+    lines.push(`親 issue は ${formatIssueReference(args.parent)}、調査 task は ${formatIssueReference(args.researchChild)} です。`);
+  }
+
+  lines.push("調べた範囲: Slack thread / 関連 Linear issue / Web");
+  if (args.relatedIssues.length > 0) {
+    lines.push(`分かったこと: 関連 issue として ${formatIssueReference(args.relatedIssues[0])} を確認しました。`);
+  } else if (args.searchResults.length > 0) {
+    lines.push(`分かったこと: Web では ${args.searchResults[0]?.title ?? "関連情報"} を確認しました。`);
+  } else {
+    lines.push("分かったこと: まず関連情報の洗い出しを開始しました。");
+  }
+  lines.push("未確定事項: スコープや対処方針の確定が必要なら、この thread で詰めます。");
+  lines.push("次アクション: 調査結果をもとに必要なら実行 task を追加します。");
+  if (args.parent.url) {
+    lines.push(`URL: ${args.parent.url}`);
   }
   return lines.join("\n");
 }
@@ -363,11 +711,15 @@ export function assessRisk(issue: LinearIssue, policy: ManagerPolicy, now = new 
   const dueDate = issue.dueDate ?? undefined;
   const ownerMissing = !issue.assignee;
   const dueMissing = !dueDate;
-  const blocked =
+  const blockedState =
     issue.state?.name?.toLowerCase().includes("block") === true ||
-    issue.state?.type?.toLowerCase().includes("block") === true ||
-    (issue.relations?.length ?? 0) > 0 ||
-    (issue.inverseRelations?.length ?? 0) > 0;
+    issue.state?.type?.toLowerCase().includes("block") === true;
+  const blockedByRelation = (issue.relations ?? []).some((relation) => normalizeRelationType(relation.type).includes("blockedby"));
+  const inverseBlockingRelation = (issue.inverseRelations ?? []).some((relation) => {
+    const normalized = normalizeRelationType(relation.type);
+    return normalized.includes("blocks") || normalized.includes("blockedby");
+  });
+  const blocked = blockedState || blockedByRelation || inverseBlockingRelation;
   const staleDays = businessDaysSince(issue.updatedAt ?? undefined, now);
   const riskCategories: string[] = [];
 
@@ -485,6 +837,62 @@ export async function handleManagerMessage(
       }
     : message;
   const signal = pendingClarification ? "request" : classifyManagerSignal(message.text);
+  if (signal !== "request" && signal !== "conversation") {
+    const env = {
+      ...process.env,
+      LINEAR_API_KEY: config.linearApiKey,
+      LINEAR_WORKSPACE: config.linearWorkspace,
+      LINEAR_TEAM_KEY: config.linearTeamKey,
+    };
+    const resolution = selectIssueTargetsFromThread(intakeLedger, message);
+    if (resolution.reason === "missing" || resolution.reason === "ambiguous") {
+      return {
+        handled: true,
+        reply: formatIssueSelectionReply(signal, resolution.issueIds),
+      };
+    }
+
+    const targetIssueIds = resolution.issueIds;
+    const extras: string[] = [];
+    const updatedIssues: LinearIssue[] = [];
+
+    if (signal === "progress") {
+      for (const issueId of targetIssueIds) {
+        await addLinearProgressComment(issueId, formatStatusSourceComment(message, "## Progress source"), env);
+        updatedIssues.push(await getLinearIssue(issueId, env));
+      }
+    } else if (signal === "completed") {
+      for (const issueId of targetIssueIds) {
+        updatedIssues.push(await updateLinearIssueState(issueId, "completed", env));
+        await addLinearComment(issueId, formatStatusSourceComment(message, "## Completion source"), env);
+      }
+    } else if (signal === "blocked") {
+      for (const issueId of targetIssueIds) {
+        const result = await markLinearIssueBlocked(issueId, formatStatusSourceComment(message, "## Blocked source"), env);
+        updatedIssues.push(result.issue);
+        if (!result.blockedStateApplied) {
+          extras.push(`${issueId} は workflow に blocked state が無いため、comment のみ追加しました。`);
+        }
+      }
+    }
+
+    const nextLedger = upsertThreadIntakeEntry(
+      intakeLedger,
+      message,
+      {
+        status: signal === "progress" ? "progressed" : signal,
+        lastResolvedIssueId: targetIssueIds[0],
+      },
+      now,
+    );
+    await saveIntakeLedger(systemPaths, nextLedger);
+
+    return {
+      handled: true,
+      reply: formatStatusReply(signal, updatedIssues, extras),
+    };
+  }
+
   if (signal !== "request") {
     return { handled: false };
   }
@@ -545,15 +953,21 @@ export async function handleManagerMessage(
     };
   }
 
+  const dueDate = extractDueDate(requestMessage.text, now);
+  const segmentsFromFollowup = pendingClarification ? extractTaskSegments(followupText) : [];
+  const segments = segmentsFromFollowup.length > 0 ? segmentsFromFollowup : extractTaskSegments(requestMessage.text);
+  const complex = isComplexRequest(originalRequestText) || segments.length >= 2;
+  const research = needsResearchTask(originalRequestText);
+  const planningTitle = research ? deriveResearchTitle(originalRequestText) : primaryTitle;
   const duplicates = await searchLinearIssues(
     {
-      query: primaryTitle.slice(0, 32),
+      query: planningTitle.slice(0, 32),
       limit: 5,
     },
     env,
   );
 
-  if (duplicates.length > 0) {
+  if (duplicates.length > 0 && !research) {
     const nextLedger = [
       ...intakeLedger.filter((entry) => entry !== pendingClarification),
       {
@@ -563,6 +977,7 @@ export async function handleManagerMessage(
         messageFingerprint: fingerprint,
         childIssueIds: duplicates.map((issue) => issue.identifier),
         status: "linked-existing",
+        lastResolvedIssueId: duplicates.length === 1 ? duplicates[0]?.identifier : undefined,
         originalText: requestMessage.text,
         clarificationReasons: [],
         createdAt: nowIso(now),
@@ -576,20 +991,16 @@ export async function handleManagerMessage(
     };
   }
 
-  const dueDate = extractDueDate(requestMessage.text, now);
-  const segmentsFromFollowup = pendingClarification ? extractTaskSegments(followupText) : [];
-  const segments = segmentsFromFollowup.length > 0 ? segmentsFromFollowup : extractTaskSegments(requestMessage.text);
-  const complex = isComplexRequest(originalRequestText) || segments.length >= 2;
-  const research = needsResearchTask(originalRequestText);
+  const existingResearchParent = research ? chooseExistingResearchParent(duplicates, planningTitle) : undefined;
   const usedFallbackOwners = new Set<string>();
 
-  const parent = complex || research
+  const createdParent = (complex || research) && !existingResearchParent
     ? await createManagedLinearIssue(
         {
-          title: primaryTitle,
+          title: planningTitle,
           description: [
             "## 目的",
-            primaryTitle,
+            planningTitle,
             "",
             "## 完了条件",
             "- Slack の依頼を親 issue として管理する",
@@ -601,16 +1012,19 @@ export async function handleManagerMessage(
         env,
       )
     : undefined;
+  const parent = existingResearchParent ?? createdParent;
 
   const createdChildren: LinearIssue[] = [];
   const planningReason = research ? "research-first" : complex ? "complex-request" : "single-issue";
-  const rawChildren = segments.length > 0
-    ? segments
-    : research
-      ? [`調査: ${primaryTitle}`]
+  const rawChildren = research
+    ? unique([`調査: ${planningTitle}`, ...segments])
+    : segments.length > 0
+      ? segments
       : complex
         ? [`実行: ${primaryTitle}`]
         : [primaryTitle];
+
+  let researchChild: LinearIssue | undefined;
 
   for (const childText of rawChildren) {
     const childTitle = deriveIssueTitle(childText);
@@ -655,6 +1069,9 @@ export async function handleManagerMessage(
     );
 
     createdChildren.push(child);
+    if (research && childText.startsWith("調査:")) {
+      researchChild = child;
+    }
     await addLinearComment(child.identifier, formatSourceComment(requestMessage, planningReason), env);
   }
 
@@ -668,10 +1085,90 @@ export async function handleManagerMessage(
     }
   }
 
-  const ownerAssignments = parent ? [parent, ...createdChildren] : createdChildren;
+  const ownerAssignments = createdParent ? [createdParent, ...createdChildren] : createdChildren;
   for (const issue of ownerAssignments) {
     const owner = chooseOwner(issue.title, ownerMap);
     await assignLinearIssue(issue.identifier, owner.entry.linearAssignee, env);
+  }
+
+  if (researchChild) {
+    const slackThreadContext = await getSlackThreadContext(config.workspaceDir, requestMessage.channelId, requestMessage.rootThreadTs).catch(() => ({
+      channelId: requestMessage.channelId,
+      rootThreadTs: requestMessage.rootThreadTs,
+      entries: [],
+    }));
+    const recentChannelContexts = await getRecentChannelContext(config.workspaceDir, requestMessage.channelId, 3, 6).catch(() => []);
+    const relatedIssues = (await searchLinearIssues(
+      {
+        query: primaryTitle.slice(0, 32),
+        limit: 5,
+      },
+      env,
+    ).catch(() => [])).filter((issue) => issue.identifier !== researchChild?.identifier && issue.identifier !== parent?.identifier);
+    const searchResults = await webSearchFetch(primaryTitle, 3).catch(() => []);
+    const fetchedPages: Awaited<ReturnType<typeof webFetchUrl>>[] = [];
+    for (const result of searchResults.slice(0, 2)) {
+      try {
+        fetchedPages.push(await webFetchUrl(result.url));
+      } catch {
+        // Ignore fetch failures for individual pages and keep the rest of the research summary.
+      }
+    }
+
+    await addLinearComment(
+      researchChild.identifier,
+      buildResearchComment({
+        sourceMessage: requestMessage,
+        slackThreadEntries: slackThreadContext.entries,
+        recentChannelContexts,
+        relatedIssues,
+        searchResults,
+        fetchedPages,
+      }),
+      env,
+    );
+
+    const nextIntakeEntry: IntakeLedgerEntry = {
+      sourceChannelId: requestMessage.channelId,
+      sourceThreadTs: requestMessage.rootThreadTs,
+      sourceMessageTs: pendingClarification?.sourceMessageTs ?? requestMessage.messageTs,
+      messageFingerprint: fingerprint,
+      parentIssueId: parent?.identifier,
+      childIssueIds: createdChildren.map((issue) => issue.identifier),
+      status: "created",
+      ownerResolution: usedFallbackOwners.size > 0 ? "fallback" : "mapped",
+      originalText: requestMessage.text,
+      clarificationReasons: [],
+      lastResolvedIssueId: researchChild.identifier,
+      createdAt: nowIso(now),
+      updatedAt: nowIso(now),
+    };
+    await saveIntakeLedger(systemPaths, [
+      ...intakeLedger.filter((entry) => entry !== pendingClarification),
+      nextIntakeEntry,
+    ]);
+
+    const planningEntry: PlanningLedgerEntry = {
+      sourceThread: `${message.channelId}:${message.rootThreadTs}`,
+      parentIssueId: parent?.identifier,
+      generatedChildIssueIds: createdChildren.map((issue) => issue.identifier),
+      planningReason,
+      ownerResolution: usedFallbackOwners.size > 0 ? "fallback" : "mapped",
+      createdAt: nowIso(now),
+      updatedAt: nowIso(now),
+    };
+    await savePlanningLedger(systemPaths, [...planningLedger, planningEntry]);
+
+    return {
+      handled: true,
+      reply: buildResearchSlackSummary({
+        parent: parent!,
+        researchChild,
+        reusedParent: Boolean(existingResearchParent),
+        relatedIssues,
+        searchResults,
+      }),
+    };
   }
 
   const ownerResolution = usedFallbackOwners.size > 0 ? "fallback" : "mapped";
@@ -686,6 +1183,7 @@ export async function handleManagerMessage(
     ownerResolution,
     originalText: requestMessage.text,
     clarificationReasons: [],
+    lastResolvedIssueId: createdChildren.length === 1 ? createdChildren[0]?.identifier : createdChildren.length === 0 ? parent?.identifier : undefined,
     createdAt: nowIso(now),
     updatedAt: nowIso(now),
   };
@@ -707,7 +1205,9 @@ export async function handleManagerMessage(
 
   return {
     handled: true,
-    reply: formatAutonomousCreateReply(parent, createdChildren, planningReason, usedFallbackOwners.size > 0),
+    reply: formatAutonomousCreateReply(parent, createdChildren, planningReason, usedFallbackOwners.size > 0, {
+      reusedParent: Boolean(existingResearchParent),
+    }),
   };
 }
 
@@ -799,13 +1299,13 @@ export async function buildManagerReview(
   }
 
   const fallbackCount = planningLedger.filter((entry) => entry.ownerResolution === "fallback").length;
-  const intakeCount = intakeLedger.filter((entry) => entry.status !== "created").length;
+  const unresolvedClarifications = intakeLedger.filter((entry) => entry.status === "needs-clarification").length;
   const staleItems = sorted.filter((item) => item.riskCategories.includes("stale")).slice(0, 5);
   const lines = ["週次 planning review です。"];
   lines.push(`- 未整備 issue: ${sorted.filter((item) => item.ownerMissing || item.dueMissing).length}`);
   lines.push(`- 長期 stale: ${staleItems.length}`);
   lines.push(`- owner map gap: ${fallbackCount}`);
-  lines.push(`- 新規依頼の取り込み漏れ候補: ${intakeCount}`);
+  lines.push(`- 未処理 clarification: ${unresolvedClarifications}`);
   for (const item of staleItems) {
     lines.push(formatRiskLine(item));
   }

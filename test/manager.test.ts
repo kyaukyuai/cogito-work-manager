@@ -31,6 +31,7 @@ const policy: ManagerPolicy = {
   staleBusinessDays: 3,
   blockedBusinessDays: 1,
   followupCooldownHours: 24,
+  clarificationCooldownHours: 12,
   fallbackOwner: "kyaukyuai",
   autoCreate: true,
   autoAssign: true,
@@ -126,5 +127,45 @@ describe("manager helpers", () => {
     expect(result.riskCategories).toEqual(
       expect.arrayContaining(["overdue", "stale", "blocked", "owner_missing"]),
     );
+  });
+
+  it("does not treat outgoing blocks relations as blocked risk", () => {
+    const result = assessRisk(
+      {
+        id: "2",
+        identifier: "AIC-2",
+        title: "後続タスクを block する issue",
+        updatedAt: "2026-03-16T03:00:00.000Z",
+        assignee: { id: "user-1", displayName: "y.kakui" },
+        state: { id: "state-1", name: "Started", type: "started" },
+        relations: [{ id: "rel-1", type: "blocks", relatedIssue: { identifier: "AIC-3", title: "後続" } }],
+        inverseRelations: [],
+      },
+      policy,
+      new Date("2026-03-17T03:00:00.000Z"),
+    );
+
+    expect(result.blocked).toBe(false);
+    expect(result.riskCategories).not.toContain("blocked");
+  });
+
+  it("treats blocked-by dependencies as blocked risk", () => {
+    const result = assessRisk(
+      {
+        id: "3",
+        identifier: "AIC-3",
+        title: "依存待ちの issue",
+        updatedAt: "2026-03-16T03:00:00.000Z",
+        assignee: { id: "user-1", displayName: "y.kakui" },
+        state: { id: "state-1", name: "Started", type: "started" },
+        relations: [],
+        inverseRelations: [{ id: "rel-1", type: "blocks", issue: { identifier: "AIC-1", title: "先行" } }],
+      },
+      policy,
+      new Date("2026-03-17T03:00:00.000Z"),
+    );
+
+    expect(result.blocked).toBe(true);
+    expect(result.riskCategories).toContain("blocked");
   });
 });

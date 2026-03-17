@@ -3,16 +3,19 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AppConfig } from "./config.js";
 import {
   addLinearComment,
+  addLinearProgressComment,
   addLinearRelation,
   assignLinearIssue,
   createManagedLinearIssue,
   getLinearIssue,
   listLinearTeamMembers,
   listRiskyLinearIssues,
+  markLinearIssueBlocked,
   createLinearIssue,
   listActiveLinearIssues,
   searchLinearIssues,
   updateLinearIssue,
+  updateLinearIssueState,
   updateManagedLinearIssue,
   type LinearCommandEnv,
   type LinearIssue,
@@ -20,7 +23,9 @@ import {
   type LinearListResult,
 } from "./linear.js";
 import { loadManagerPolicy } from "./manager-state.js";
+import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
 import { buildSystemPaths } from "./system-workspace.js";
+import { webFetchUrl, webSearchFetch } from "./web-research.js";
 
 function buildLinearEnv(config: AppConfig): LinearCommandEnv {
   return {
@@ -344,6 +349,143 @@ export function createLinearCustomTools(config: AppConfig): ToolDefinition[] {
         return {
           content: [{ type: "text", text: formatManagedIssue(issue, "Issue metadata updated.") }],
           details: issue,
+        };
+      },
+    },
+    {
+      name: "linear_update_issue_state",
+      label: "Linear Update Issue State",
+      description: "Update only the workflow state of an issue.",
+      promptSnippet: "Use this for explicit completion or status changes.",
+      parameters: Type.Object({
+        issueId: Type.String({ description: "Issue identifier like AIC-123." }),
+        state: Type.String({ description: "Target workflow state type or name." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const typedParams = params as { issueId: string; state: string };
+        const issue = await updateLinearIssueState(typedParams.issueId, typedParams.state, env, signal);
+        return {
+          content: [{ type: "text", text: formatManagedIssue(issue, "Issue state updated.") }],
+          details: issue,
+        };
+      },
+    },
+    {
+      name: "linear_add_progress_comment",
+      label: "Linear Add Progress Comment",
+      description: "Add a progress update comment to a Linear issue.",
+      promptSnippet: "Use this when the user reports progress in an existing thread.",
+      parameters: Type.Object({
+        issueId: Type.String({ description: "Issue identifier like AIC-123." }),
+        body: Type.String({ description: "Progress update markdown body." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const typedParams = params as { issueId: string; body: string };
+        const comment = await addLinearProgressComment(typedParams.issueId, typedParams.body, env, signal);
+        return {
+          content: [{ type: "text", text: `Progress comment added.\nID: ${comment.id}${comment.url ? `\nURL: ${comment.url}` : ""}` }],
+          details: comment,
+        };
+      },
+    },
+    {
+      name: "linear_mark_blocked",
+      label: "Linear Mark Blocked",
+      description: "Add a blocked update comment and attempt to move the issue into a blocked state.",
+      promptSnippet: "Use this when the user explicitly says the work is blocked.",
+      parameters: Type.Object({
+        issueId: Type.String({ description: "Issue identifier like AIC-123." }),
+        body: Type.String({ description: "Blocked update markdown body." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const typedParams = params as { issueId: string; body: string };
+        const result = await markLinearIssueBlocked(typedParams.issueId, typedParams.body, env, signal);
+        return {
+          content: [{
+            type: "text",
+            text: `${formatManagedIssue(result.issue, "Issue marked blocked.")}${result.blockedStateApplied ? "" : "\nBlocked state was not found; only a comment was added."}`,
+          }],
+          details: result,
+        };
+      },
+    },
+    {
+      name: "slack_get_thread_context",
+      label: "Slack Get Thread Context",
+      description: "Read the recent stored message log for a Slack thread in the local workspace.",
+      promptSnippet: "Use this before researching or summarizing a thread.",
+      parameters: Type.Object({
+        channelId: Type.String({ description: "Slack channel ID." }),
+        threadTs: Type.String({ description: "Root thread timestamp." }),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of log entries to return." })),
+      }),
+      async execute(_toolCallId, params, _signal) {
+        const typedParams = params as { channelId: string; threadTs: string; limit?: number };
+        const context = await getSlackThreadContext(config.workspaceDir, typedParams.channelId, typedParams.threadTs, typedParams.limit);
+        const text = context.entries.length > 0
+          ? context.entries.map((entry) => `- [${entry.type}] ${entry.text}`).join("\n")
+          : "No stored thread context found.";
+        return {
+          content: [{ type: "text", text }],
+          details: context,
+        };
+      },
+    },
+    {
+      name: "slack_get_recent_channel_context",
+      label: "Slack Get Recent Channel Context",
+      description: "Read recent stored thread summaries for an allowed channel.",
+      promptSnippet: "Use this to understand nearby work before planning or researching.",
+      parameters: Type.Object({
+        channelId: Type.String({ description: "Slack channel ID." }),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of recent threads to inspect." })),
+      }),
+      async execute(_toolCallId, params, _signal) {
+        const typedParams = params as { channelId: string; limit?: number };
+        const contexts = await getRecentChannelContext(config.workspaceDir, typedParams.channelId, typedParams.limit);
+        const text = contexts.length > 0
+          ? contexts.map((context) => `- ${context.rootThreadTs}: ${context.entries.slice(-1)[0]?.text ?? "(no entries)"}`).join("\n")
+          : "No recent thread context found.";
+        return {
+          content: [{ type: "text", text }],
+          details: contexts,
+        };
+      },
+    },
+    {
+      name: "web_search_fetch",
+      label: "Web Search Fetch",
+      description: "Run a lightweight web search and return structured results.",
+      promptSnippet: "Use this for lightweight research without external search API keys.",
+      parameters: Type.Object({
+        query: Type.String({ description: "Search query." }),
+        limit: Type.Optional(Type.Number({ description: "Maximum number of search results." })),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const typedParams = params as { query: string; limit?: number };
+        const results = await webSearchFetch(typedParams.query, typedParams.limit, signal);
+        const text = results.length > 0
+          ? results.map((result) => `- ${result.title}\n  - ${result.url}\n  - ${result.snippet ?? ""}`.trim()).join("\n")
+          : "No search results found.";
+        return {
+          content: [{ type: "text", text }],
+          details: results,
+        };
+      },
+    },
+    {
+      name: "web_fetch_url",
+      label: "Web Fetch URL",
+      description: "Fetch a web page and return a short summary.",
+      promptSnippet: "Use this after web_search_fetch when one result needs a closer read.",
+      parameters: Type.Object({
+        url: Type.String({ description: "URL to fetch." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const summary = await webFetchUrl((params as { url: string }).url, signal);
+        return {
+          content: [{ type: "text", text: `Title: ${summary.title ?? "(none)"}\nURL: ${summary.url}\nSnippet: ${summary.snippet ?? "(none)"}` }],
+          details: summary,
         };
       },
     },

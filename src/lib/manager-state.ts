@@ -25,6 +25,7 @@ const managerPolicySchema = z.object({
   staleBusinessDays: z.number().int().positive().default(3),
   blockedBusinessDays: z.number().int().positive().default(1),
   followupCooldownHours: z.number().int().positive().default(24),
+  clarificationCooldownHours: z.number().int().positive().default(12),
   fallbackOwner: z.string().min(1).default("kyaukyuai"),
   autoCreate: z.boolean().default(true),
   autoAssign: z.boolean().default(true),
@@ -58,6 +59,7 @@ const intakeLedgerEntrySchema = z.object({
   originalText: z.string().optional(),
   clarificationQuestion: z.string().optional(),
   clarificationReasons: z.array(z.string()).default([]),
+  lastResolvedIssueId: z.string().optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });
@@ -108,6 +110,7 @@ const DEFAULT_POLICY: ManagerPolicy = {
   staleBusinessDays: 3,
   blockedBusinessDays: 1,
   followupCooldownHours: 24,
+  clarificationCooldownHours: 12,
   fallbackOwner: "kyaukyuai",
   autoCreate: true,
   autoAssign: true,
