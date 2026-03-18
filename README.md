@@ -25,6 +25,8 @@ Slack (Socket Mode)
   -> Linear API
 ```
 
+execution manager としての中長期設計方針と、repo 向けの目標ディレクトリ構成は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) を参照してください。
+
 ## Directory Layout
 
 実行時の workspace は次の構成になります。
