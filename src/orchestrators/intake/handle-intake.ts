@@ -9,7 +9,6 @@ import {
   type LinearIssue,
 } from "../../lib/linear.js";
 import {
-  type IntakeLedgerEntry,
   type ManagerPolicy,
   type PlanningLedgerEntry,
 } from "../../state/manager-state-contract.js";
@@ -50,10 +49,7 @@ import {
   formatAutonomousCreateReply,
   formatIssueReference,
 } from "./formatting.js";
-import {
-  replaceThreadPendingClarificationEntries,
-  type IntakeLedgerSupport,
-} from "../shared/intake-ledger.js";
+import type { CompatIntakeLedgerWriter } from "../../state/compat/intake-ledger-writer.js";
 import {
   chooseExistingResearchParent,
   chooseOwner,
@@ -81,7 +77,8 @@ export interface IntakeHelpers {
 
 export interface HandleIntakeRequestArgs {
   config: AppConfig;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "intake" | "workgraph">;
+  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "workgraph">;
+  compatIntakeLedger: CompatIntakeLedgerWriter;
   message: IntakeMessage;
   now: Date;
   policy: ManagerPolicy;
@@ -101,6 +98,7 @@ function getPendingClarificationCreatedAt(
 export async function handleIntakeRequest({
   config,
   repositories,
+  compatIntakeLedger,
   message,
   now,
   policy,
@@ -112,11 +110,7 @@ export async function handleIntakeRequest({
 }: HandleIntakeRequestArgs): Promise<IntakeHandleResult> {
   const ownerMap = await repositories.ownerMap.load();
   const planningLedger = await repositories.planning.load();
-  const ledgerSupport: IntakeLedgerSupport = {
-    fingerprintText: helpers.fingerprintText,
-    nowIso: helpers.nowIso,
-  };
-  const occurredAt = ledgerSupport.nowIso(now);
+  const occurredAt = helpers.nowIso(now);
   const workgraphSource = {
     channelId: requestMessage.channelId,
     rootThreadTs: requestMessage.rootThreadTs,
@@ -163,32 +157,27 @@ export async function handleIntakeRequest({
   );
 
   if (taskPlan.action === "clarify") {
-    const clarificationEntry = {
-      sourceChannelId: requestMessage.channelId,
-      sourceThreadTs: requestMessage.rootThreadTs,
-      sourceMessageTs: pendingClarification?.sourceMessageTs ?? requestMessage.messageTs,
+    await compatIntakeLedger.writeClarificationRequested({
+      message: requestMessage,
+      sourceMessageTs: pendingClarification?.sourceMessageTs,
       messageFingerprint: fingerprint,
-      childIssueIds: [],
-      status: "needs-clarification",
-      originalText: requestMessage.text,
       clarificationQuestion: taskPlan.clarificationQuestion,
       clarificationReasons: taskPlan.clarificationReasons,
-      issueFocusHistory: [],
-      createdAt: getPendingClarificationCreatedAt(pendingClarification) ?? ledgerSupport.nowIso(now),
-      updatedAt: ledgerSupport.nowIso(now),
-    };
-    await replaceThreadPendingClarificationEntries(repositories.intake, requestMessage, [clarificationEntry]);
+      originalText: requestMessage.text,
+      createdAt: getPendingClarificationCreatedAt(pendingClarification),
+      now,
+    });
     await recordIntakeClarificationRequested(repositories.workgraph, {
       occurredAt,
       source: workgraphSource,
       messageFingerprint: fingerprint,
-      clarificationQuestion: clarificationEntry.clarificationQuestion ?? taskPlan.clarificationQuestion,
-      clarificationReasons: clarificationEntry.clarificationReasons,
+      clarificationQuestion: taskPlan.clarificationQuestion,
+      clarificationReasons: taskPlan.clarificationReasons,
       originalText: requestMessage.text,
     });
     return {
       handled: true,
-      reply: clarificationEntry.clarificationQuestion,
+      reply: taskPlan.clarificationQuestion,
     };
   }
 
@@ -209,20 +198,15 @@ export async function handleIntakeRequest({
   );
 
   if (duplicates.length > 0 && !research) {
-    await replaceThreadPendingClarificationEntries(repositories.intake, requestMessage, [{
-      sourceChannelId: requestMessage.channelId,
-      sourceThreadTs: requestMessage.rootThreadTs,
-      sourceMessageTs: pendingClarification?.sourceMessageTs ?? requestMessage.messageTs,
+    await compatIntakeLedger.writeLinkedExisting({
+      message: requestMessage,
+      sourceMessageTs: pendingClarification?.sourceMessageTs,
       messageFingerprint: fingerprint,
-      childIssueIds: duplicates.map((issue) => issue.identifier),
-      status: "linked-existing",
+      linkedIssueIds: duplicates.map((issue) => issue.identifier),
       lastResolvedIssueId: duplicates.length === 1 ? duplicates[0]?.identifier : undefined,
-      issueFocusHistory: [],
       originalText: requestMessage.text,
-      clarificationReasons: [],
-      createdAt: ledgerSupport.nowIso(now),
-      updatedAt: ledgerSupport.nowIso(now),
-    }]);
+      now,
+    });
     await recordIntakeLinkedExisting(repositories.workgraph, {
       occurredAt,
       source: workgraphSource,
@@ -507,23 +491,17 @@ export async function handleIntakeRequest({
 
     const allCreatedChildren = [...createdChildren, ...followupChildren];
 
-    const nextIntakeEntry: IntakeLedgerEntry = {
-      sourceChannelId: requestMessage.channelId,
-      sourceThreadTs: requestMessage.rootThreadTs,
-      sourceMessageTs: pendingClarification?.sourceMessageTs ?? requestMessage.messageTs,
+    await compatIntakeLedger.writeCreated({
+      message: requestMessage,
+      sourceMessageTs: pendingClarification?.sourceMessageTs,
       messageFingerprint: fingerprint,
       parentIssueId: parent?.identifier,
       childIssueIds: allCreatedChildren.map((issue) => issue.identifier),
-      status: "created",
       ownerResolution: usedFallbackOwners.size > 0 ? "fallback" : "mapped",
       originalText: requestMessage.text,
-      clarificationReasons: [],
       lastResolvedIssueId: researchChild.identifier,
-      issueFocusHistory: [],
-      createdAt: ledgerSupport.nowIso(now),
-      updatedAt: ledgerSupport.nowIso(now),
-    };
-    await replaceThreadPendingClarificationEntries(repositories.intake, requestMessage, [nextIntakeEntry]);
+      now,
+    });
 
     const planningEntry: PlanningLedgerEntry = {
       sourceThread: `${message.channelId}:${message.rootThreadTs}`,
@@ -531,8 +509,8 @@ export async function handleIntakeRequest({
       generatedChildIssueIds: allCreatedChildren.map((issue) => issue.identifier),
       planningReason,
       ownerResolution: usedFallbackOwners.size > 0 ? "fallback" : "mapped",
-      createdAt: ledgerSupport.nowIso(now),
-      updatedAt: ledgerSupport.nowIso(now),
+      createdAt: occurredAt,
+      updatedAt: occurredAt,
     };
     await repositories.planning.save([...planningLedger, planningEntry]);
     await recordPlanningOutcome(repositories.workgraph, {
@@ -580,23 +558,20 @@ export async function handleIntakeRequest({
   }
 
   const ownerResolution = usedFallbackOwners.size > 0 ? "fallback" : "mapped";
-  const nextIntakeEntry: IntakeLedgerEntry = {
-    sourceChannelId: requestMessage.channelId,
-    sourceThreadTs: requestMessage.rootThreadTs,
-    sourceMessageTs: pendingClarification?.sourceMessageTs ?? requestMessage.messageTs,
+  const lastResolvedIssueId = createdChildren.length === 1
+    ? createdChildren[0]?.identifier
+    : createdChildren.length === 0 ? parent?.identifier : undefined;
+  await compatIntakeLedger.writeCreated({
+    message: requestMessage,
+    sourceMessageTs: pendingClarification?.sourceMessageTs,
     messageFingerprint: fingerprint,
     parentIssueId: parent?.identifier,
     childIssueIds: createdChildren.map((issue) => issue.identifier),
-    status: "created",
     ownerResolution,
     originalText: requestMessage.text,
-    clarificationReasons: [],
-    lastResolvedIssueId: createdChildren.length === 1 ? createdChildren[0]?.identifier : createdChildren.length === 0 ? parent?.identifier : undefined,
-    issueFocusHistory: [],
-    createdAt: ledgerSupport.nowIso(now),
-    updatedAt: ledgerSupport.nowIso(now),
-  };
-  await replaceThreadPendingClarificationEntries(repositories.intake, requestMessage, [nextIntakeEntry]);
+    lastResolvedIssueId,
+    now,
+  });
 
   const planningEntry: PlanningLedgerEntry = {
     sourceThread: `${message.channelId}:${message.rootThreadTs}`,
@@ -604,8 +579,8 @@ export async function handleIntakeRequest({
     generatedChildIssueIds: createdChildren.map((issue) => issue.identifier),
     planningReason,
     ownerResolution,
-    createdAt: ledgerSupport.nowIso(now),
-    updatedAt: ledgerSupport.nowIso(now),
+    createdAt: occurredAt,
+    updatedAt: occurredAt,
   };
   await repositories.planning.save([...planningLedger, planningEntry]);
   await recordPlanningOutcome(repositories.workgraph, {
@@ -631,7 +606,7 @@ export async function handleIntakeRequest({
     )),
     planningReason,
     ownerResolution,
-    lastResolvedIssueId: nextIntakeEntry.lastResolvedIssueId,
+    lastResolvedIssueId,
     originalText: requestMessage.text,
   });
 

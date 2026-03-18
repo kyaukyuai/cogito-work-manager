@@ -39,10 +39,7 @@ import {
   formatFollowupResolutionReply,
   formatStatusReply,
 } from "./reply-format.js";
-import {
-  savePatchedThreadIntakeEntry,
-  type IntakeLedgerSupport,
-} from "../shared/intake-ledger.js";
+import type { CompatIntakeLedgerWriter } from "../../state/compat/intake-ledger-writer.js";
 
 export type UpdateSignal = "progress" | "completed" | "blocked";
 export type ManagerSignal = UpdateSignal | "request" | "conversation";
@@ -63,13 +60,13 @@ export interface UpdatesHandleResult {
 export interface UpdatesHelpers {
   formatReviewFollowupPrompt(item: unknown): string;
   assessRisk(issue: LinearIssue, policy: ManagerPolicy, now: Date): unknown;
-  fingerprintText(text: string): string;
   nowIso(now: Date): string;
 }
 
 export interface HandleManagerUpdatesArgs {
   config: AppConfig;
-  repositories: Pick<ManagerRepositories, "followups" | "intake" | "workgraph">;
+  repositories: Pick<ManagerRepositories, "followups" | "workgraph">;
+  compatIntakeLedger: CompatIntakeLedgerWriter;
   message: UpdatesMessage;
   now: Date;
   signal: ManagerSignal;
@@ -83,6 +80,7 @@ export interface HandleManagerUpdatesArgs {
 export async function handleManagerUpdates({
   config,
   repositories,
+  compatIntakeLedger,
   message,
   now,
   signal,
@@ -92,11 +90,7 @@ export async function handleManagerUpdates({
   env,
   helpers,
 }: HandleManagerUpdatesArgs): Promise<UpdatesHandleResult | undefined> {
-  const ledgerSupport: IntakeLedgerSupport = {
-    fingerprintText: helpers.fingerprintText,
-    nowIso: helpers.nowIso,
-  };
-  const occurredAt = ledgerSupport.nowIso(now);
+  const occurredAt = helpers.nowIso(now);
   const workgraphSource = {
     channelId: message.channelId,
     rootThreadTs: message.rootThreadTs,
@@ -208,15 +202,11 @@ export async function handleManagerUpdates({
       );
       await repositories.followups.save(nextFollowups);
 
-      await savePatchedThreadIntakeEntry(
-        repositories.intake,
+      await compatIntakeLedger.patchLastResolvedIssue({
         message,
-        {
-          lastResolvedIssueId: updatedIssue.identifier,
-        },
+        issueId: updatedIssue.identifier,
         now,
-        ledgerSupport,
-      );
+      });
       await recordFollowupTransitions(repositories.workgraph, followups, nextFollowups, {
         occurredAt,
         source: workgraphSource,
@@ -277,16 +267,12 @@ export async function handleManagerUpdates({
     }
   }
 
-  await savePatchedThreadIntakeEntry(
-    repositories.intake,
+  await compatIntakeLedger.patchIssueStatus({
     message,
-    {
-      status: signal === "progress" ? "progressed" : signal,
-      lastResolvedIssueId: targetIssueIds[0],
-    },
+    status: signal === "progress" ? "progressed" : signal,
+    lastResolvedIssueId: targetIssueIds[0],
     now,
-    ledgerSupport,
-  );
+  });
 
   const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   const followupState = updateFollowupsWithIssueResponse(
