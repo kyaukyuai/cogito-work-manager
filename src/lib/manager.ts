@@ -67,6 +67,7 @@ export interface ManagerFollowupSource {
 export interface ManagerReviewFollowup {
   issueId: string;
   issueTitle: string;
+  issueUrl?: string | null;
   request: string;
   requestKind: "status" | "blocked-details" | "owner" | "due-date";
   acceptableAnswerHint?: string;
@@ -80,6 +81,7 @@ export interface ManagerReviewFollowup {
 export interface ManagerReviewIssueLine {
   issueId: string;
   title: string;
+  issueUrl?: string | null;
   assigneeDisplayName?: string;
   riskSummary: string;
 }
@@ -582,6 +584,7 @@ interface RecentFocusText {
 interface ResolvedIssueCandidate {
   issueId: string;
   title?: string;
+  issueUrl?: string | null;
   latestActionLabel?: string;
   focusReason?: string;
 }
@@ -918,6 +921,7 @@ async function resolveIssueTargetsFromThread(
       candidates: candidateIssues.map((item) => ({
         issueId: item.issue.identifier,
         title: item.issue.title,
+        issueUrl: item.issue.url,
         latestActionLabel: formatLatestActionLabel(item.issue),
         focusReason: describeFocusReason(item.issue, candidates),
       })),
@@ -930,6 +934,7 @@ async function resolveIssueTargetsFromThread(
     candidates: candidateIssues.map((item) => ({
       issueId: item.issue.identifier,
       title: item.issue.title,
+      issueUrl: item.issue.url,
       latestActionLabel: formatLatestActionLabel(item.issue),
       focusReason: describeFocusReason(item.issue, candidates),
     })),
@@ -951,7 +956,8 @@ export function formatIssueSelectionReply(
   if (issues.length > 0) {
     lines.push("対象の issue ID を 1 つ指定してください。候補:");
     for (const issue of issues.slice(0, 5)) {
-      lines.push(`- ${issue.issueId}${issue.title ? ` / ${issue.title}` : ""}${issue.latestActionLabel ? ` / 最新: ${issue.latestActionLabel}` : ""}${issue.focusReason ? ` / 理由: ${issue.focusReason}` : ""}`);
+      const issueLabel = issue.issueUrl ? `<${issue.issueUrl}|${issue.issueId}>` : issue.issueId;
+      lines.push(`- ${issueLabel}${issue.title ? ` / ${issue.title}` : ""}${issue.latestActionLabel ? ` / 最新: ${issue.latestActionLabel}` : ""}${issue.focusReason ? ` / 理由: ${issue.focusReason}` : ""}`);
     }
     lines.push("当てはまるものが無ければ `新規 task` と返してください。");
   } else {
@@ -1224,8 +1230,8 @@ function formatIssueLine(issue: LinearIssue): string {
   return `- ${parts.join(" / ")}`;
 }
 
-function formatIssueReference(issue: Pick<LinearIssue, "identifier" | "title">): string {
-  return `${issue.identifier} ${issue.title}`;
+function formatIssueReference(issue: Pick<LinearIssue, "identifier" | "title"> & { url?: string | null }): string {
+  return issue.url ? `<${issue.url}|${issue.identifier} ${issue.title}>` : `${issue.identifier} ${issue.title}`;
 }
 
 function truncateSlackText(text: string, maxLength = 80): string {
@@ -1236,8 +1242,12 @@ function truncateSlackText(text: string, maxLength = 80): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function buildSlackTargetLabel(issue: Pick<LinearIssue, "identifier" | "title">, maxLength = 80): string {
-  return `${issue.identifier} ${truncateSlackText(issue.title, maxLength)}`;
+function buildSlackTargetLabel(
+  issue: Pick<LinearIssue, "identifier" | "title"> & { url?: string | null },
+  maxLength = 80,
+): string {
+  const label = `${issue.identifier} ${truncateSlackText(issue.title, maxLength)}`;
+  return issue.url ? `<${issue.url}|${label}>` : label;
 }
 
 function formatChildIssueSummaryForSlack(
@@ -1266,7 +1276,7 @@ function formatThreadReplyForSlack(args: {
     lines.push(`対象: ${args.target}`);
   }
 
-  const urlLine = args.url ? `URL: ${args.url}` : undefined;
+  const urlLine = args.url ? `詳細: <${args.url}|Linear issue>` : undefined;
   const reservedForUrl = urlLine ? 1 : 0;
   const remaining = Math.max(0, maxLines - lines.length - reservedForUrl);
   lines.push(...bodyLines.slice(0, remaining));
@@ -1274,13 +1284,15 @@ function formatThreadReplyForSlack(args: {
     lines.push(urlLine);
   }
 
-  return lines.join("\n");
+  if (lines.length <= 1) return lines.join("\n");
+  return [lines[0], "", ...lines.slice(1)].join("\n");
 }
 
 export function formatIssueLineForSlack(issue: ManagerReviewIssueLine): string {
   const title = truncateSlackText(issue.title);
   const assignee = issue.assigneeDisplayName ?? "未割当";
-  return `- ${issue.issueId} | ${title} | ${assignee} | ${issue.riskSummary}`;
+  const issueLabel = issue.issueUrl ? `<${issue.issueUrl}|${issue.issueId}>` : issue.issueId;
+  return `- ${issueLabel} | ${title} | ${assignee} | ${issue.riskSummary}`;
 }
 
 function formatSlackAssigneeLabel(followup: ManagerReviewFollowup): string {
@@ -1292,9 +1304,10 @@ function formatSlackAssigneeLabel(followup: ManagerReviewFollowup): string {
 
 export function formatControlRoomFollowupForSlack(followup: ManagerReviewFollowup, threadReference: string): string {
   const answerFormat = followup.acceptableAnswerHint ?? acceptableAnswerHintForRequestKind(followup.requestKind);
+  const issueLabel = followup.issueUrl ? `<${followup.issueUrl}|${followup.issueId}>` : followup.issueId;
   return [
     "要返信:",
-    followup.issueId,
+    issueLabel,
     formatSlackAssigneeLabel(followup),
     followup.request,
     `返答フォーマット: ${answerFormat}`,
@@ -1326,13 +1339,14 @@ export function formatControlRoomReviewForSlack(result: ManagerReviewResult, thr
     lines.push(formatIssueLineForSlack(issueLine));
   }
   if (result.followup) {
-    lines.push(formatControlRoomFollowupForSlack(result.followup, threadReference ?? "source thread unavailable"));
+    lines.push("", formatControlRoomFollowupForSlack(result.followup, threadReference ?? "source thread unavailable"));
   }
 
   if (lines.length === 1) {
     return result.text;
   }
-  return lines.join("\n");
+  const [headline, ...rest] = lines;
+  return [headline, "", ...rest].join("\n");
 }
 
 function resolveFollowupEntry(
@@ -1758,6 +1772,7 @@ function buildReviewFollowup(
   return {
     issueId: item.issue.identifier,
     issueTitle: item.issue.title,
+    issueUrl: item.issue.url,
     request: existingFollowup?.requestText ?? formatReviewFollowupPrompt(item),
     requestKind,
     acceptableAnswerHint: existingFollowup?.acceptableAnswerHint ?? acceptableAnswerHintForRequestKind(requestKind),
@@ -2818,6 +2833,7 @@ export async function buildManagerReview(
       issueLines: items.map((item) => ({
         issueId: item.issue.identifier,
         title: item.issue.title,
+        issueUrl: item.issue.url,
         assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
         riskSummary: item.riskCategories.join(", "),
       })),
@@ -2856,6 +2872,7 @@ export async function buildManagerReview(
       issueLines: items.map((item) => ({
         issueId: item.issue.identifier,
         title: item.issue.title,
+        issueUrl: item.issue.url,
         assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
         riskSummary: item.riskCategories.join(", "),
       })),
@@ -2897,6 +2914,7 @@ export async function buildManagerReview(
     issueLines: weeklyItems.map((item) => ({
       issueId: item.issue.identifier,
       title: item.issue.title,
+      issueUrl: item.issue.url,
       assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
       riskSummary: item.riskCategories.join(", "),
     })),

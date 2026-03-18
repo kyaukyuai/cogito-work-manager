@@ -200,15 +200,17 @@ describe("manager helpers", () => {
     expect(formatIssueLineForSlack({
       issueId: "AIC-1",
       title: "ログイン画面の不具合修正",
+      issueUrl: "https://linear.app/kyaukyuai/issue/AIC-1",
       assigneeDisplayName: "y.kakui",
       riskSummary: "overdue, blocked",
-    })).toBe("- AIC-1 | ログイン画面の不具合修正 | y.kakui | overdue, blocked");
+    })).toBe("- <https://linear.app/kyaukyuai/issue/AIC-1|AIC-1> | ログイン画面の不具合修正 | y.kakui | overdue, blocked");
   });
 
   it("mentions assignees only for important follow-ups when slack user ids are available", () => {
     expect(formatControlRoomFollowupForSlack({
       issueId: "AIC-1",
       issueTitle: "ログイン画面の不具合修正",
+      issueUrl: "https://linear.app/kyaukyuai/issue/AIC-1",
       request: "原因と、誰の返答待ちか、何がそろえば再開できるかを共有してください。",
       requestKind: "blocked-details",
       acceptableAnswerHint: "原因 / 待ち先 / 再開条件",
@@ -221,6 +223,7 @@ describe("manager helpers", () => {
     expect(formatControlRoomFollowupForSlack({
       issueId: "AIC-2",
       issueTitle: "期限確認待ち task",
+      issueUrl: "https://linear.app/kyaukyuai/issue/AIC-2",
       request: "期限を YYYY-MM-DD で共有してください。",
       requestKind: "due-date",
       acceptableAnswerHint: "YYYY-MM-DD",
@@ -236,14 +239,15 @@ describe("manager helpers", () => {
       text: "fallback text",
       summaryLines: ["今日やるべきこと", "期限リスク", "stale"],
       issueLines: [
-        { issueId: "AIC-1", title: "task 1", assigneeDisplayName: "a", riskSummary: "overdue" },
-        { issueId: "AIC-2", title: "task 2", assigneeDisplayName: "b", riskSummary: "blocked" },
-        { issueId: "AIC-3", title: "task 3", assigneeDisplayName: "c", riskSummary: "stale" },
-        { issueId: "AIC-4", title: "task 4", assigneeDisplayName: "d", riskSummary: "due_today" },
+        { issueId: "AIC-1", issueUrl: "https://linear.app/kyaukyuai/issue/AIC-1", title: "task 1", assigneeDisplayName: "a", riskSummary: "overdue" },
+        { issueId: "AIC-2", issueUrl: "https://linear.app/kyaukyuai/issue/AIC-2", title: "task 2", assigneeDisplayName: "b", riskSummary: "blocked" },
+        { issueId: "AIC-3", issueUrl: "https://linear.app/kyaukyuai/issue/AIC-3", title: "task 3", assigneeDisplayName: "c", riskSummary: "stale" },
+        { issueId: "AIC-4", issueUrl: "https://linear.app/kyaukyuai/issue/AIC-4", title: "task 4", assigneeDisplayName: "d", riskSummary: "due_today" },
       ],
       followup: {
         issueId: "AIC-2",
         issueTitle: "task 2",
+        issueUrl: "https://linear.app/kyaukyuai/issue/AIC-2",
         request: "原因と、誰の返答待ちか、何がそろえば再開できるかを共有してください。",
         requestKind: "blocked-details",
         acceptableAnswerHint: "原因 / 待ち先 / 再開条件",
@@ -255,10 +259,10 @@ describe("manager helpers", () => {
     }, "https://slack.example/thread");
 
     expect(review).toContain("朝の execution review");
-    expect(review).toContain("- AIC-1 | task 1 | a | overdue");
-    expect(review).toContain("- AIC-2 | task 2 | b | blocked");
-    expect(review).toContain("- AIC-3 | task 3 | c | stale");
+    expect(review).toContain("- <https://linear.app/kyaukyuai/issue/AIC-1|AIC-1> | task 1 | a | overdue");
+    expect(review).toContain("- <https://linear.app/kyaukyuai/issue/AIC-2|AIC-2> | task 2 | b | blocked");
+    expect(review).toContain("- <https://linear.app/kyaukyuai/issue/AIC-3|AIC-3> | task 3 | c | stale");
     expect(review).not.toContain("- AIC-4 | task 4 | d | due_today");
-    expect(review).toContain("要返信: | AIC-2 | <@U456> |");
+    expect(review).toContain("要返信: | <https://linear.app/kyaukyuai/issue/AIC-2|AIC-2> | <@U456> |");
   });
 });

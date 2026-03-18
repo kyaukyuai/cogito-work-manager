@@ -231,8 +231,8 @@ describe("handleManagerMessage clarification flow", () => {
     expect(second.handled).toBe(true);
     expect(second.reply).toContain("Linear に登録しました");
     expect(second.reply).toContain("AIC-100");
-    expect(second.reply).toContain("対象: AIC-100 来週のリリースに向けた対応");
-    expect(second.reply).toContain("子task: AIC-101 API レート制限の確認 / AIC-102 修正対応");
+    expect(second.reply).toContain("対象: <https://linear.app/kyaukyuai/issue/AIC-100|AIC-100 来週のリリースに向けた対応>");
+    expect(second.reply).toContain("子task: <https://linear.app/kyaukyuai/issue/AIC-101|AIC-101 API レート制限の確認> / <https://linear.app/kyaukyuai/issue/AIC-102|AIC-102 修正対応>");
     expect(second.reply).not.toContain("暫定で kyaukyuai に寄せています");
     expect(second.reply).toContain("次アクション: この thread で進捗・完了・blocked を続けてください。");
     expect(second.reply).not.toContain("URL:");
@@ -401,8 +401,8 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("Linear に登録しました。");
-    expect(result.reply).toContain("対象: AIC-200 2ヶ月版の見積もり書作成 ほか1件");
-    expect(result.reply).toContain("子task: AIC-201 2ヶ月版の見積もり書作成 / AIC-202 4月・5月の2ヶ月間でのクローン成果物の作成");
+    expect(result.reply).toContain("対象: <https://linear.app/kyaukyuai/issue/AIC-200|AIC-200 2ヶ月版の見積もり書作成 ほか1件>");
+    expect(result.reply).toContain("子task: <https://linear.app/kyaukyuai/issue/AIC-201|AIC-201 2ヶ月版の見積もり書作成> / <https://linear.app/kyaukyuai/issue/AIC-202|AIC-202 4月・5月の2ヶ月間でのクローン成果物の作成>");
     expect(result.reply).not.toContain("暫定で kyaukyuai に寄せています");
 
     expect(linearMocks.createManagedLinearIssueBatch).toHaveBeenCalledWith(
@@ -1075,7 +1075,7 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("追加 task を 2 件作成しました");
-    expect(result.reply).toContain("子task: AIC-242 API 仕様の確認 / AIC-243 修正方針の整理");
+    expect(result.reply).toContain("子task: <https://linear.app/kyaukyuai/issue/AIC-242|AIC-242 API 仕様の確認> / <https://linear.app/kyaukyuai/issue/AIC-243|AIC-243 修正方針の整理>");
     expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(4);
 
     const ledger = await loadIntakeLedger(systemPaths);
@@ -1135,7 +1135,7 @@ describe("handleManagerMessage clarification flow", () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("対象: AIC-150 調査: ログイン画面の不具合修正 / 親: AIC-11");
+    expect(result.reply).toContain("対象: <https://linear.app/kyaukyuai/issue/AIC-150|AIC-150 調査: ログイン画面の不具合修正> / 親: AIC-11");
     expect(result.reply).toContain("次アクション: 調査結果をもとに必要なら実行 task を追加します。");
     expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(1);
     expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledWith(
