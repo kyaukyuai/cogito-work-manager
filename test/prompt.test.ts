@@ -1,16 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { buildFollowupResolutionPrompt, parseFollowupResolutionReply } from "../src/planners/followup-resolution/index.js";
+import { buildResearchSynthesisPrompt, parseResearchSynthesisReply } from "../src/planners/research-synthesis/index.js";
+import { buildTaskPlanningPrompt, parseTaskPlanningReply } from "../src/planners/task-intake/index.js";
 import type { AppConfig } from "../src/lib/config.js";
 import { DEFAULT_HEARTBEAT_PROMPT } from "../src/lib/heartbeat.js";
 import { createLinearCustomTools } from "../src/lib/linear-tools.js";
 import {
   buildAgentPrompt,
-  buildFollowupResolutionPrompt,
-  buildResearchSynthesisPrompt,
-  buildTaskPlanningPrompt,
   buildSystemPrompt,
-  parseFollowupResolutionReply,
-  parseResearchSynthesisReply,
-  parseTaskPlanningReply,
   type ThreadPromptContext,
 } from "../src/lib/pi-session.js";
 import type { ThreadPaths } from "../src/lib/thread-workspace.js";
