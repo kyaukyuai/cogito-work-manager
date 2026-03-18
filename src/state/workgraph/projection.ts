@@ -22,6 +22,11 @@ export interface WorkgraphThreadProjection {
   sourceChannelId?: string;
   sourceThreadTs?: string;
   sourceMessageTs?: string;
+  messageFingerprint?: string;
+  originalText?: string;
+  clarificationQuestion?: string;
+  clarificationReasons: string[];
+  clarificationRequestedAt?: string;
   lastEventAt?: string;
   intakeStatus?: "needs-clarification" | "linked-existing" | "created";
   pendingClarification: boolean;
@@ -30,6 +35,7 @@ export interface WorkgraphThreadProjection {
   linkedIssueIds: string[];
   planningReason?: string;
   lastResolvedIssueId?: string;
+  latestFocusIssueId?: string;
   awaitingFollowupIssueIds: string[];
   issueStatuses: Record<string, "progress" | "completed" | "blocked">;
 }
@@ -66,6 +72,7 @@ function getOrCreateThread(
   if (!projection.threads[threadKey]) {
     projection.threads[threadKey] = {
       threadKey,
+      clarificationReasons: [],
       pendingClarification: false,
       childIssueIds: [],
       linkedIssueIds: [],
@@ -96,13 +103,25 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         if (thread) {
           thread.intakeStatus = "needs-clarification";
           thread.pendingClarification = true;
+          thread.messageFingerprint = event.messageFingerprint;
+          thread.originalText = event.originalText ?? thread.originalText;
+          thread.clarificationQuestion = event.clarificationQuestion;
+          thread.clarificationReasons = [...event.clarificationReasons];
+          thread.clarificationRequestedAt = event.occurredAt;
         }
         break;
       case "intake.linked_existing":
         if (thread) {
           thread.intakeStatus = "linked-existing";
           thread.pendingClarification = false;
+          thread.messageFingerprint = event.messageFingerprint;
+          thread.originalText = event.originalText ?? thread.originalText;
+          thread.clarificationQuestion = undefined;
+          thread.clarificationReasons = [];
+          thread.clarificationRequestedAt = undefined;
           thread.lastResolvedIssueId = event.lastResolvedIssueId ?? thread.lastResolvedIssueId;
+          thread.latestFocusIssueId = event.lastResolvedIssueId
+            ?? (event.linkedIssueIds.length === 1 ? event.linkedIssueIds[0] : thread.latestFocusIssueId);
           for (const issueId of event.linkedIssueIds) {
             uniquePush(thread.linkedIssueIds, issueId);
             uniquePush(getOrCreateIssue(projection, issueId).threadKeys, event.threadKey);
@@ -113,9 +132,18 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         if (thread) {
           thread.intakeStatus = "created";
           thread.pendingClarification = false;
+          thread.messageFingerprint = event.messageFingerprint;
+          thread.originalText = event.originalText ?? thread.originalText;
+          thread.clarificationQuestion = undefined;
+          thread.clarificationReasons = [];
+          thread.clarificationRequestedAt = undefined;
           thread.parentIssueId = event.parentIssueId ?? thread.parentIssueId;
           thread.planningReason = event.planningReason;
           thread.lastResolvedIssueId = event.lastResolvedIssueId ?? thread.lastResolvedIssueId;
+          thread.latestFocusIssueId = event.lastResolvedIssueId
+            ?? event.childIssueIds.slice(-1)[0]
+            ?? event.parentIssueId
+            ?? thread.latestFocusIssueId;
           for (const issueId of event.childIssueIds) {
             uniquePush(thread.childIssueIds, issueId);
           }
@@ -136,6 +164,7 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         uniquePush(issue.threadKeys, event.threadKey);
         if (thread) {
           thread.parentIssueId = event.issueId;
+          thread.latestFocusIssueId = event.issueId;
         }
         break;
       }
@@ -151,6 +180,7 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
           thread.parentIssueId = event.parentIssueId ?? thread.parentIssueId;
           uniquePush(thread.childIssueIds, event.issueId);
           thread.lastResolvedIssueId = event.issueId;
+          thread.latestFocusIssueId = event.issueId;
         }
         break;
       }
@@ -161,6 +191,9 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
           for (const issueId of event.childIssueIds) {
             uniquePush(thread.childIssueIds, issueId);
           }
+          thread.latestFocusIssueId = thread.latestFocusIssueId
+            ?? event.childIssueIds.slice(-1)[0]
+            ?? event.parentIssueId;
         }
         break;
       case "followup.requested": {
@@ -171,6 +204,7 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         uniquePush(issue.threadKeys, event.threadKey);
         if (thread) {
           uniquePush(thread.awaitingFollowupIssueIds, event.issueId);
+          thread.latestFocusIssueId = event.issueId;
         }
         break;
       }
@@ -182,6 +216,7 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         uniquePush(issue.threadKeys, event.threadKey);
         if (thread) {
           thread.awaitingFollowupIssueIds = thread.awaitingFollowupIssueIds.filter((issueId) => issueId !== event.issueId);
+          thread.latestFocusIssueId = event.issueId;
         }
         break;
       }
@@ -200,6 +235,7 @@ export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection 
         if (thread) {
           thread.issueStatuses[event.issueId] = status;
           thread.lastResolvedIssueId = event.issueId;
+          thread.latestFocusIssueId = event.issueId;
         }
         break;
       }

@@ -23,6 +23,7 @@ import { buildThreadPaths } from "../../lib/thread-workspace.js";
 import { webFetchUrl, webSearchFetch } from "../../lib/web-research.js";
 import type { AppConfig } from "../../lib/config.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
+import type { PendingClarificationContext } from "../../state/workgraph/queries.js";
 import {
   buildPlanningChildRecord,
   recordIntakeClarificationRequested,
@@ -80,11 +81,31 @@ export interface HandleIntakeRequestArgs {
   now: Date;
   policy: ManagerPolicy;
   intakeLedger: IntakeLedgerEntry[];
-  pendingClarification?: IntakeLedgerEntry;
+  pendingClarification?: PendingClarificationContext | IntakeLedgerEntry;
   originalRequestText: string;
   requestMessage: IntakeMessage;
   env: LinearCommandEnv;
   helpers: IntakeHelpers;
+}
+
+function dropPendingClarificationEntries(
+  intakeLedger: IntakeLedgerEntry[],
+  message: Pick<IntakeMessage, "channelId" | "rootThreadTs">,
+): IntakeLedgerEntry[] {
+  return intakeLedger.filter((entry) => !(
+    entry.sourceChannelId === message.channelId
+    && entry.sourceThreadTs === message.rootThreadTs
+    && entry.status === "needs-clarification"
+  ));
+}
+
+function getPendingClarificationCreatedAt(
+  pendingClarification: PendingClarificationContext | IntakeLedgerEntry | undefined,
+): string | undefined {
+  if (!pendingClarification) return undefined;
+  return "createdAt" in pendingClarification
+    ? pendingClarification.createdAt
+    : pendingClarification.clarificationRequestedAt;
 }
 
 export async function handleIntakeRequest({
@@ -163,11 +184,11 @@ export async function handleIntakeRequest({
       clarificationQuestion: taskPlan.clarificationQuestion,
       clarificationReasons: taskPlan.clarificationReasons,
       issueFocusHistory: [],
-      createdAt: pendingClarification?.createdAt ?? ledgerSupport.nowIso(now),
+      createdAt: getPendingClarificationCreatedAt(pendingClarification) ?? ledgerSupport.nowIso(now),
       updatedAt: ledgerSupport.nowIso(now),
     };
     const nextLedger = [
-      ...intakeLedger.filter((entry) => entry !== pendingClarification),
+      ...dropPendingClarificationEntries(intakeLedger, requestMessage),
       clarificationEntry,
     ];
     await repositories.intake.save(nextLedger);
@@ -203,7 +224,7 @@ export async function handleIntakeRequest({
 
   if (duplicates.length > 0 && !research) {
     const nextLedger = [
-      ...intakeLedger.filter((entry) => entry !== pendingClarification),
+      ...dropPendingClarificationEntries(intakeLedger, requestMessage),
       {
         sourceChannelId: requestMessage.channelId,
         sourceThreadTs: requestMessage.rootThreadTs,
@@ -547,7 +568,7 @@ export async function handleIntakeRequest({
       updatedAt: ledgerSupport.nowIso(now),
     };
     await repositories.intake.save([
-      ...intakeLedger.filter((entry) => entry !== pendingClarification),
+      ...dropPendingClarificationEntries(intakeLedger, requestMessage),
       nextIntakeEntry,
     ]);
 
@@ -640,7 +661,7 @@ export async function handleIntakeRequest({
     updatedAt: ledgerSupport.nowIso(now),
   };
   await repositories.intake.save([
-    ...intakeLedger.filter((entry) => entry !== pendingClarification),
+    ...dropPendingClarificationEntries(intakeLedger, requestMessage),
     nextIntakeEntry,
   ]);
 

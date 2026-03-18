@@ -149,8 +149,10 @@ async function collectThreadIssueCandidatesFromWorkgraph(
   if (!planningContext) return undefined;
 
   const latestResolvedIssueId = planningContext.latestResolvedIssue?.issueId ?? planningContext.thread.lastResolvedIssueId;
+  const latestFocusIssueId = planningContext.thread.latestFocusIssueId ?? latestResolvedIssueId;
   return {
     candidateIds: unique([
+      latestFocusIssueId,
       latestResolvedIssueId,
       planningContext.parentIssue?.issueId,
       ...planningContext.childIssues.map((issue) => issue.issueId),
@@ -160,9 +162,9 @@ async function collectThreadIssueCandidatesFromWorkgraph(
     parentIssueIds: new Set(
       planningContext.parentIssue?.issueId ? [planningContext.parentIssue.issueId] : [],
     ),
-    latestEntryIssueIds: latestResolvedIssueId ? [latestResolvedIssueId] : [],
+    latestEntryIssueIds: latestFocusIssueId ? [latestFocusIssueId] : latestResolvedIssueId ? [latestResolvedIssueId] : [],
     lastResolvedIssueId: latestResolvedIssueId,
-    latestFocusIssueId: latestResolvedIssueId,
+    latestFocusIssueId,
   };
 }
 
@@ -432,10 +434,6 @@ export async function resolveIssueTargetsFromThread(
   const candidates = workgraphCandidates?.candidateIds.length
     ? {
         ...workgraphCandidates,
-        latestEntryIssueIds: legacyCandidates.latestEntryIssueIds.length > 0
-          ? legacyCandidates.latestEntryIssueIds
-          : workgraphCandidates.latestEntryIssueIds,
-        latestFocusIssueId: legacyCandidates.latestFocusIssueId ?? workgraphCandidates.latestFocusIssueId,
       }
     : legacyCandidates;
   if (candidates.candidateIds.length === 0) {

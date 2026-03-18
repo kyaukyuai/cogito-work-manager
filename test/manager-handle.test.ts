@@ -388,6 +388,84 @@ describe("handleManagerMessage clarification flow", () => {
     });
   });
 
+  it("continues a pending clarification from workgraph even if the intake ledger entry is missing", async () => {
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+
+    const first = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-clarify-workgraph",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "来週のリリースに向けた対応を進めておいて",
+      },
+      repositories,
+      new Date("2026-03-17T04:00:00.000Z"),
+    );
+
+    expect(first.handled).toBe(true);
+    expect(first.reply).toContain("起票前に確認したい点があります");
+
+    await repositories.intake.save([]);
+
+    linearMocks.createManagedLinearIssueBatch.mockResolvedValueOnce({
+      parent: {
+        id: "parent-10",
+        identifier: "AIC-110",
+        title: "来週のリリースに向けた対応",
+        url: "https://linear.app/kyaukyuai/issue/AIC-110",
+        relations: [],
+        inverseRelations: [],
+      },
+      children: [
+        {
+          id: "child-11",
+          identifier: "AIC-111",
+          title: "API レート制限の確認",
+          url: "https://linear.app/kyaukyuai/issue/AIC-111",
+          assignee: { id: "user-1", displayName: "y.kakui" },
+          relations: [],
+          inverseRelations: [],
+        },
+        {
+          id: "child-12",
+          identifier: "AIC-112",
+          title: "修正対応",
+          url: "https://linear.app/kyaukyuai/issue/AIC-112",
+          assignee: { id: "user-1", displayName: "y.kakui" },
+          relations: [],
+          inverseRelations: [],
+        },
+      ],
+    });
+
+    const second = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-clarify-workgraph",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "期限は 2026-03-20 で、作業は\n- API レート制限の確認\n- 修正対応\nに分けて進めて",
+      },
+      repositories,
+      new Date("2026-03-17T04:05:00.000Z"),
+    );
+
+    expect(second.handled).toBe(true);
+    expect(linearMocks.createManagedLinearIssueBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: expect.objectContaining({
+          title: "来週のリリースに向けた対応",
+        }),
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("updates a unique thread-linked issue when the user reports progress", async () => {
     linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-1",

@@ -27,6 +27,11 @@ export interface WorkgraphThreadContext {
   sourceChannelId?: string;
   sourceThreadTs?: string;
   sourceMessageTs?: string;
+  messageFingerprint?: string;
+  originalText?: string;
+  clarificationQuestion?: string;
+  clarificationReasons: string[];
+  clarificationRequestedAt?: string;
   lastEventAt?: string;
   intakeStatus?: "needs-clarification" | "linked-existing" | "created";
   pendingClarification: boolean;
@@ -35,6 +40,7 @@ export interface WorkgraphThreadContext {
   linkedIssueIds: string[];
   planningReason?: string;
   lastResolvedIssueId?: string;
+  latestFocusIssueId?: string;
   awaitingFollowupIssueIds: string[];
   issueStatuses: Record<string, "progress" | "completed" | "blocked">;
 }
@@ -85,6 +91,11 @@ function mapThreadContext(thread: WorkgraphThreadProjection): WorkgraphThreadCon
     sourceChannelId: thread.sourceChannelId,
     sourceThreadTs: thread.sourceThreadTs,
     sourceMessageTs: thread.sourceMessageTs,
+    messageFingerprint: thread.messageFingerprint,
+    originalText: thread.originalText,
+    clarificationQuestion: thread.clarificationQuestion,
+    clarificationReasons: [...thread.clarificationReasons],
+    clarificationRequestedAt: thread.clarificationRequestedAt,
     lastEventAt: thread.lastEventAt,
     intakeStatus: thread.intakeStatus,
     pendingClarification: thread.pendingClarification,
@@ -93,6 +104,7 @@ function mapThreadContext(thread: WorkgraphThreadProjection): WorkgraphThreadCon
     linkedIssueIds: [...thread.linkedIssueIds],
     planningReason: thread.planningReason,
     lastResolvedIssueId: thread.lastResolvedIssueId,
+    latestFocusIssueId: thread.latestFocusIssueId,
     awaitingFollowupIssueIds: [...thread.awaitingFollowupIssueIds],
     issueStatuses: { ...thread.issueStatuses },
   };
@@ -165,6 +177,16 @@ export async function listPendingClarifications(
   return Object.values(projection.threads)
     .filter((thread) => thread.pendingClarification)
     .map(mapThreadContext);
+}
+
+export async function getPendingClarificationForThread(
+  repository: WorkgraphRepository,
+  threadKey: string,
+): Promise<PendingClarificationContext | undefined> {
+  const projection = await loadProjection(repository);
+  const thread = projection.threads[threadKey];
+  if (!thread?.pendingClarification) return undefined;
+  return mapThreadContext(thread);
 }
 
 export async function listAwaitingFollowups(

@@ -39,6 +39,8 @@ import {
 import {
   type ManagerPolicy,
 } from "../state/manager-state-contract.js";
+import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
+import { getPendingClarificationForThread } from "../state/workgraph/queries.js";
 import type { SystemPaths } from "./system-workspace.js";
 
 export type ManagerMessageKind = "request" | "progress" | "completed" | "blocked" | "conversation";
@@ -536,7 +538,10 @@ export async function handleManagerMessage(
   const policy = await repositories.policy.load();
   const intakeLedger = await repositories.intake.load();
   const followups = await repositories.followups.load();
-  const pendingClarification = findPendingClarification(intakeLedger, message);
+  const pendingClarification = await getPendingClarificationForThread(
+    repositories.workgraph,
+    buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
+  ) ?? findPendingClarification(intakeLedger, message);
   const originalRequestText = pendingClarification?.originalText ?? message.text;
   const followupText = pendingClarification ? message.text : "";
   const combinedRequestText = pendingClarification
@@ -545,7 +550,7 @@ export async function handleManagerMessage(
   const requestMessage: ManagerSlackMessage = pendingClarification
     ? {
         ...message,
-        messageTs: pendingClarification.sourceMessageTs,
+        messageTs: pendingClarification.sourceMessageTs ?? message.messageTs,
         text: combinedRequestText,
       }
     : message;

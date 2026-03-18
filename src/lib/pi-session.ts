@@ -28,8 +28,9 @@ import {
   type TaskPlanningResult,
 } from "../planners/task-intake/index.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
-import type { IntakeLedgerEntry } from "../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
+import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
+import { getThreadPlanningContext } from "../state/workgraph/queries.js";
 import type { AppConfig } from "./config.js";
 import { getLinearIssue } from "./linear.js";
 import { createLinearCustomTools } from "./linear-tools.js";
@@ -114,42 +115,42 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
-function findThreadLedgerEntries(
-  entries: IntakeLedgerEntry[],
-  channelId: string,
-  rootThreadTs: string,
-): IntakeLedgerEntry[] {
-  return entries.filter((entry) => entry.sourceChannelId === channelId && entry.sourceThreadTs === rootThreadTs);
-}
-
 async function loadThreadPromptContext(
   config: AppConfig,
   input: AgentInput,
-  managerRepositories: Pick<ManagerRepositories, "intake">,
+  managerRepositories: Pick<ManagerRepositories, "workgraph">,
 ): Promise<ThreadPromptContext | undefined> {
-  const ledger = await managerRepositories.intake.load().catch(() => []);
-  const threadEntries = findThreadLedgerEntries(ledger, input.channelId, input.rootThreadTs);
-  if (threadEntries.length === 0) {
+  const planningContext = await getThreadPlanningContext(
+    managerRepositories.workgraph,
+    buildWorkgraphThreadKey(input.channelId, input.rootThreadTs),
+  ).catch(() => undefined);
+  if (!planningContext) {
     return undefined;
   }
 
-  const latestEntry = threadEntries[threadEntries.length - 1];
-  const childIssueIds = unique(threadEntries.flatMap((entry) => entry.childIssueIds ?? []).filter(Boolean)) as string[];
-  const parentIssueIds = unique(threadEntries.map((entry) => entry.parentIssueId).filter(Boolean)) as string[];
-  const candidateIds = unique(
-    threadEntries.flatMap((entry) => [
-      entry.lastResolvedIssueId,
-      entry.parentIssueId,
-      ...(entry.childIssueIds ?? []),
-    ].filter(Boolean)),
-  ) as string[];
+  const {
+    thread,
+    parentIssue,
+    childIssues,
+    linkedIssues,
+    latestResolvedIssue,
+  } = planningContext;
+  const childIssueIds = childIssues.map((issue) => issue.issueId);
+  const linkedIssueIds = linkedIssues.map((issue) => issue.issueId);
+  const candidateIds = unique([
+    thread.latestFocusIssueId,
+    latestResolvedIssue?.issueId,
+    parentIssue?.issueId,
+    ...childIssueIds,
+    ...linkedIssueIds,
+  ].filter(Boolean)) as string[];
 
   const preferredIssueIds = unique([
     ...childIssueIds,
-    latestEntry.lastResolvedIssueId,
-    ...latestEntry.childIssueIds,
-    latestEntry.parentIssueId,
-    ...parentIssueIds,
+    thread.latestFocusIssueId,
+    latestResolvedIssue?.issueId,
+    parentIssue?.issueId,
+    ...linkedIssueIds,
     ...candidateIds,
   ].filter(Boolean)) as string[];
 
@@ -177,11 +178,11 @@ async function loadThreadPromptContext(
     : [];
 
   return {
-    lastResolvedIssueId: latestEntry.lastResolvedIssueId,
-    parentIssueId: latestEntry.parentIssueId ?? parentIssueIds[0],
+    lastResolvedIssueId: latestResolvedIssue?.issueId ?? thread.lastResolvedIssueId,
+    parentIssueId: parentIssue?.issueId ?? thread.parentIssueId,
     childIssueIds,
-    duplicateReuse: threadEntries.some((entry) => entry.status === "linked-existing"),
-    pendingClarification: threadEntries.some((entry) => entry.status === "needs-clarification"),
+    duplicateReuse: thread.intakeStatus === "linked-existing",
+    pendingClarification: thread.pendingClarification,
     preferredIssueIds,
     candidateIssues,
   };

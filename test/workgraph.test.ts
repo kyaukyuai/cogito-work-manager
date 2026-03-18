@@ -6,6 +6,7 @@ import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedWorkgraphRepository } from "../src/state/workgraph/file-backed-workgraph-repository.js";
 import {
   buildIssueSourceIndex,
+  getPendingClarificationForThread,
   getLatestIssueSource,
   getLatestResolvedIssueForThread,
   getIssueContext,
@@ -184,13 +185,28 @@ describe("workgraph repository", () => {
         threadKey: "C123:thread-pending",
         pendingClarification: true,
         intakeStatus: "needs-clarification",
+        messageFingerprint: "clarify-1",
+        clarificationQuestion: "期限を教えてください。",
+        clarificationReasons: ["due_date"],
       }),
     ]);
+
+    expect(await getPendingClarificationForThread(repository, "C123:thread-pending")).toEqual(
+      expect.objectContaining({
+        threadKey: "C123:thread-pending",
+        pendingClarification: true,
+        sourceMessageTs: "msg-1",
+        messageFingerprint: "clarify-1",
+        clarificationQuestion: "期限を教えてください。",
+        clarificationReasons: ["due_date"],
+      }),
+    );
 
     expect(await getThreadContext(repository, "C123:thread-active")).toEqual(expect.objectContaining({
       threadKey: "C123:thread-active",
       parentIssueId: "AIC-10",
       childIssueIds: ["AIC-11"],
+      latestFocusIssueId: "AIC-11",
       sourceMessageTs: "msg-2",
       awaitingFollowupIssueIds: ["AIC-11"],
     }));
