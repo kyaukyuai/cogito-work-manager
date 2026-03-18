@@ -5,24 +5,24 @@ import {
   DEFAULT_OWNER_MAP,
   DEFAULT_POLICY,
   type FollowupLedgerEntry,
-  type IntakeLedgerEntry,
   type ManagerPolicy,
   type OwnerMap,
   type OwnerMapEntry,
   type PlanningLedgerEntry,
 } from "../state/manager-state-contract.js";
+import type { CompatIntakeLedgerEntry as IntakeLedgerEntry } from "../state/compat/intake-ledger-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { SchedulerJob, SystemPaths } from "./system-workspace.js";
 import { loadSchedulerJobs, saveSchedulerJobs } from "./system-workspace.js";
 
 export type {
   FollowupLedgerEntry,
-  IntakeLedgerEntry,
   ManagerPolicy,
   OwnerMap,
   OwnerMapEntry,
   PlanningLedgerEntry,
 } from "../state/manager-state-contract.js";
+export type { CompatIntakeLedgerEntry as IntakeLedgerEntry } from "../state/compat/intake-ledger-contract.js";
 
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });

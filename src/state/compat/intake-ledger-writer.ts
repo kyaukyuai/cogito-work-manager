@@ -1,5 +1,5 @@
-import type { IntakeLedgerEntry } from "../manager-state-contract.js";
-import type { IntakeRepository } from "../repositories/file-backed-manager-repositories.js";
+import type { CompatIntakeLedgerEntry } from "./intake-ledger-contract.js";
+import type { IntakeRepository, ManagerRepositories } from "../repositories/file-backed-manager-repositories.js";
 
 interface ThreadScopedMessage {
   channelId: string;
@@ -42,7 +42,7 @@ export interface CompatIntakeLedgerWriter {
     messageFingerprint: string;
     parentIssueId?: string;
     childIssueIds: string[];
-    ownerResolution?: IntakeLedgerEntry["ownerResolution"];
+    ownerResolution?: CompatIntakeLedgerEntry["ownerResolution"];
     originalText: string;
     lastResolvedIssueId?: string;
     now: Date;
@@ -61,18 +61,18 @@ export interface CompatIntakeLedgerWriter {
 }
 
 function findThreadEntries(
-  intakeLedger: IntakeLedgerEntry[],
+  intakeLedger: CompatIntakeLedgerEntry[],
   message: ThreadScopedMessage,
-): IntakeLedgerEntry[] {
+): CompatIntakeLedgerEntry[] {
   return intakeLedger.filter((entry) => (
     entry.sourceChannelId === message.channelId && entry.sourceThreadTs === message.rootThreadTs
   ));
 }
 
 function dropPendingClarificationEntries(
-  intakeLedger: IntakeLedgerEntry[],
+  intakeLedger: CompatIntakeLedgerEntry[],
   message: ThreadScopedMessage,
-): IntakeLedgerEntry[] {
+): CompatIntakeLedgerEntry[] {
   return intakeLedger.filter((entry) => !(
     entry.sourceChannelId === message.channelId
     && entry.sourceThreadTs === message.rootThreadTs
@@ -81,12 +81,12 @@ function dropPendingClarificationEntries(
 }
 
 function upsertThreadIntakeEntry(
-  intakeLedger: IntakeLedgerEntry[],
+  intakeLedger: CompatIntakeLedgerEntry[],
   message: ThreadMessage,
-  patch: Partial<IntakeLedgerEntry>,
+  patch: Partial<CompatIntakeLedgerEntry>,
   now: Date,
   support: CompatIntakeLedgerWriterSupport,
-): IntakeLedgerEntry[] {
+): CompatIntakeLedgerEntry[] {
   const threadEntries = findThreadEntries(intakeLedger, message);
   const latest = threadEntries[threadEntries.length - 1];
 
@@ -125,7 +125,7 @@ function upsertThreadIntakeEntry(
 async function replaceThreadPendingClarificationEntries(
   repository: IntakeRepository,
   message: ThreadScopedMessage,
-  replacements: IntakeLedgerEntry[],
+  replacements: CompatIntakeLedgerEntry[],
 ): Promise<void> {
   const intakeLedger = await repository.load();
   const nextLedger = [
@@ -138,7 +138,7 @@ async function replaceThreadPendingClarificationEntries(
 async function savePatchedThreadIntakeEntry(
   repository: IntakeRepository,
   message: ThreadMessage,
-  patch: Partial<IntakeLedgerEntry>,
+  patch: Partial<CompatIntakeLedgerEntry>,
   now: Date,
   support: CompatIntakeLedgerWriterSupport,
 ): Promise<void> {
@@ -264,4 +264,11 @@ export function createCompatIntakeLedgerWriter(
       );
     },
   };
+}
+
+export function createCompatIntakeLedgerWriterFromRepositories(
+  repositories: Pick<ManagerRepositories, "intake">,
+  support: CompatIntakeLedgerWriterSupport,
+): CompatIntakeLedgerWriter {
+  return createCompatIntakeLedgerWriter(repositories.intake, support);
 }

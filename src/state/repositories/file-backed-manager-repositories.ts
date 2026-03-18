@@ -6,16 +6,18 @@ import {
   DEFAULT_OWNER_MAP,
   DEFAULT_POLICY,
   followupsLedgerSchema,
-  intakeLedgerSchema,
   managerPolicySchema,
   ownerMapSchema,
   planningLedgerSchema,
   type FollowupLedgerEntry,
-  type IntakeLedgerEntry,
   type ManagerPolicy,
   type OwnerMap,
   type PlanningLedgerEntry,
 } from "../manager-state-contract.js";
+import {
+  compatIntakeLedgerSchema,
+  type CompatIntakeLedgerEntry,
+} from "../compat/intake-ledger-contract.js";
 import { createFileBackedWorkgraphRepository, type WorkgraphRepository } from "../workgraph/file-backed-workgraph-repository.js";
 
 export interface ReadonlyRepository<T> {
@@ -28,7 +30,7 @@ export interface MutableRepository<T> extends ReadonlyRepository<T> {
 
 export type PolicyRepository = ReadonlyRepository<ManagerPolicy>;
 export type OwnerMapRepository = ReadonlyRepository<OwnerMap>;
-export type IntakeRepository = MutableRepository<IntakeLedgerEntry[]>;
+export type IntakeRepository = MutableRepository<CompatIntakeLedgerEntry[]>;
 export type FollowupRepository = MutableRepository<FollowupLedgerEntry[]>;
 export type PlanningRepository = MutableRepository<PlanningLedgerEntry[]>;
 
@@ -88,7 +90,7 @@ export function createFileBackedManagerRepositories(paths: SystemPaths): Manager
   return {
     policy: createReadonlyJsonRepository(paths.policyFile, managerPolicySchema, DEFAULT_POLICY),
     ownerMap: createReadonlyJsonRepository(paths.ownerMapFile, ownerMapSchema, DEFAULT_OWNER_MAP),
-    intake: createMutableJsonRepository(paths.intakeLedgerFile, intakeLedgerSchema, []),
+    intake: createMutableJsonRepository(paths.intakeLedgerFile, compatIntakeLedgerSchema, []),
     followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, []),
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
     workgraph: createFileBackedWorkgraphRepository(paths),

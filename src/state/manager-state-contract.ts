@@ -47,30 +47,6 @@ export const ownerMapSchema = z.object({
   entries: z.array(ownerMapEntrySchema),
 });
 
-export const intakeLedgerEntrySchema = z.object({
-  sourceChannelId: z.string().min(1),
-  sourceThreadTs: z.string().min(1),
-  sourceMessageTs: z.string().min(1),
-  messageFingerprint: z.string().min(1),
-  parentIssueId: z.string().optional(),
-  childIssueIds: z.array(z.string()).default([]),
-  status: z.string().min(1),
-  ownerResolution: z.enum(["mapped", "fallback"]).optional(),
-  originalText: z.string().optional(),
-  clarificationQuestion: z.string().optional(),
-  clarificationReasons: z.array(z.string()).default([]),
-  lastResolvedIssueId: z.string().optional(),
-  issueFocusHistory: z.array(z.object({
-    issueId: z.string().min(1),
-    actionKind: z.string().min(1),
-    source: z.string().min(1),
-    ts: z.string().datetime(),
-    textSnippet: z.string().optional(),
-  })).default([]),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
-});
-
 export const followupLedgerEntrySchema = z.object({
   issueId: z.string().min(1),
   lastPublicFollowupAt: z.string().datetime().optional(),
@@ -108,14 +84,12 @@ export const planningLedgerEntrySchema = z.object({
   updatedAt: z.string().datetime(),
 });
 
-export const intakeLedgerSchema = z.array(intakeLedgerEntrySchema);
 export const followupsLedgerSchema = z.array(followupLedgerEntrySchema);
 export const planningLedgerSchema = z.array(planningLedgerEntrySchema);
 
 export type ManagerPolicy = z.infer<typeof managerPolicySchema>;
 export type OwnerMap = z.infer<typeof ownerMapSchema>;
 export type OwnerMapEntry = z.infer<typeof ownerMapEntrySchema>;
-export type IntakeLedgerEntry = z.infer<typeof intakeLedgerEntrySchema>;
 export type FollowupLedgerEntry = z.infer<typeof followupLedgerEntrySchema>;
 export type PlanningLedgerEntry = z.infer<typeof planningLedgerEntrySchema>;
 
