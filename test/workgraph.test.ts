@@ -4,6 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedWorkgraphRepository } from "../src/state/workgraph/file-backed-workgraph-repository.js";
+import {
+  getIssueContext,
+  getThreadContext,
+  listAwaitingFollowups,
+  listPendingClarifications,
+} from "../src/state/workgraph/queries.js";
 
 describe("workgraph repository", () => {
   it("appends events and projects unified thread and issue state", async () => {
@@ -102,5 +108,98 @@ describe("workgraph repository", () => {
       followupStatus: "resolved",
       lastFollowupResolvedReason: "completed",
     });
+  });
+
+  it("exposes thread and issue read models through query helpers", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-query-"));
+    const paths = buildSystemPaths(workspaceDir);
+    const repository = createFileBackedWorkgraphRepository(paths);
+
+    await repository.append([
+      {
+        type: "intake.clarification_requested",
+        occurredAt: "2026-03-18T00:00:00.000Z",
+        threadKey: "C123:thread-pending",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-pending",
+        sourceMessageTs: "msg-1",
+        messageFingerprint: "clarify-1",
+        clarificationQuestion: "期限を教えてください。",
+        clarificationReasons: ["due_date"],
+      },
+      {
+        type: "planning.parent_created",
+        occurredAt: "2026-03-18T00:10:00.000Z",
+        threadKey: "C123:thread-active",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-active",
+        sourceMessageTs: "msg-2",
+        issueId: "AIC-10",
+        title: "リリース対応",
+      },
+      {
+        type: "planning.child_created",
+        occurredAt: "2026-03-18T00:10:00.000Z",
+        threadKey: "C123:thread-active",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-active",
+        sourceMessageTs: "msg-2",
+        issueId: "AIC-11",
+        title: "動作確認",
+        kind: "execution",
+        parentIssueId: "AIC-10",
+      },
+      {
+        type: "intake.created",
+        occurredAt: "2026-03-18T00:10:00.000Z",
+        threadKey: "C123:thread-active",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-active",
+        sourceMessageTs: "msg-2",
+        messageFingerprint: "create-1",
+        parentIssueId: "AIC-10",
+        childIssueIds: ["AIC-11"],
+        planningReason: "complex-request",
+      },
+      {
+        type: "followup.requested",
+        occurredAt: "2026-03-18T01:00:00.000Z",
+        threadKey: "C123:thread-active",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-active",
+        sourceMessageTs: "msg-3",
+        issueId: "AIC-11",
+        category: "stale",
+        requestKind: "status",
+      },
+    ]);
+
+    expect(await listPendingClarifications(repository)).toEqual([
+      expect.objectContaining({
+        threadKey: "C123:thread-pending",
+        pendingClarification: true,
+        intakeStatus: "needs-clarification",
+      }),
+    ]);
+
+    expect(await getThreadContext(repository, "C123:thread-active")).toEqual(expect.objectContaining({
+      threadKey: "C123:thread-active",
+      parentIssueId: "AIC-10",
+      childIssueIds: ["AIC-11"],
+      awaitingFollowupIssueIds: ["AIC-11"],
+    }));
+
+    expect(await getIssueContext(repository, "AIC-11")).toEqual(expect.objectContaining({
+      issueId: "AIC-11",
+      parentIssueId: "AIC-10",
+      followupStatus: "awaiting-response",
+    }));
+
+    expect(await listAwaitingFollowups(repository)).toEqual([
+      expect.objectContaining({
+        issueId: "AIC-11",
+        followupStatus: "awaiting-response",
+      }),
+    ]);
   });
 });

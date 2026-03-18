@@ -1942,6 +1942,31 @@ describe("handleManagerMessage clarification flow", () => {
     ]));
   });
 
+  it("counts pending clarifications from the work graph in weekly review", async () => {
+    linearMocks.listRiskyLinearIssues.mockResolvedValue([]);
+    await createFileBackedManagerRepositories(systemPaths).workgraph.append({
+      type: "intake.clarification_requested",
+      occurredAt: "2026-03-17T00:00:00.000Z",
+      threadKey: "C0ALAMDRB9V:thread-weekly-clarify",
+      sourceChannelId: "C0ALAMDRB9V",
+      sourceThreadTs: "thread-weekly-clarify",
+      sourceMessageTs: "msg-1",
+      messageFingerprint: "weekly-clarify",
+      clarificationQuestion: "期限を教えてください。",
+      clarificationReasons: ["due_date"],
+    });
+
+    const review = await buildManagerReview(
+      { ...config, workspaceDir },
+      systemPaths,
+      "weekly-review",
+      new Date("2026-03-17T02:00:00.000Z"),
+    );
+
+    expect(review?.text).toContain("未処理 clarification: 1");
+    expect(review?.summaryLines).toContain("未処理 clarification: 1");
+  });
+
   it("applies a due-date follow-up reply from the source thread and resolves it as risk-cleared", async () => {
     await writeFile(systemPaths.followupsFile, `${JSON.stringify([
       {

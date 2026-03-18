@@ -7,6 +7,7 @@ import {
   type PlanningLedgerEntry,
 } from "../../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
+import { listPendingClarifications } from "../../state/workgraph/queries.js";
 import { recordFollowupTransitions } from "../../state/workgraph/recorder.js";
 import type {
   HeartbeatReviewDecision,
@@ -282,7 +283,7 @@ export async function buildManagerReview({
   }
 
   const fallbackCount = planningLedger.filter((entry) => entry.ownerResolution === "fallback").length;
-  const unresolvedClarifications = intakeLedger.filter((entry) => entry.status === "needs-clarification").length;
+  const unresolvedClarifications = (await listPendingClarifications(repositories.workgraph)).length;
   const staleItems = sorted.filter((item) => item.riskCategories.includes("stale")).slice(0, 5);
   const lines = ["週次 planning review です。"];
   lines.push(`- 未整備 issue: ${sorted.filter((item) => item.ownerMissing || item.dueMissing).length}`);
