@@ -53,7 +53,6 @@ describe("file-backed manager repositories", () => {
         childIssueIds: ["AIC-2"],
         status: "planned",
         clarificationReasons: [],
-        issueFocusHistory: [],
         createdAt: now,
         updatedAt: now,
       },

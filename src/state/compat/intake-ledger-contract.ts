@@ -1,13 +1,5 @@
 import { z } from "zod";
 
-const compatIssueFocusEntrySchema = z.object({
-  issueId: z.string().min(1),
-  actionKind: z.string().min(1),
-  source: z.string().min(1),
-  ts: z.string().datetime(),
-  textSnippet: z.string().optional(),
-});
-
 export const compatIntakeLedgerEntrySchema = z.object({
   sourceChannelId: z.string().min(1),
   sourceThreadTs: z.string().min(1),
@@ -21,7 +13,6 @@ export const compatIntakeLedgerEntrySchema = z.object({
   clarificationQuestion: z.string().optional(),
   clarificationReasons: z.array(z.string()).default([]),
   lastResolvedIssueId: z.string().optional(),
-  issueFocusHistory: z.array(compatIssueFocusEntrySchema).default([]),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
 });

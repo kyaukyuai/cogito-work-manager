@@ -104,7 +104,6 @@ function upsertThreadIntakeEntry(
         originalText: message.text,
         createdAt: support.nowIso(now),
         updatedAt: support.nowIso(now),
-        issueFocusHistory: [],
         ...patch,
       },
     ];
@@ -115,7 +114,6 @@ function upsertThreadIntakeEntry(
       ? {
           ...entry,
           ...patch,
-          issueFocusHistory: patch.issueFocusHistory ?? entry.issueFocusHistory ?? [],
           updatedAt: support.nowIso(now),
         }
       : entry
@@ -172,7 +170,6 @@ export function createCompatIntakeLedgerWriter(
         originalText,
         clarificationQuestion,
         clarificationReasons,
-        issueFocusHistory: [],
         createdAt: createdAt ?? support.nowIso(now),
         updatedAt: support.nowIso(now),
       }]);
@@ -195,7 +192,6 @@ export function createCompatIntakeLedgerWriter(
         childIssueIds: linkedIssueIds,
         status: "linked-existing",
         lastResolvedIssueId,
-        issueFocusHistory: [],
         originalText,
         clarificationReasons: [],
         createdAt: support.nowIso(now),
@@ -226,7 +222,6 @@ export function createCompatIntakeLedgerWriter(
         originalText,
         clarificationReasons: [],
         lastResolvedIssueId,
-        issueFocusHistory: [],
         createdAt: support.nowIso(now),
         updatedAt: support.nowIso(now),
       }]);

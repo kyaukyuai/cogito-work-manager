@@ -50,7 +50,6 @@ describe("compat intake ledger writer", () => {
         clarificationQuestion: "期限と分けたい作業を教えてください。",
         clarificationReasons: ["due_date", "execution_plan"],
         lastResolvedIssueId: "AIC-123",
-        issueFocusHistory: [],
       }),
     ]);
   });

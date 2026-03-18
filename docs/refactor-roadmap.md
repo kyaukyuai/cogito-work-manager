@@ -194,7 +194,7 @@ planning / intake / followup を横断する work graph を導入し、append-on
 - 現在の read-side では、review 件数集計、issue source lookup、thread planning context、pending clarification の照合、latest resolved issue、updates の target-resolution candidate discovery を work graph query から取得する
 - legacy ledger は互換レイヤとして残し、未移行 helper の補助情報と互換 export を保持する
 - legacy intake ledger への production write は compat adapter 経由に閉じ込め、workflow は ledger schema を直接扱わない
-- `issueFocusHistory` は互換用 ledger field として残っていても、routing や prompt context の primary source には使わず、新規 state 判断のために積み増さない
+- `issueFocusHistory` は historical compatibility のみとし、新規には記録しない
 - source of truth の切り替えは dual-write と query migration を段階的に進め、ledger の削除は最後に行う
 
 ### Validation
