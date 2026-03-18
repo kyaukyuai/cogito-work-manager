@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   ensureManagerSystemFiles,
   loadFollowupsLedger,
-  loadIntakeLedger,
   loadPlanningLedger,
 } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { loadCompatIntakeLedger } from "../src/state/compat/intake-ledger-store.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
 describe("file-backed manager repositories", () => {
@@ -79,7 +79,7 @@ describe("file-backed manager repositories", () => {
     await repositories.followups.save(followups);
     await repositories.planning.save(planningLedger);
 
-    expect(await loadIntakeLedger(systemPaths)).toEqual(intakeLedger);
+    expect(await loadCompatIntakeLedger(systemPaths)).toEqual(intakeLedger);
     expect(await loadFollowupsLedger(systemPaths)).toEqual(followups);
     expect(await loadPlanningLedger(systemPaths)).toEqual(planningLedger);
   });

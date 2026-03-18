@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHeartbeatReviewDecision, buildManagerReview, formatIssueSelectionReply, handleManagerMessage } from "../src/lib/manager.js";
-import { ensureManagerSystemFiles, loadFollowupsLedger, loadIntakeLedger } from "../src/lib/manager-state.js";
+import { ensureManagerSystemFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
@@ -219,6 +219,10 @@ describe("handleManagerMessage clarification flow", () => {
     await writeFile(systemPaths.policyFile, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`, "utf8");
   }
 
+  async function loadThreadProjection(threadKey: string) {
+    return createFileBackedManagerRepositories(systemPaths).workgraph.project().then((projection) => projection.threads[threadKey]);
+  }
+
   beforeEach(async () => {
     workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-manager-"));
     systemPaths = buildSystemPaths(workspaceDir);
@@ -308,9 +312,11 @@ describe("handleManagerMessage clarification flow", () => {
     expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
     expect(linearMocks.createManagedLinearIssueBatch).not.toHaveBeenCalled();
 
-    let ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0]?.status).toBe("needs-clarification");
+    let thread = await loadThreadProjection("C0ALAMDRB9V:thread-clarify");
+    expect(thread).toMatchObject({
+      intakeStatus: "needs-clarification",
+      pendingClarification: true,
+    });
 
     linearMocks.createManagedLinearIssueBatch.mockResolvedValueOnce({
       parent: {
@@ -370,16 +376,11 @@ describe("handleManagerMessage clarification flow", () => {
     expect(linearMocks.assignLinearIssue).not.toHaveBeenCalled();
     expect(linearMocks.addLinearRelation).toHaveBeenCalledWith("AIC-101", "blocks", "AIC-102", expect.any(Object));
 
-    ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0]?.status).toBe("created");
-    expect(ledger[0]?.parentIssueId).toBe("AIC-100");
-    expect(ledger[0]?.childIssueIds).toEqual(["AIC-101", "AIC-102"]);
-
     const projection = await createFileBackedManagerRepositories(systemPaths).workgraph.project();
     expect(projection.threads["C0ALAMDRB9V:thread-clarify"]).toMatchObject({
       intakeStatus: "created",
       parentIssueId: "AIC-100",
+      childIssueIds: ["AIC-101", "AIC-102"],
       lastResolvedIssueId: "AIC-102",
     });
     expect(projection.issues["AIC-101"]).toMatchObject({
@@ -562,9 +563,13 @@ describe("handleManagerMessage clarification flow", () => {
       expect.any(Object),
     );
 
-    const ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger.at(-1)?.status).toBe("progressed");
-    expect(ledger.at(-1)?.lastResolvedIssueId).toBe("AIC-110");
+    const thread = await loadThreadProjection("C0ALAMDRB9V:thread-progress");
+    expect(thread).toMatchObject({
+      lastResolvedIssueId: "AIC-110",
+      issueStatuses: {
+        "AIC-110": "progress",
+      },
+    });
   });
 
   it("keeps status updates enabled when autoCreate is disabled", async () => {
@@ -1414,8 +1419,8 @@ describe("handleManagerMessage clarification flow", () => {
     expect(result.reply).toContain("子task: <https://linear.app/kyaukyuai/issue/AIC-242|AIC-242 API 仕様の確認> / <https://linear.app/kyaukyuai/issue/AIC-243|AIC-243 修正方針の整理>");
     expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(4);
 
-    const ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger.at(-1)?.childIssueIds).toEqual(["AIC-241", "AIC-242", "AIC-243"]);
+    const thread = await loadThreadProjection("C0ALAMDRB9V:thread-research-followups");
+    expect(thread?.childIssueIds).toEqual(["AIC-241", "AIC-242", "AIC-243"]);
   });
 
   it("reuses an existing issue as the parent for research requests", async () => {
@@ -1483,9 +1488,11 @@ describe("handleManagerMessage clarification flow", () => {
     );
     expect(linearMocks.assignLinearIssue).not.toHaveBeenCalled();
 
-    const ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger.at(-1)?.parentIssueId).toBe("AIC-11");
-    expect(ledger.at(-1)?.childIssueIds).toEqual(["AIC-150"]);
+    const thread = await loadThreadProjection("C0ALAMDRB9V:thread-research-existing");
+    expect(thread).toMatchObject({
+      parentIssueId: "AIC-11",
+      childIssueIds: ["AIC-150"],
+    });
   });
 
   it("adds one explicit follow-up to reviews and suppresses the same issue in heartbeat", async () => {
@@ -1706,20 +1713,6 @@ describe("handleManagerMessage clarification flow", () => {
 
   it("keeps owner-missing follow-ups unresolved until an assignee is actually set", async () => {
     const repositories = createFileBackedManagerRepositories(systemPaths);
-    await writeFile(systemPaths.intakeLedgerFile, `${JSON.stringify([
-      {
-        sourceChannelId: "C0ALAMDRB9V",
-        sourceThreadTs: "thread-owner-missing",
-        sourceMessageTs: "msg-1",
-        messageFingerprint: "owner-missing",
-        childIssueIds: ["AIC-305"],
-        status: "created",
-        clarificationReasons: [],
-        lastResolvedIssueId: "AIC-305",
-        createdAt: "2026-03-17T00:00:00.000Z",
-        updatedAt: "2026-03-17T00:00:00.000Z",
-      },
-    ], null, 2)}\n`);
     await writeFile(systemPaths.followupsFile, `${JSON.stringify([
       {
         issueId: "AIC-305",
@@ -1788,20 +1781,6 @@ describe("handleManagerMessage clarification flow", () => {
   });
 
   it("keeps a status follow-up unresolved when the reply lacks a next action", async () => {
-    await writeFile(systemPaths.intakeLedgerFile, `${JSON.stringify([
-      {
-        sourceChannelId: "C0ALAMDRB9V",
-        sourceThreadTs: "thread-status-followup",
-        sourceMessageTs: "msg-1",
-        messageFingerprint: "status-followup",
-        childIssueIds: ["AIC-306"],
-        status: "created",
-        clarificationReasons: [],
-        lastResolvedIssueId: "AIC-306",
-        createdAt: "2026-03-17T00:00:00.000Z",
-        updatedAt: "2026-03-17T00:00:00.000Z",
-      },
-    ], null, 2)}\n`);
     await writeFile(systemPaths.followupsFile, `${JSON.stringify([
       {
         issueId: "AIC-306",
@@ -1816,6 +1795,31 @@ describe("handleManagerMessage clarification flow", () => {
         sourceMessageTs: "msg-1",
       },
     ], null, 2)}\n`);
+    await createFileBackedManagerRepositories(systemPaths).workgraph.append([
+      {
+        type: "planning.child_created",
+        occurredAt: "2026-03-17T00:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-status-followup",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-status-followup",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-306",
+        title: "進捗確認待ち task",
+        kind: "execution",
+      },
+      {
+        type: "intake.created",
+        occurredAt: "2026-03-17T00:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-status-followup",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-status-followup",
+        sourceMessageTs: "msg-1",
+        messageFingerprint: "status-followup",
+        childIssueIds: ["AIC-306"],
+        planningReason: "single-issue",
+        lastResolvedIssueId: "AIC-306",
+      },
+    ]);
 
     linearMocks.getLinearIssue.mockImplementationOnce(async () => ({
       id: "issue-306",
@@ -1897,20 +1901,31 @@ describe("handleManagerMessage clarification flow", () => {
       },
     ]);
 
-    await writeFile(systemPaths.intakeLedgerFile, `${JSON.stringify([
+    await createFileBackedManagerRepositories(systemPaths).workgraph.append([
       {
+        type: "planning.child_created",
+        occurredAt: "2026-03-17T00:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-followup-reping",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-followup-reping",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-302",
+        title: "blocked のタスク",
+        kind: "execution",
+      },
+      {
+        type: "intake.created",
+        occurredAt: "2026-03-17T00:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-followup-reping",
         sourceChannelId: "C0ALAMDRB9V",
         sourceThreadTs: "thread-followup-reping",
         sourceMessageTs: "msg-1",
         messageFingerprint: "followup-reping",
         childIssueIds: ["AIC-302"],
-        status: "created",
-        clarificationReasons: [],
+        planningReason: "single-issue",
         lastResolvedIssueId: "AIC-302",
-        createdAt: "2026-03-17T00:00:00.000Z",
-        updatedAt: "2026-03-17T00:00:00.000Z",
       },
-    ], null, 2)}\n`);
+    ]);
 
     await buildManagerReview(
       { ...config, workspaceDir },
@@ -1994,8 +2009,8 @@ describe("handleManagerMessage clarification flow", () => {
       expect.any(Object),
     );
 
-    const ledger = await loadIntakeLedger(systemPaths);
-    expect(ledger.at(-1)?.childIssueIds).toEqual(["AIC-341"]);
+    const thread = await loadThreadProjection("C0ALAMDRB9V:thread-research-fallback");
+    expect(thread?.childIssueIds).toEqual(["AIC-341"]);
   });
 
   it("returns a heartbeat noop reason when urgent issues are suppressed by cooldown", async () => {

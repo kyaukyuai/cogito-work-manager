@@ -10,7 +10,6 @@ import {
   type OwnerMapEntry,
   type PlanningLedgerEntry,
 } from "../state/manager-state-contract.js";
-import type { CompatIntakeLedgerEntry as IntakeLedgerEntry } from "../state/compat/intake-ledger-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { SchedulerJob, SystemPaths } from "./system-workspace.js";
 import { loadSchedulerJobs, saveSchedulerJobs } from "./system-workspace.js";
@@ -22,7 +21,6 @@ export type {
   OwnerMapEntry,
   PlanningLedgerEntry,
 } from "../state/manager-state-contract.js";
-export type { CompatIntakeLedgerEntry as IntakeLedgerEntry } from "../state/compat/intake-ledger-contract.js";
 
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
@@ -138,14 +136,6 @@ export async function loadManagerPolicy(paths: SystemPaths): Promise<ManagerPoli
 
 export async function loadOwnerMap(paths: SystemPaths): Promise<OwnerMap> {
   return createFileBackedManagerRepositories(paths).ownerMap.load();
-}
-
-export async function loadIntakeLedger(paths: SystemPaths): Promise<IntakeLedgerEntry[]> {
-  return createFileBackedManagerRepositories(paths).intake.load();
-}
-
-export async function saveIntakeLedger(paths: SystemPaths, ledger: IntakeLedgerEntry[]): Promise<void> {
-  await createFileBackedManagerRepositories(paths).intake.save(ledger);
 }
 
 export async function loadFollowupsLedger(paths: SystemPaths): Promise<FollowupLedgerEntry[]> {
