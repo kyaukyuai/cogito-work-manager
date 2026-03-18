@@ -44,6 +44,14 @@ export interface AwaitingFollowupContext extends WorkgraphIssueContext {
   followupStatus: "awaiting-response";
 }
 
+export interface WorkgraphThreadPlanningContext {
+  thread: WorkgraphThreadContext;
+  parentIssue?: WorkgraphIssueContext;
+  childIssues: WorkgraphIssueContext[];
+  linkedIssues: WorkgraphIssueContext[];
+  latestResolvedIssue?: WorkgraphIssueContext;
+}
+
 function mapIssueContext(issue: WorkgraphIssueProjection): WorkgraphIssueContext {
   return {
     issueId: issue.issueId,
@@ -85,6 +93,15 @@ async function loadProjection(repository: WorkgraphRepository): Promise<Workgrap
   return repository.project();
 }
 
+function resolveIssueContext(
+  projection: WorkgraphProjection,
+  issueId: string | undefined,
+): WorkgraphIssueContext | undefined {
+  if (!issueId) return undefined;
+  const issue = projection.issues[issueId];
+  return issue ? mapIssueContext(issue) : undefined;
+}
+
 export async function getThreadContext(
   repository: WorkgraphRepository,
   threadKey: string,
@@ -124,4 +141,55 @@ export async function listAwaitingFollowups(
       ...mapIssueContext(issue),
       followupStatus: "awaiting-response",
     }));
+}
+
+export async function getLatestResolvedIssueForThread(
+  repository: WorkgraphRepository,
+  threadKey: string,
+): Promise<WorkgraphIssueContext | undefined> {
+  const projection = await loadProjection(repository);
+  const thread = projection.threads[threadKey];
+  if (!thread?.lastResolvedIssueId) return undefined;
+  return resolveIssueContext(projection, thread.lastResolvedIssueId);
+}
+
+export async function listThreadIssueCandidates(
+  repository: WorkgraphRepository,
+  threadKey: string,
+): Promise<WorkgraphIssueContext[]> {
+  const projection = await loadProjection(repository);
+  const thread = projection.threads[threadKey];
+  if (!thread) return [];
+
+  const orderedIssueIds = Array.from(new Set([
+    ...(thread.lastResolvedIssueId ? [thread.lastResolvedIssueId] : []),
+    ...(thread.parentIssueId ? [thread.parentIssueId] : []),
+    ...thread.childIssueIds,
+    ...thread.linkedIssueIds,
+  ]));
+
+  return orderedIssueIds
+    .map((issueId) => resolveIssueContext(projection, issueId))
+    .filter(Boolean) as WorkgraphIssueContext[];
+}
+
+export async function getThreadPlanningContext(
+  repository: WorkgraphRepository,
+  threadKey: string,
+): Promise<WorkgraphThreadPlanningContext | undefined> {
+  const projection = await loadProjection(repository);
+  const thread = projection.threads[threadKey];
+  if (!thread) return undefined;
+
+  return {
+    thread: mapThreadContext(thread),
+    parentIssue: resolveIssueContext(projection, thread.parentIssueId),
+    childIssues: thread.childIssueIds
+      .map((issueId) => resolveIssueContext(projection, issueId))
+      .filter(Boolean) as WorkgraphIssueContext[],
+    linkedIssues: thread.linkedIssueIds
+      .map((issueId) => resolveIssueContext(projection, issueId))
+      .filter(Boolean) as WorkgraphIssueContext[],
+    latestResolvedIssue: resolveIssueContext(projection, thread.lastResolvedIssueId),
+  };
 }

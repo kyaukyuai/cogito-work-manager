@@ -255,7 +255,26 @@ export function formatRiskLine(item: RiskAssessment): string {
   const categories = item.riskCategories.join(", ");
   const assignee = item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? "未割当";
   const due = item.issue.dueDate ?? "期限未設定";
-  return `- ${item.issue.identifier} / ${item.issue.title} / ${categories} / 担当: ${assignee} / 期限: ${due}`;
+  const priority = item.issue.priorityLabel ? ` / 優先度: ${item.issue.priorityLabel}` : "";
+  const cycle = item.issue.cycle?.name
+    ? ` / Cycle: ${item.issue.cycle.name}`
+    : item.issue.cycle?.number != null
+      ? ` / Cycle: ${item.issue.cycle.number}`
+      : "";
+  return `- ${item.issue.identifier} / ${item.issue.title} / ${categories} / 担当: ${assignee} / 期限: ${due}${priority}${cycle}`;
+}
+
+export function buildIssueRiskSummary(item: RiskAssessment): string {
+  const parts = [item.riskCategories.join(", ")];
+  if (item.issue.priorityLabel) {
+    parts.push(`優先度: ${item.issue.priorityLabel}`);
+  }
+  if (item.issue.cycle?.name) {
+    parts.push(`Cycle: ${item.issue.cycle.name}`);
+  } else if (item.issue.cycle?.number != null) {
+    parts.push(`Cycle: ${item.issue.cycle.number}`);
+  }
+  return parts.join(" / ");
 }
 
 export function upsertFollowup(

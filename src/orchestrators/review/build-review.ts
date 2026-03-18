@@ -7,7 +7,6 @@ import {
   type PlanningLedgerEntry,
 } from "../../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
-import { listPendingClarifications } from "../../state/workgraph/queries.js";
 import { recordFollowupTransitions } from "../../state/workgraph/recorder.js";
 import type {
   HeartbeatReviewDecision,
@@ -51,6 +50,7 @@ export interface ReviewHelpers {
     now: Date,
   ): FollowupLedgerEntry;
   getPrimaryRiskCategory(item: RiskAssessment): string;
+  buildIssueRiskSummary(item: RiskAssessment): string;
   formatRiskLine(item: RiskAssessment): string;
   selectReviewFollowupItem(
     items: RiskAssessment[],
@@ -141,7 +141,7 @@ export async function buildHeartbeatReviewDecision({
         issueId: top.issue.identifier,
         title: top.issue.title,
         assigneeDisplayName: top.issue.assignee?.displayName ?? top.issue.assignee?.name ?? undefined,
-        riskSummary: top.riskCategories.join(", "),
+        riskSummary: helpers.buildIssueRiskSummary(top),
       }],
       followup,
     },
@@ -165,7 +165,16 @@ export async function buildManagerReview({
     return decision.review;
   }
 
-  const { policy, ownerMap, followups, planningLedger, intakeLedger, risky } = await helpers.loadManagerReviewData(
+  const {
+    policy,
+    ownerMap,
+    followups,
+    planningLedger,
+    intakeLedger,
+    pendingClarificationCount,
+    awaitingFollowupCount,
+    risky,
+  } = await helpers.loadManagerReviewData(
     config,
     repositories,
     now,
@@ -220,7 +229,7 @@ export async function buildManagerReview({
         title: item.issue.title,
         issueUrl: item.issue.url,
         assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
-        riskSummary: item.riskCategories.join(", "),
+        riskSummary: helpers.buildIssueRiskSummary(item),
       })),
       followup,
     };
@@ -276,20 +285,20 @@ export async function buildManagerReview({
         title: item.issue.title,
         issueUrl: item.issue.url,
         assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
-        riskSummary: item.riskCategories.join(", "),
+        riskSummary: helpers.buildIssueRiskSummary(item),
       })),
       followup,
     };
   }
 
   const fallbackCount = planningLedger.filter((entry) => entry.ownerResolution === "fallback").length;
-  const unresolvedClarifications = (await listPendingClarifications(repositories.workgraph)).length;
   const staleItems = sorted.filter((item) => item.riskCategories.includes("stale")).slice(0, 5);
   const lines = ["週次 planning review です。"];
   lines.push(`- 未整備 issue: ${sorted.filter((item) => item.ownerMissing || item.dueMissing).length}`);
   lines.push(`- 長期 stale: ${staleItems.length}`);
   lines.push(`- owner map gap: ${fallbackCount}`);
-  lines.push(`- 未処理 clarification: ${unresolvedClarifications}`);
+  lines.push(`- 未回答 follow-up: ${awaitingFollowupCount}`);
+  lines.push(`- 未処理 clarification: ${pendingClarificationCount}`);
   for (const item of staleItems.slice(0, 3)) {
     lines.push(helpers.formatRiskLine(item));
   }
@@ -328,14 +337,15 @@ export async function buildManagerReview({
       `未整備 issue: ${sorted.filter((item) => item.ownerMissing || item.dueMissing).length}`,
       `長期 stale: ${staleItems.length}`,
       `owner map gap: ${fallbackCount}`,
-      `未処理 clarification: ${unresolvedClarifications}`,
+      `未回答 follow-up: ${awaitingFollowupCount}`,
+      `未処理 clarification: ${pendingClarificationCount}`,
     ],
     issueLines: weeklyItems.map((item) => ({
       issueId: item.issue.identifier,
       title: item.issue.title,
       issueUrl: item.issue.url,
       assigneeDisplayName: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? undefined,
-      riskSummary: item.riskCategories.join(", "),
+      riskSummary: helpers.buildIssueRiskSummary(item),
     })),
     followup,
   };

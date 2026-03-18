@@ -1391,6 +1391,12 @@ describe("handleManagerMessage clarification flow", () => {
         dueDate: "2026-03-16",
         updatedAt: "2026-03-10T03:00:00.000Z",
         priority: 1,
+        priorityLabel: "Urgent",
+        cycle: {
+          id: "cycle-42",
+          number: 42,
+          name: "Sprint 42",
+        },
         assignee: { id: "user-1", displayName: "y.kakui" },
         state: { id: "state-1", name: "Started", type: "started" },
         relations: [],
@@ -1407,6 +1413,10 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(morning?.text).toContain("朝の execution review です。");
     expect(morning?.text).toContain("AIC-300");
+    expect(morning?.text).toContain("優先度: Urgent");
+    expect(morning?.text).toContain("Cycle: Sprint 42");
+    expect(morning?.issueLines?.[0]?.riskSummary).toContain("優先度: Urgent");
+    expect(morning?.issueLines?.[0]?.riskSummary).toContain("Cycle: Sprint 42");
     expect(morning?.followup).toEqual(expect.objectContaining({
       issueId: "AIC-300",
       request: "現在の進捗と次アクション、次回更新予定を共有してください。",
@@ -1944,17 +1954,30 @@ describe("handleManagerMessage clarification flow", () => {
 
   it("counts pending clarifications from the work graph in weekly review", async () => {
     linearMocks.listRiskyLinearIssues.mockResolvedValue([]);
-    await createFileBackedManagerRepositories(systemPaths).workgraph.append({
-      type: "intake.clarification_requested",
-      occurredAt: "2026-03-17T00:00:00.000Z",
-      threadKey: "C0ALAMDRB9V:thread-weekly-clarify",
-      sourceChannelId: "C0ALAMDRB9V",
-      sourceThreadTs: "thread-weekly-clarify",
-      sourceMessageTs: "msg-1",
-      messageFingerprint: "weekly-clarify",
-      clarificationQuestion: "期限を教えてください。",
-      clarificationReasons: ["due_date"],
-    });
+    await createFileBackedManagerRepositories(systemPaths).workgraph.append([
+      {
+        type: "intake.clarification_requested",
+        occurredAt: "2026-03-17T00:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-weekly-clarify",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-weekly-clarify",
+        sourceMessageTs: "msg-1",
+        messageFingerprint: "weekly-clarify",
+        clarificationQuestion: "期限を教えてください。",
+        clarificationReasons: ["due_date"],
+      },
+      {
+        type: "followup.requested",
+        occurredAt: "2026-03-17T00:10:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-weekly-followup",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-weekly-followup",
+        sourceMessageTs: "msg-2",
+        issueId: "AIC-450",
+        category: "stale",
+        requestKind: "status",
+      },
+    ]);
 
     const review = await buildManagerReview(
       { ...config, workspaceDir },
@@ -1964,7 +1987,9 @@ describe("handleManagerMessage clarification flow", () => {
     );
 
     expect(review?.text).toContain("未処理 clarification: 1");
+    expect(review?.text).toContain("未回答 follow-up: 1");
     expect(review?.summaryLines).toContain("未処理 clarification: 1");
+    expect(review?.summaryLines).toContain("未回答 follow-up: 1");
   });
 
   it("applies a due-date follow-up reply from the source thread and resolves it as risk-cleared", async () => {

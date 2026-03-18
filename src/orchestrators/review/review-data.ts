@@ -8,6 +8,10 @@ import {
   type PlanningLedgerEntry,
 } from "../../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
+import {
+  listAwaitingFollowups,
+  listPendingClarifications,
+} from "../../state/workgraph/queries.js";
 import { recordFollowupTransitions } from "../../state/workgraph/recorder.js";
 import type { RiskAssessment } from "./contract.js";
 import { assessRisk, issueMatchesCompletedState } from "./risk.js";
@@ -18,6 +22,8 @@ export interface ManagerReviewData {
   followups: FollowupLedgerEntry[];
   planningLedger: PlanningLedgerEntry[];
   intakeLedger: IntakeLedgerEntry[];
+  pendingClarificationCount: number;
+  awaitingFollowupCount: number;
   risky: RiskAssessment[];
 }
 
@@ -88,6 +94,8 @@ export async function loadManagerReviewData(
   const followups = await repositories.followups.load();
   const planningLedger = await repositories.planning.load();
   const intakeLedger = await repositories.intake.load();
+  const pendingClarificationCount = (await listPendingClarifications(repositories.workgraph)).length;
+  const awaitingFollowupCount = (await listAwaitingFollowups(repositories.workgraph)).length;
   const env = {
     ...process.env,
     LINEAR_API_KEY: config.linearApiKey,
@@ -117,6 +125,8 @@ export async function loadManagerReviewData(
     followups: reconciled.followups,
     planningLedger,
     intakeLedger,
+    pendingClarificationCount,
+    awaitingFollowupCount,
     risky,
   };
 }

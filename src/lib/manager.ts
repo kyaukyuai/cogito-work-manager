@@ -15,6 +15,7 @@ import type {
 import { loadManagerReviewData } from "../orchestrators/review/review-data.js";
 import {
   buildAwaitingFollowupPatch,
+  buildIssueRiskSummary,
   buildReviewFollowup,
   formatReviewFollowupPrompt,
   formatRiskLine,
@@ -540,6 +541,7 @@ export async function buildHeartbeatReviewDecision(
         { nowIso },
       ),
       getPrimaryRiskCategory,
+      buildIssueRiskSummary,
       formatRiskLine,
       selectReviewFollowupItem,
     },
@@ -668,6 +670,7 @@ export async function buildManagerReview(
         { nowIso },
       ),
       getPrimaryRiskCategory,
+      buildIssueRiskSummary,
       formatRiskLine,
       selectReviewFollowupItem,
     },

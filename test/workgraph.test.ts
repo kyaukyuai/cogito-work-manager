@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedWorkgraphRepository } from "../src/state/workgraph/file-backed-workgraph-repository.js";
 import {
+  getLatestResolvedIssueForThread,
   getIssueContext,
+  getThreadPlanningContext,
   getThreadContext,
   listAwaitingFollowups,
   listPendingClarifications,
+  listThreadIssueCandidates,
 } from "../src/state/workgraph/queries.js";
 
 describe("workgraph repository", () => {
@@ -193,6 +196,27 @@ describe("workgraph repository", () => {
       issueId: "AIC-11",
       parentIssueId: "AIC-10",
       followupStatus: "awaiting-response",
+    }));
+
+    expect(await getLatestResolvedIssueForThread(repository, "C123:thread-active")).toEqual(expect.objectContaining({
+      issueId: "AIC-11",
+      parentIssueId: "AIC-10",
+    }));
+
+    expect(await listThreadIssueCandidates(repository, "C123:thread-active")).toEqual([
+      expect.objectContaining({ issueId: "AIC-11" }),
+      expect.objectContaining({ issueId: "AIC-10" }),
+    ]);
+
+    expect(await getThreadPlanningContext(repository, "C123:thread-active")).toEqual(expect.objectContaining({
+      thread: expect.objectContaining({
+        threadKey: "C123:thread-active",
+        parentIssueId: "AIC-10",
+        childIssueIds: ["AIC-11"],
+      }),
+      parentIssue: expect.objectContaining({ issueId: "AIC-10" }),
+      childIssues: [expect.objectContaining({ issueId: "AIC-11" })],
+      latestResolvedIssue: expect.objectContaining({ issueId: "AIC-11" }),
     }));
 
     expect(await listAwaitingFollowups(repository)).toEqual([
