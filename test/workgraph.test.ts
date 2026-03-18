@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedWorkgraphRepository } from "../src/state/workgraph/file-backed-workgraph-repository.js";
 import {
+  findExistingThreadIntakeByFingerprint,
   buildIssueSourceIndex,
   getPendingClarificationForThread,
   getLatestIssueSource,
@@ -265,6 +266,23 @@ describe("workgraph repository", () => {
         sourceMessageTs: "msg-2",
         lastEventAt: "2026-03-18T01:00:00.000Z",
       },
+    });
+
+    expect(await findExistingThreadIntakeByFingerprint(
+      repository,
+      "C123:thread-active",
+      "create-1",
+    )).toEqual({
+      threadKey: "C123:thread-active",
+      intakeStatus: "created",
+      messageFingerprint: "create-1",
+      sourceMessageTs: "msg-2",
+      originalText: undefined,
+      parentIssueId: "AIC-10",
+      childIssueIds: ["AIC-11"],
+      linkedIssueIds: [],
+      lastResolvedIssueId: undefined,
+      occurredAt: "2026-03-18T00:10:00.000Z",
     });
   });
 });

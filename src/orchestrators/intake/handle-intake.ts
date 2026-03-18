@@ -23,7 +23,13 @@ import { buildThreadPaths } from "../../lib/thread-workspace.js";
 import { webFetchUrl, webSearchFetch } from "../../lib/web-research.js";
 import type { AppConfig } from "../../lib/config.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
-import type { PendingClarificationContext } from "../../state/workgraph/queries.js";
+import {
+  buildWorkgraphThreadKey,
+} from "../../state/workgraph/events.js";
+import {
+  findExistingThreadIntakeByFingerprint,
+  type PendingClarificationContext,
+} from "../../state/workgraph/queries.js";
 import {
   buildPlanningChildRecord,
   recordIntakeClarificationRequested,
@@ -45,7 +51,6 @@ import {
   formatIssueReference,
 } from "./formatting.js";
 import {
-  buildIntakeKey,
   type IntakeLedgerSupport,
 } from "../shared/intake-ledger.js";
 import {
@@ -80,7 +85,7 @@ export interface HandleIntakeRequestArgs {
   now: Date;
   policy: ManagerPolicy;
   intakeLedger: IntakeLedgerEntry[];
-  pendingClarification?: PendingClarificationContext | IntakeLedgerEntry;
+  pendingClarification?: PendingClarificationContext;
   originalRequestText: string;
   requestMessage: IntakeMessage;
   env: LinearCommandEnv;
@@ -99,12 +104,9 @@ function dropPendingClarificationEntries(
 }
 
 function getPendingClarificationCreatedAt(
-  pendingClarification: PendingClarificationContext | IntakeLedgerEntry | undefined,
+  pendingClarification: PendingClarificationContext | undefined,
 ): string | undefined {
-  if (!pendingClarification) return undefined;
-  return "createdAt" in pendingClarification
-    ? pendingClarification.createdAt
-    : pendingClarification.clarificationRequestedAt;
+  return pendingClarification?.clarificationRequestedAt;
 }
 
 export async function handleIntakeRequest({
@@ -134,18 +136,19 @@ export async function handleIntakeRequest({
   };
 
   const fingerprint = pendingClarification?.messageFingerprint ?? helpers.fingerprintText(requestMessage.text);
-  const existingLedgerEntry = intakeLedger.find((entry) => {
-    if (entry.status === "needs-clarification") return false;
-    return buildIntakeKey(entry) === buildIntakeKey({
-      sourceChannelId: requestMessage.channelId,
-      sourceThreadTs: requestMessage.rootThreadTs,
-      messageFingerprint: fingerprint,
-    });
-  });
+  const existingThreadIntake = await findExistingThreadIntakeByFingerprint(
+    repositories.workgraph,
+    buildWorkgraphThreadKey(requestMessage.channelId, requestMessage.rootThreadTs),
+    fingerprint,
+  );
 
-  if (existingLedgerEntry) {
+  if (existingThreadIntake) {
     const linkedIssues = Array.from(new Set(
-      [existingLedgerEntry.parentIssueId, ...existingLedgerEntry.childIssueIds].filter(Boolean),
+      [
+        existingThreadIntake.parentIssueId,
+        ...existingThreadIntake.childIssueIds,
+        ...existingThreadIntake.linkedIssueIds,
+      ].filter(Boolean),
     )) as string[];
     return {
       handled: true,

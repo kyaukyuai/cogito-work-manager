@@ -466,6 +466,56 @@ describe("handleManagerMessage clarification flow", () => {
     );
   });
 
+  it("detects duplicate intake from workgraph even if the intake ledger entry is missing", async () => {
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-dup-1",
+      identifier: "AIC-150",
+      title: "ログイン画面の不具合修正",
+      url: "https://linear.app/kyaukyuai/issue/AIC-150",
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const first = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-duplicate-workgraph",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "ログイン画面の不具合修正を対応しておいて",
+      },
+      repositories,
+      new Date("2026-03-17T04:00:00.000Z"),
+    );
+
+    expect(first.handled).toBe(true);
+    await repositories.intake.save([]);
+
+    const second = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-duplicate-workgraph",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "ログイン画面の不具合修正を対応しておいて",
+      },
+      repositories,
+      new Date("2026-03-17T04:05:00.000Z"),
+    );
+
+    expect(second.handled).toBe(true);
+    expect(second.reply).toContain("この依頼は既に取り込まれています。");
+    expect(second.reply).toContain("AIC-150");
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(1);
+  });
+
   it("updates a unique thread-linked issue when the user reports progress", async () => {
     linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-1",

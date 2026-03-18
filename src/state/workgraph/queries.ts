@@ -66,6 +66,19 @@ export interface WorkgraphIssueSource {
   lastEventAt?: string;
 }
 
+export interface ExistingThreadIntakeContext {
+  threadKey: string;
+  intakeStatus: "linked-existing" | "created";
+  messageFingerprint: string;
+  sourceMessageTs?: string;
+  originalText?: string;
+  parentIssueId?: string;
+  childIssueIds: string[];
+  linkedIssueIds: string[];
+  lastResolvedIssueId?: string;
+  occurredAt: string;
+}
+
 function mapIssueContext(issue: WorkgraphIssueProjection): WorkgraphIssueContext {
   return {
     issueId: issue.issueId,
@@ -187,6 +200,51 @@ export async function getPendingClarificationForThread(
   const thread = projection.threads[threadKey];
   if (!thread?.pendingClarification) return undefined;
   return mapThreadContext(thread);
+}
+
+export async function findExistingThreadIntakeByFingerprint(
+  repository: WorkgraphRepository,
+  threadKey: string,
+  messageFingerprint: string,
+): Promise<ExistingThreadIntakeContext | undefined> {
+  const events = await repository.list();
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (!event || event.threadKey !== threadKey) continue;
+    if (!("messageFingerprint" in event) || event.messageFingerprint !== messageFingerprint) continue;
+
+    if (event.type === "intake.created") {
+      return {
+        threadKey,
+        intakeStatus: "created",
+        messageFingerprint: event.messageFingerprint,
+        sourceMessageTs: event.sourceMessageTs,
+        originalText: event.originalText,
+        parentIssueId: event.parentIssueId,
+        childIssueIds: [...event.childIssueIds],
+        linkedIssueIds: [],
+        lastResolvedIssueId: event.lastResolvedIssueId,
+        occurredAt: event.occurredAt,
+      };
+    }
+
+    if (event.type === "intake.linked_existing") {
+      return {
+        threadKey,
+        intakeStatus: "linked-existing",
+        messageFingerprint: event.messageFingerprint,
+        sourceMessageTs: event.sourceMessageTs,
+        originalText: event.originalText,
+        parentIssueId: undefined,
+        childIssueIds: [],
+        linkedIssueIds: [...event.linkedIssueIds],
+        lastResolvedIssueId: event.lastResolvedIssueId,
+        occurredAt: event.occurredAt,
+      };
+    }
+  }
+
+  return undefined;
 }
 
 export async function listAwaitingFollowups(

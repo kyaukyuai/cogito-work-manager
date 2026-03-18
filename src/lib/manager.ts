@@ -38,9 +38,13 @@ import {
 } from "./linear.js";
 import {
   type ManagerPolicy,
+  type IntakeLedgerEntry,
 } from "../state/manager-state-contract.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
-import { getPendingClarificationForThread } from "../state/workgraph/queries.js";
+import {
+  getPendingClarificationForThread,
+  type PendingClarificationContext,
+} from "../state/workgraph/queries.js";
 import type { SystemPaths } from "./system-workspace.js";
 
 export type ManagerMessageKind = "request" | "progress" | "completed" | "blocked" | "conversation";
@@ -481,6 +485,31 @@ function isManagerRepositories(value: unknown): value is ManagerRepositories {
     && "workgraph" in value;
 }
 
+function toPendingClarificationContext(entry: IntakeLedgerEntry): PendingClarificationContext {
+  return {
+    threadKey: buildWorkgraphThreadKey(entry.sourceChannelId, entry.sourceThreadTs),
+    sourceChannelId: entry.sourceChannelId,
+    sourceThreadTs: entry.sourceThreadTs,
+    sourceMessageTs: entry.sourceMessageTs,
+    messageFingerprint: entry.messageFingerprint,
+    originalText: entry.originalText,
+    clarificationQuestion: entry.clarificationQuestion,
+    clarificationReasons: [...(entry.clarificationReasons ?? [])],
+    clarificationRequestedAt: entry.createdAt,
+    lastEventAt: entry.updatedAt,
+    intakeStatus: "needs-clarification",
+    pendingClarification: true,
+    parentIssueId: entry.parentIssueId,
+    childIssueIds: [...entry.childIssueIds],
+    linkedIssueIds: [],
+    planningReason: undefined,
+    lastResolvedIssueId: entry.lastResolvedIssueId,
+    latestFocusIssueId: undefined,
+    awaitingFollowupIssueIds: [],
+    issueStatuses: {},
+  };
+}
+
 export async function buildHeartbeatReviewDecision(
   config: AppConfig,
   systemPaths: SystemPaths,
@@ -541,7 +570,10 @@ export async function handleManagerMessage(
   const pendingClarification = await getPendingClarificationForThread(
     repositories.workgraph,
     buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
-  ) ?? findPendingClarification(intakeLedger, message);
+  ) ?? (() => {
+    const legacy = findPendingClarification(intakeLedger, message);
+    return legacy ? toPendingClarificationContext(legacy) : undefined;
+  })();
   const originalRequestText = pendingClarification?.originalText ?? message.text;
   const followupText = pendingClarification ? message.text : "";
   const combinedRequestText = pendingClarification
