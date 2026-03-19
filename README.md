@@ -47,6 +47,7 @@ execution manager としての中長期設計方針と、repo 向けの目標デ
     followups.json
     planning-ledger.json
     workgraph-events.jsonl
+    workgraph-snapshot.json
     /sessions/
       /heartbeat/<channel-id>/
       /cron/<job-id>/

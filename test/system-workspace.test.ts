@@ -15,6 +15,7 @@ describe("system workspace helpers", () => {
     expect(paths.policyFile).toBe("/workspace/system/policy.json");
     expect(paths.ownerMapFile).toBe("/workspace/system/owner-map.json");
     expect(paths.workgraphEventsFile).toBe("/workspace/system/workgraph-events.jsonl");
+    expect(paths.workgraphSnapshotFile).toBe("/workspace/system/workgraph-snapshot.json");
   });
 
   it("builds heartbeat session paths", () => {

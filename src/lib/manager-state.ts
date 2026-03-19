@@ -11,6 +11,7 @@ import {
   type PlanningLedgerEntry,
 } from "../state/manager-state-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
+import { EMPTY_WORKGRAPH_SNAPSHOT } from "../state/workgraph/snapshot.js";
 import type { SchedulerJob, SystemPaths } from "./system-workspace.js";
 import { loadSchedulerJobs, saveSchedulerJobs } from "./system-workspace.js";
 
@@ -109,6 +110,7 @@ export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void>
   await ensureJsonFile(paths.followupsFile, []);
   await ensureJsonFile(paths.planningLedgerFile, []);
   await ensureTextFile(paths.workgraphEventsFile, "");
+  await ensureJsonFile(paths.workgraphSnapshotFile, EMPTY_WORKGRAPH_SNAPSHOT);
   await rm(join(paths.rootDir, "intake-ledger.json"), { force: true });
 
   const policy = await loadManagerPolicy(paths);

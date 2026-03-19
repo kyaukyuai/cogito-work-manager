@@ -285,4 +285,88 @@ describe("workgraph repository", () => {
       occurredAt: "2026-03-18T00:10:00.000Z",
     });
   });
+
+  it("projects from a persisted snapshot plus replayed tail events", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-snapshot-"));
+    const paths = buildSystemPaths(workspaceDir);
+    const repository = createFileBackedWorkgraphRepository(paths);
+
+    await repository.append([
+      {
+        type: "planning.parent_created",
+        occurredAt: "2026-03-18T00:00:00.000Z",
+        threadKey: "C123:thread-snapshot",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-snapshot",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-20",
+        title: "障害対応",
+      },
+      {
+        type: "planning.child_created",
+        occurredAt: "2026-03-18T00:01:00.000Z",
+        threadKey: "C123:thread-snapshot",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-snapshot",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-21",
+        title: "ログ確認",
+        kind: "execution",
+        parentIssueId: "AIC-20",
+      },
+      {
+        type: "intake.created",
+        occurredAt: "2026-03-18T00:01:00.000Z",
+        threadKey: "C123:thread-snapshot",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-snapshot",
+        sourceMessageTs: "msg-1",
+        messageFingerprint: "snapshot-seed",
+        parentIssueId: "AIC-20",
+        childIssueIds: ["AIC-21"],
+        planningReason: "complex-request",
+      },
+    ]);
+
+    const snapshot = await repository.rebuildSnapshot();
+    expect(snapshot.eventCount).toBe(3);
+    expect(snapshot.projection.threads["C123:thread-snapshot"]).toMatchObject({
+      parentIssueId: "AIC-20",
+      childIssueIds: ["AIC-21"],
+      latestFocusIssueId: "AIC-21",
+    });
+
+    await repository.append({
+      type: "issue.blocked",
+      occurredAt: "2026-03-18T00:10:00.000Z",
+      threadKey: "C123:thread-snapshot",
+      sourceChannelId: "C123",
+      sourceThreadTs: "thread-snapshot",
+      sourceMessageTs: "msg-2",
+      issueId: "AIC-21",
+      blockedStateApplied: true,
+    });
+
+    expect(await repository.loadSnapshot()).toMatchObject({
+      version: 1,
+      eventCount: 3,
+      lastOccurredAt: "2026-03-18T00:01:00.000Z",
+    });
+
+    expect(await repository.project()).toMatchObject({
+      threads: {
+        "C123:thread-snapshot": expect.objectContaining({
+          latestFocusIssueId: "AIC-21",
+          issueStatuses: {
+            "AIC-21": "blocked",
+          },
+        }),
+      },
+      issues: {
+        "AIC-21": expect.objectContaining({
+          lastStatus: "blocked",
+        }),
+      },
+    });
+  });
 });

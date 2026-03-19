@@ -1,4 +1,5 @@
 import type { WorkgraphEvent } from "./events.js";
+import type { WorkgraphSnapshot } from "./snapshot.js";
 
 export interface WorkgraphIssueProjection {
   issueId: string;
@@ -45,6 +46,17 @@ export interface WorkgraphProjection {
   threads: Record<string, WorkgraphThreadProjection>;
 }
 
+function createEmptyProjection(): WorkgraphProjection {
+  return {
+    issues: {},
+    threads: {},
+  };
+}
+
+function cloneProjection(projection: WorkgraphProjection): WorkgraphProjection {
+  return structuredClone(projection);
+}
+
 function uniquePush(values: string[], value: string | undefined): void {
   if (!value) return;
   if (!values.includes(value)) {
@@ -83,11 +95,13 @@ function getOrCreateThread(
   return projection.threads[threadKey];
 }
 
-export function projectWorkgraph(events: WorkgraphEvent[]): WorkgraphProjection {
-  const projection: WorkgraphProjection = {
-    issues: {},
-    threads: {},
-  };
+export function projectWorkgraph(
+  events: WorkgraphEvent[],
+  baseProjection?: WorkgraphProjection | WorkgraphSnapshot,
+): WorkgraphProjection {
+  const projection = baseProjection
+    ? cloneProjection("projection" in baseProjection ? baseProjection.projection : baseProjection)
+    : createEmptyProjection();
 
   for (const event of events) {
     const thread = event.threadKey ? getOrCreateThread(projection, event.threadKey) : undefined;

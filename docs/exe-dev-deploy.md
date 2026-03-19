@@ -206,6 +206,7 @@ docker compose down
 - `followups.json`
 - `planning-ledger.json`
 - `workgraph-events.jsonl`
+- `workgraph-snapshot.json`
 - `jobs.json`
 - `HEARTBEAT.md`
 

@@ -12,6 +12,7 @@ export interface SystemPaths {
   followupsFile: string;
   planningLedgerFile: string;
   workgraphEventsFile: string;
+  workgraphSnapshotFile: string;
   sessionsDir: string;
 }
 
@@ -103,6 +104,7 @@ export function buildSystemPaths(workspaceDir: string): SystemPaths {
     followupsFile: join(rootDir, "followups.json"),
     planningLedgerFile: join(rootDir, "planning-ledger.json"),
     workgraphEventsFile: join(rootDir, "workgraph-events.jsonl"),
+    workgraphSnapshotFile: join(rootDir, "workgraph-snapshot.json"),
     sessionsDir: join(rootDir, "sessions"),
   };
 }
