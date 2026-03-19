@@ -10,6 +10,12 @@ import {
   handleManagerQuery,
   type ManagerQueryKind,
 } from "../orchestrators/query/handle-query.js";
+import {
+  runManagerReplyTurn,
+  runMessageRouterTurn,
+  type MessageRouterInput,
+  type MessageRouterResult,
+} from "./pi-session.js";
 import type {
   HeartbeatReviewDecision,
   ManagerReviewKind,
@@ -47,8 +53,11 @@ import {
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
   getPendingClarificationForThread,
+  getThreadPlanningContext,
 } from "../state/workgraph/queries.js";
+import { getSlackThreadContext } from "./slack-context.js";
 import type { SystemPaths } from "./system-workspace.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "./thread-workspace.js";
 
 export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation";
 export type ClarificationNeed = "scope" | "due_date" | "execution_plan";
@@ -85,6 +94,17 @@ export interface ManagerSlackMessage {
 export interface ManagerHandleResult {
   handled: boolean;
   reply?: string;
+  diagnostics?: {
+    router: {
+      source: "llm" | "fallback";
+      action: MessageRouterResult["action"] | ManagerMessageKind;
+      queryKind?: ManagerQueryKind;
+      queryScope?: "self" | "team" | "thread-context";
+      confidence?: number;
+      reasoningSummary?: string;
+      technicalFailure?: string;
+    };
+  };
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
@@ -105,6 +125,7 @@ const AMBIGUOUS_EXECUTION_PATTERN = /(進めておいて|進めて|よしなに|
 const ACTIONABLE_RESEARCH_PATTERN = /(確認|修正|対応|実装|調査|整理|洗い出し|作成|更新|共有|再現|検証|比較)/i;
 const LIST_MARKER_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const LIST_HEADING_PATTERN = /^(?:タスク|todo|issue|イシュー)?\s*一覧$/i;
+const GREETING_PATTERN = /^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/i;
 interface ParsedTaskSegment {
   raw: string;
   title: string;
@@ -176,6 +197,107 @@ export function classifyManagerSignal(text: string): ManagerMessageKind {
   if (RESEARCH_PATTERN.test(normalized)) return "request";
   if (REQUEST_PATTERN.test(normalized)) return "request";
   return "conversation";
+}
+
+function currentDateInJst(now: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+}
+
+function detectFallbackConversationKind(text: string): "greeting" | "smalltalk" | "other" {
+  if (GREETING_PATTERN.test(text.trim())) {
+    return "greeting";
+  }
+  if (/[?？]$/.test(text.trim())) {
+    return "smalltalk";
+  }
+  return "other";
+}
+
+function buildFallbackConversationReply(kind: "greeting" | "smalltalk" | "other"): string {
+  if (kind === "greeting") {
+    return "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。";
+  }
+  if (kind === "smalltalk") {
+    return "確認したいことがあれば、そのまま続けて送ってください。状況確認でも task 追加でも大丈夫です。";
+  }
+  return "必要なことがあれば、そのまま続けて送ってください。状況確認でも task の相談でも対応します。";
+}
+
+async function buildConversationReply(
+  config: AppConfig,
+  message: ManagerSlackMessage,
+  now: Date,
+  conversationKind: "greeting" | "smalltalk" | "other",
+): Promise<string> {
+  const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
+  await ensureThreadWorkspace(paths);
+
+  try {
+    const result = await runManagerReplyTurn(config, paths, {
+      kind: "conversation",
+      conversationKind,
+      currentDate: currentDateInJst(now),
+      messageText: message.text,
+      facts: {
+        messageText: message.text,
+        conversationKind,
+      },
+      taskKey: `${message.channelId}-${message.rootThreadTs}-conversation-reply`,
+    });
+    return result.reply;
+  } catch {
+    return buildFallbackConversationReply(conversationKind);
+  }
+}
+
+async function loadMessageRouterInput(
+  config: AppConfig,
+  repositories: Pick<ManagerRepositories, "workgraph">,
+  message: ManagerSlackMessage,
+  now: Date,
+  pendingClarification?: Awaited<ReturnType<typeof getPendingClarificationForThread>>,
+): Promise<MessageRouterInput> {
+  const recentThread = await getSlackThreadContext(
+    config.workspaceDir,
+    message.channelId,
+    message.rootThreadTs,
+    8,
+  ).catch(() => undefined);
+  const planningContext = await getThreadPlanningContext(
+    repositories.workgraph,
+    buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
+  ).catch(() => undefined);
+
+  return {
+    channelId: message.channelId,
+    rootThreadTs: message.rootThreadTs,
+    userId: message.userId,
+    messageText: message.text,
+    currentDate: currentDateInJst(now),
+    recentThreadEntries: (recentThread?.entries ?? [])
+      .slice(-6)
+      .map((entry) => ({
+        role: entry.type,
+        text: entry.text,
+      })),
+    threadContext: {
+      intakeStatus: pendingClarification?.intakeStatus ?? planningContext?.thread.intakeStatus,
+      pendingClarification: pendingClarification?.pendingClarification ?? planningContext?.thread.pendingClarification ?? false,
+      clarificationQuestion: pendingClarification?.clarificationQuestion ?? planningContext?.thread.clarificationQuestion,
+      originalRequestText: pendingClarification?.originalText ?? planningContext?.thread.originalText,
+      parentIssueId: planningContext?.thread.parentIssueId,
+      childIssueIds: planningContext?.thread.childIssueIds ?? [],
+      linkedIssueIds: planningContext?.thread.linkedIssueIds ?? [],
+      latestFocusIssueId: planningContext?.thread.latestFocusIssueId,
+      lastResolvedIssueId: planningContext?.thread.lastResolvedIssueId,
+    },
+    taskKey: `${message.channelId}-${message.rootThreadTs}-message-router`,
+  };
 }
 
 export function needsResearchTask(text: string): boolean {
@@ -553,6 +675,8 @@ export async function handleManagerMessage(
   const now = repositoriesOrNow instanceof Date ? repositoriesOrNow : (maybeNow ?? new Date());
   const policy = await repositories.policy.load();
   const followups = await repositories.followups.load();
+  const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
+  await ensureThreadWorkspace(paths);
   const pendingClarification = await getPendingClarificationForThread(
     repositories.workgraph,
     buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
@@ -569,16 +693,81 @@ export async function handleManagerMessage(
         text: combinedRequestText,
       }
     : message;
-  const signal = pendingClarification ? "request" : classifyManagerSignal(message.text);
-  const queryKind: ManagerQueryKind | undefined = !pendingClarification && signal === "query"
-    ? classifyManagerQuery(message.text)
-    : undefined;
+  let routerResult: MessageRouterResult | undefined;
+  let routerDiagnostics: ManagerHandleResult["diagnostics"] = undefined;
+
+  try {
+    routerResult = await runMessageRouterTurn(
+      config,
+      paths,
+      await loadMessageRouterInput(config, repositories, message, now, pendingClarification),
+    );
+    routerDiagnostics = {
+      router: {
+        source: "llm",
+        action: routerResult.action,
+        queryKind: routerResult.action === "query" ? routerResult.queryKind : undefined,
+        queryScope: routerResult.action === "query" ? routerResult.queryScope : undefined,
+        confidence: routerResult.confidence,
+        reasoningSummary: routerResult.reasoningSummary,
+      },
+    };
+  } catch (error) {
+    const signal = pendingClarification ? "request" : classifyManagerSignal(message.text);
+    const queryKind: ManagerQueryKind | undefined = !pendingClarification && signal === "query"
+      ? classifyManagerQuery(message.text)
+      : undefined;
+    routerDiagnostics = {
+      router: {
+        source: "fallback",
+        action: signal,
+        queryKind,
+        technicalFailure: error instanceof Error ? error.message : String(error),
+      },
+    };
+    if (signal === "query" && queryKind) {
+      routerResult = {
+        action: "query",
+        queryKind,
+        queryScope: /(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/i.test(message.text) ? "self" : "team",
+        confidence: 0,
+        reasoningSummary: "LLM router fallback",
+      };
+    } else if (signal === "progress") {
+      routerResult = { action: "update_progress", confidence: 0, reasoningSummary: "LLM router fallback" };
+    } else if (signal === "completed") {
+      routerResult = { action: "update_completed", confidence: 0, reasoningSummary: "LLM router fallback" };
+    } else if (signal === "blocked") {
+      routerResult = { action: "update_blocked", confidence: 0, reasoningSummary: "LLM router fallback" };
+    } else if (signal === "request") {
+      routerResult = { action: "create_work", confidence: 0, reasoningSummary: "LLM router fallback" };
+    } else {
+      routerResult = {
+        action: "conversation",
+        conversationKind: detectFallbackConversationKind(message.text),
+        confidence: 0,
+        reasoningSummary: "LLM router fallback",
+      };
+    }
+  }
+
   const env = {
     ...process.env,
     LINEAR_API_KEY: config.linearApiKey,
     LINEAR_WORKSPACE: config.linearWorkspace,
     LINEAR_TEAM_KEY: config.linearTeamKey,
   };
+  const signal = routerResult.action === "update_progress"
+    ? "progress"
+    : routerResult.action === "update_completed"
+      ? "completed"
+      : routerResult.action === "update_blocked"
+        ? "blocked"
+        : routerResult.action === "create_work"
+          ? "request"
+          : routerResult.action === "query"
+            ? "query"
+            : "conversation";
 
   const updatesResult = await handleManagerUpdates({
     config,
@@ -597,29 +786,42 @@ export async function handleManagerMessage(
     },
   });
   if (updatesResult) {
-    return updatesResult;
+    return {
+      ...updatesResult,
+      diagnostics: routerDiagnostics,
+    };
   }
 
-  if (signal === "query" && queryKind) {
-    return handleManagerQuery({
+  if (routerResult.action === "query") {
+    const result = await handleManagerQuery({
+      config,
       repositories,
-      kind: queryKind,
+      kind: routerResult.queryKind,
+      queryScope: routerResult.queryScope,
       message,
       now,
       workspaceDir: config.workspaceDir,
       env,
     });
+    return {
+      ...result,
+      diagnostics: routerDiagnostics,
+    };
   }
 
-  if (signal !== "request") {
-    return { handled: false };
+  if (routerResult.action === "conversation") {
+    return {
+      handled: true,
+      reply: await buildConversationReply(config, message, now, routerResult.conversationKind),
+      diagnostics: routerDiagnostics,
+    };
   }
 
   if (!policy.autoCreate) {
-    return { handled: false };
+    return { handled: false, diagnostics: routerDiagnostics };
   }
 
-  return handleIntakeRequest({
+  const intakeResult = await handleIntakeRequest({
     config,
     repositories,
     message,
@@ -635,6 +837,10 @@ export async function handleManagerMessage(
       nowIso,
     },
   });
+  return {
+    ...intakeResult,
+    diagnostics: routerDiagnostics,
+  };
 }
 
 export async function buildManagerReview(

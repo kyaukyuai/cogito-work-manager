@@ -16,13 +16,14 @@
     {
       "id": "greeting",
       "channelId": "C0ALAMDRB9V",
-      "rootThreadTs": "thread-transcript",
+      "rootThreadTs": "thread-transcript-query",
       "messageTs": "msg-0",
       "userId": "U1",
       "text": "おはよう",
       "now": "2026-03-19T00:50:00.000Z",
       "expect": {
-        "handled": false
+        "handled": true,
+        "replyIncludes": ["そのまま送ってください"]
       }
     },
     {
@@ -41,6 +42,20 @@
       }
     },
     {
+      "id": "query-followup",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript-query",
+      "messageTs": "msg-1b",
+      "userId": "U1",
+      "text": "他にはどのようなタスクがある？",
+      "now": "2026-03-19T01:01:00.000Z",
+      "beforeScenario": "list-active-followup",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["タスク一覧を確認しました。", "AIC-930", "AIC-931"]
+      }
+    },
+    {
       "id": "create",
       "channelId": "C0ALAMDRB9V",
       "rootThreadTs": "thread-transcript",
@@ -52,6 +67,20 @@
       "expect": {
         "handled": true,
         "replyIncludes": ["AIC-940"]
+      }
+    },
+    {
+      "id": "recommend",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript",
+      "messageTs": "msg-2b",
+      "userId": "U1",
+      "text": "AIC-940 次どう進める？",
+      "now": "2026-03-19T01:07:00.000Z",
+      "beforeScenario": "recommend-next-step",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-940", "下書きまではできています", "次の一手を整理しました。"]
       }
     },
     {

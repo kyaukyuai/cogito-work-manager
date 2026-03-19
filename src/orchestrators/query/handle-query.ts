@@ -5,7 +5,10 @@ import {
   type LinearCommandEnv,
   type LinearIssue,
 } from "../../lib/linear.js";
+import type { AppConfig } from "../../lib/config.js";
+import { runManagerReplyTurn } from "../../lib/pi-session.js";
 import { getSlackThreadContext } from "../../lib/slack-context.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../../lib/thread-workspace.js";
 import { buildWorkgraphThreadKey } from "../../state/workgraph/events.js";
 import {
   getIssueContext,
@@ -46,8 +49,10 @@ export interface QueryMessage {
 }
 
 export interface HandleManagerQueryArgs {
+  config: AppConfig;
   repositories: Pick<ManagerRepositories, "policy" | "ownerMap" | "workgraph">;
   kind: ManagerQueryKind;
+  queryScope: "self" | "team" | "thread-context";
   message: QueryMessage;
   now: Date;
   workspaceDir: string;
@@ -59,7 +64,7 @@ const WHAT_SHOULD_I_DO_PATTERN =
 const LIST_TODAY_PATTERN =
   /(?:今日|本日).*(?:タスク|todo|issue|イシュー|チケット|一覧|確認|見せ|教えて|見たい|チェック|list)/i;
 const LIST_ACTIVE_PATTERN =
-  /(?:(?:タスク|todo|issue|イシュー|チケット).*(?:一覧|確認|見せ|教えて|見たい|チェック|list)|(?:進行中|稼働中|active).*(?:タスク|todo|issue|イシュー|チケット)?)/i;
+  /(?:(?:タスク|todo|issue|イシュー|チケット).*(?:一覧|確認|見せ|教えて|見たい|チェック|list)|(?:進行中|稼働中|active).*(?:タスク|todo|issue|イシュー|チケット)?|(?:他|ほか)には.*(?:タスク|todo|issue|イシュー|チケット).*(?:ある|あります|残ってる|残っています)|(?:どのような|どんな).*(?:タスク|todo|issue|イシュー|チケット).*(?:ある|あります))/i;
 const RECOMMEND_NEXT_STEP_PATTERN =
   /(?:(?:\b[A-Z][A-Z0-9]+-\d+\b|この件|その件|このタスク|そのタスク|このissue|そのissue|このイシュー|そのイシュー).*(?:次(?:どう|に)?進める|次(?:何|なに)(?:を|から)?(?:する|すれば|したら)|次アクション|次の一手|どう進めれば|next step)|(?:次(?:どう|に)?進める|次(?:何|なに)(?:を|から)?(?:する|すれば|したら)|次アクション|次の一手|what(?:'s| is) next|next step))/i;
 const INSPECT_WORK_PATTERN =
@@ -70,13 +75,13 @@ const TASK_BREAKDOWN_LINE_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const SELF_WORK_PATTERN = /(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/i;
 
 const RISK_LABELS: Record<string, string> = {
-  overdue: "期限を過ぎています",
-  due_today: "今日が期限です",
-  due_soon: "明日が期限です",
-  blocked: "blocked です",
-  stale: "更新が止まり気味です",
-  owner_missing: "担当が未設定です",
-  due_missing: "期限が未設定です",
+  overdue: "期限超過",
+  due_today: "今日が期限",
+  due_soon: "明日が期限",
+  blocked: "blocked",
+  stale: "更新が止まり気味",
+  owner_missing: "担当未設定",
+  due_missing: "期限未設定",
 };
 
 interface RankedQueryItem {
@@ -773,15 +778,65 @@ function buildViewerMappingNotice(viewerMappingMissing: boolean | undefined): st
   return "Slack user と担当者の対応付けがまだ無いので、いったんチーム全体から候補を出しています。ownerMap.slackUserId を入れると自分向けに寄せられます。";
 }
 
-function shouldPreferViewerOwned(kind: ManagerQueryKind, text: string, viewerAssignee: string | undefined): boolean {
+function mapRankedItemFacts(item: RankedQueryItem): Record<string, unknown> {
+  return {
+    identifier: item.issue.identifier,
+    title: item.issue.title,
+    url: item.issue.url ?? undefined,
+    assignee: item.issue.assignee?.displayName ?? item.issue.assignee?.name ?? "未割当",
+    dueDate: item.issue.dueDate ?? "未設定",
+    state: item.issue.state?.name ?? undefined,
+    priorityLabel: item.issue.priorityLabel ?? undefined,
+    cycle: item.issue.cycle?.name ?? (item.issue.cycle?.number != null ? String(item.issue.cycle.number) : undefined),
+    riskReasons: item.assessment.riskCategories.map((category) => RISK_LABELS[category]).filter(Boolean),
+    viewerOwned: item.viewerOwned,
+  };
+}
+
+async function buildPlannerReply(args: {
+  config: AppConfig;
+  message: QueryMessage;
+  now: Date;
+  kind: "list-active" | "list-today" | "what-should-i-do" | "inspect-work" | "search-existing" | "recommend-next-step";
+  queryScope: "self" | "team" | "thread-context";
+  facts: Record<string, unknown>;
+  fallbackReply: string;
+}): Promise<string> {
+  const paths = buildThreadPaths(args.config.workspaceDir, args.message.channelId, args.message.rootThreadTs);
+  await ensureThreadWorkspace(paths);
+
+  try {
+    const result = await runManagerReplyTurn(args.config, paths, {
+      kind: args.kind,
+      currentDate: toJstDateString(args.now),
+      messageText: args.message.text,
+      queryScope: args.queryScope,
+      facts: args.facts,
+      taskKey: `${args.message.channelId}-${args.message.rootThreadTs}-${args.kind}-reply`,
+    });
+    return result.reply;
+  } catch {
+    return args.fallbackReply;
+  }
+}
+
+function shouldPreferViewerOwned(
+  kind: ManagerQueryKind,
+  queryScope: "self" | "team" | "thread-context",
+  text: string,
+  viewerAssignee: string | undefined,
+): boolean {
   if (!viewerAssignee) return false;
+  if (queryScope === "self") return true;
   if (SELF_WORK_PATTERN.test(text)) return true;
   return kind === "what-should-i-do" || kind === "list-today";
 }
 
 export async function handleManagerQuery({
+  config,
   repositories,
   kind,
+  queryScope,
   message,
   now,
   workspaceDir,
@@ -792,8 +847,8 @@ export async function handleManagerQuery({
   const viewerOwnerEntry = resolveViewerOwnerEntry(ownerMap, message.userId);
   const viewerAssignee = viewerOwnerEntry?.linearAssignee;
   const viewerDisplayLabel = viewerAssignee ? `${viewerAssignee} さんの担当` : undefined;
-  const preferViewerOwned = shouldPreferViewerOwned(kind, message.text, viewerAssignee);
-  const viewerMappingMissing = !viewerAssignee && (kind === "list-today" || kind === "what-should-i-do" || SELF_WORK_PATTERN.test(message.text));
+  const preferViewerOwned = shouldPreferViewerOwned(kind, queryScope, message.text, viewerAssignee);
+  const viewerMappingMissing = !viewerAssignee && (queryScope === "self" || kind === "list-today" || kind === "what-should-i-do" || SELF_WORK_PATTERN.test(message.text));
 
   if (kind === "recommend-next-step") {
     const resolution = await resolveInspectIssue(repositories.workgraph, workspaceDir, message);
@@ -815,15 +870,38 @@ export async function handleManagerQuery({
     )
       .then((context) => formatRecentThreadSummary(context))
       .catch(() => undefined);
+    const fallbackReply = formatNextStepReply({
+      issue,
+      workgraphIssue,
+      assessment: assessRisk(issue, policy, now),
+      sourceThread,
+      recentThreadSummary,
+    });
 
     return {
       handled: true,
-      reply: formatNextStepReply({
-        issue,
-        workgraphIssue,
-        assessment: assessRisk(issue, policy, now),
-        sourceThread,
-        recentThreadSummary,
+      reply: await buildPlannerReply({
+        config,
+        message,
+        now,
+        kind: "recommend-next-step",
+        queryScope,
+        facts: {
+          issue: {
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url ?? undefined,
+            assignee: issue.assignee?.displayName ?? issue.assignee?.name ?? workgraphIssue?.assignee ?? "未割当",
+            state: issue.state?.name ?? "未設定",
+            dueDate: issue.dueDate ?? workgraphIssue?.dueDate ?? "未設定",
+            priorityLabel: issue.priorityLabel ?? undefined,
+            cycle: issue.cycle?.name ?? (issue.cycle?.number != null ? String(issue.cycle.number) : undefined),
+          },
+          recentThreadSummary,
+          recommendedAction: buildGenericNextStep({ issue, workgraphIssue, assessment: assessRisk(issue, policy, now) }),
+          sourceThread,
+        },
+        fallbackReply,
       }),
     };
   }
@@ -840,13 +918,49 @@ export async function handleManagerQuery({
     const issue = await getLinearIssue(resolution.issueId, env, undefined, { includeComments: true });
     const workgraphIssue = await getIssueContext(repositories.workgraph, resolution.issueId);
     const sourceThread = await getLatestIssueSource(repositories.workgraph, resolution.issueId);
+    const fallbackReply = formatIssueContextReply({
+      issue,
+      workgraphIssue,
+      assessment: assessRisk(issue, policy, now),
+      sourceThread,
+    });
     return {
       handled: true,
-      reply: formatIssueContextReply({
-        issue,
-        workgraphIssue,
-        assessment: assessRisk(issue, policy, now),
-        sourceThread,
+      reply: await buildPlannerReply({
+        config,
+        message,
+        now,
+        kind: "inspect-work",
+        queryScope,
+        facts: {
+          issue: {
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url ?? undefined,
+            assignee: issue.assignee?.displayName ?? issue.assignee?.name ?? workgraphIssue?.assignee ?? "未割当",
+            state: issue.state?.name ?? "未設定",
+            dueDate: issue.dueDate ?? workgraphIssue?.dueDate ?? "未設定",
+            priorityLabel: issue.priorityLabel ?? undefined,
+            cycle: issue.cycle?.name ?? (issue.cycle?.number != null ? String(issue.cycle.number) : undefined),
+          },
+          riskReasons: assessRisk(issue, policy, now).riskCategories.map((category) => RISK_LABELS[category]).filter(Boolean),
+          lastStatus: workgraphIssue?.lastStatus,
+          followupStatus: workgraphIssue?.followupStatus,
+          parentIssue: issue.parent
+            ? {
+                identifier: issue.parent.identifier,
+                title: issue.parent.title,
+                url: issue.parent.url ?? undefined,
+              }
+            : undefined,
+          childIssues: (issue.children ?? []).slice(0, 3).map((child) => ({
+            identifier: child.identifier,
+            title: child.title,
+            url: child.url ?? undefined,
+          })),
+          sourceThread,
+        },
+        fallbackReply,
       }),
     };
   }
@@ -868,9 +982,28 @@ export async function handleManagerQuery({
     }
 
     const issues = await searchLinearIssues({ query, limit: 5 }, env);
+    const fallbackReply = buildSearchExistingReply(query, issues);
     return {
       handled: true,
-      reply: buildSearchExistingReply(query, issues),
+      reply: await buildPlannerReply({
+        config,
+        message,
+        now,
+        kind: "search-existing",
+        queryScope,
+        facts: {
+          searchQuery: query,
+          issues: issues.slice(0, 5).map((issue) => ({
+            identifier: issue.identifier,
+            title: issue.title,
+            url: issue.url ?? undefined,
+            assignee: issue.assignee?.displayName ?? issue.assignee?.name ?? undefined,
+            state: issue.state?.name ?? undefined,
+            dueDate: issue.dueDate ?? undefined,
+          })),
+        },
+        fallbackReply,
+      }),
     };
   }
 
@@ -893,7 +1026,21 @@ export async function handleManagerQuery({
     }),
   );
 
-  const reply = kind === "list-active"
+  const replyFacts = {
+    queryScope,
+    viewerAssignee: viewerAssignee ?? undefined,
+    viewerDisplayLabel: viewerDisplayLabel ?? undefined,
+    viewerMappingMissing,
+    itemCount: rankedItems.length,
+    selectedItems: (
+      kind === "list-active"
+        ? rankedItems.slice(0, 6)
+        : (preferViewerOwned ? preferViewerOwnedItems(rankedItems, viewerAssignee) : rankedItems)
+            .filter((item) => kind === "list-today" ? isTodayCandidate(item, policy) : true)
+            .slice(0, kind === "list-today" ? 5 : 3)
+    ).map(mapRankedItemFacts),
+  };
+  const fallbackReply = kind === "list-active"
     ? buildListActiveReply(rankedItems)
     : kind === "list-today"
       ? buildListTodayReply(rankedItems, policy, { viewerAssignee, viewerDisplayLabel, preferViewerOwned, viewerMappingMissing })
@@ -901,6 +1048,14 @@ export async function handleManagerQuery({
 
   return {
     handled: true,
-    reply,
+    reply: await buildPlannerReply({
+      config,
+      message,
+      now,
+      kind,
+      queryScope,
+      facts: replyFacts,
+      fallbackReply,
+    }),
   };
 }

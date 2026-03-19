@@ -1,4 +1,14 @@
 import { describe, expect, it } from "vitest";
+import {
+  buildManagerReplyPrompt,
+  parseManagerReplyReply,
+  runManagerReplyTurnWithExecutor,
+} from "../src/planners/manager-reply/index.js";
+import {
+  buildMessageRouterPrompt,
+  parseMessageRouterReply,
+  runMessageRouterTurnWithExecutor,
+} from "../src/planners/message-router/index.js";
 import { buildFollowupResolutionPrompt, parseFollowupResolutionReply } from "../src/planners/followup-resolution/index.js";
 import { buildResearchSynthesisPrompt, parseResearchSynthesisReply } from "../src/planners/research-synthesis/index.js";
 import { buildTaskPlanningPrompt, parseTaskPlanningReply, runTaskPlanningTurnWithExecutor } from "../src/planners/task-intake/index.js";
@@ -188,6 +198,99 @@ describe("prompt helpers", () => {
         { title: "ドラフト作成", kind: "execution", dueDate: undefined, assigneeHint: undefined },
         { title: "OPT 田平さんへ契約書確認依頼", kind: "execution", dueDate: undefined, assigneeHint: "OPT 田平さん" },
       ],
+    });
+  });
+
+  it("builds and parses message router prompts", async () => {
+    const prompt = buildMessageRouterPrompt({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      userId: "U123",
+      messageText: "他にはどのようなタスクがある？",
+      currentDate: "2026-03-19",
+      recentThreadEntries: [
+        { role: "assistant", text: "今日まず手を付けるなら AIC-930 今日の優先 task から見るのがよさそうです。" },
+        { role: "user", text: "他にはどのようなタスクがある？" },
+      ],
+      threadContext: {
+        pendingClarification: false,
+        childIssueIds: [],
+        linkedIssueIds: [],
+        latestFocusIssueId: "AIC-930",
+      },
+      taskKey: "router-test",
+    });
+
+    expect(prompt).toContain("Reply with a single JSON object only.");
+    expect(prompt).toContain('"queryKind":"list-active"|"list-today"|"what-should-i-do"|"inspect-work"|"search-existing"|"recommend-next-step"');
+    expect(prompt).toContain('Example: "他にはどのようなタスクがある？" after a task-list reply in the same thread');
+
+    const parsed = parseMessageRouterReply('{"action":"query","queryKind":"list-active","queryScope":"thread-context","confidence":0.91,"reasoningSummary":"直前の一覧の続きです。"}');
+    expect(parsed).toEqual({
+      action: "query",
+      queryKind: "list-active",
+      queryScope: "thread-context",
+      confidence: 0.91,
+      reasoningSummary: "直前の一覧の続きです。",
+    });
+
+    const result = await runMessageRouterTurnWithExecutor(
+      async () => '{"action":"conversation","conversationKind":"greeting","confidence":0.95,"reasoningSummary":"挨拶です。"}',
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "12345.678",
+        userId: "U123",
+        messageText: "こんばんは",
+        currentDate: "2026-03-19",
+        recentThreadEntries: [],
+        taskKey: "router-runner-test",
+      },
+    );
+    expect(result).toEqual({
+      action: "conversation",
+      conversationKind: "greeting",
+      confidence: 0.95,
+      reasoningSummary: "挨拶です。",
+    });
+  });
+
+  it("builds and parses manager reply prompts", async () => {
+    const prompt = buildManagerReplyPrompt({
+      kind: "what-should-i-do",
+      currentDate: "2026-03-19",
+      messageText: "今日やるべきタスクある？",
+      queryScope: "self",
+      facts: {
+        viewerDisplayLabel: "y.kakui さんの担当",
+        selectedItems: [
+          { identifier: "AIC-930", title: "今日の優先 task", dueDate: "2026-03-19", state: "Backlog" },
+        ],
+      },
+      taskKey: "reply-test",
+    });
+
+    expect(prompt).toContain('Use exactly this schema: {"reply": string}.');
+    expect(prompt).toContain("Tone: concise executive assistant.");
+    expect(prompt).toContain("queryScope=self");
+
+    const parsed = parseManagerReplyReply('{"reply":"今日まず手を付けるなら AIC-930 今日の優先 task から見るのがよさそうです。"}');
+    expect(parsed).toEqual({
+      reply: "今日まず手を付けるなら AIC-930 今日の優先 task から見るのがよさそうです。",
+    });
+
+    const result = await runManagerReplyTurnWithExecutor(
+      async () => '{"reply":"こんばんは。確認したいことがあれば、そのまま送ってください。"}',
+      {
+        kind: "conversation",
+        conversationKind: "greeting",
+        currentDate: "2026-03-19",
+        messageText: "こんばんは",
+        facts: { conversationKind: "greeting" },
+        taskKey: "reply-runner-test",
+      },
+    );
+    expect(result).toEqual({
+      reply: "こんばんは。確認したいことがあれば、そのまま送ってください。",
     });
   });
 

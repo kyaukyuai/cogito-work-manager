@@ -285,6 +285,24 @@ async function main(): Promise<void> {
           },
           managerRepositories,
         );
+        if (managerResult.diagnostics?.router) {
+          const router = managerResult.diagnostics.router;
+          const logPayload = {
+            action: router.action,
+            queryKind: router.queryKind,
+            queryScope: router.queryScope,
+            confidence: router.confidence,
+            reasoningSummary: router.reasoningSummary,
+            technicalFailure: router.technicalFailure,
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+          };
+          if (router.source === "fallback") {
+            logger.warn("Manager router fell back to legacy classification", logPayload);
+          } else {
+            logger.info("Manager router decision", logPayload);
+          }
+        }
 
         const reply = managerResult.handled
           ? managerResult.reply ?? "対応しました。"

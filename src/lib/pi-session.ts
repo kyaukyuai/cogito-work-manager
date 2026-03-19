@@ -12,6 +12,16 @@ import {
   SettingsManager,
 } from "@mariozechner/pi-coding-agent";
 import {
+  runManagerReplyTurnWithExecutor,
+  type ManagerReplyInput,
+  type ManagerReplyResult,
+} from "../planners/manager-reply/index.js";
+import {
+  runMessageRouterTurnWithExecutor,
+  type MessageRouterInput,
+  type MessageRouterResult,
+} from "../planners/message-router/index.js";
+import {
   runFollowupResolutionTurnWithExecutor,
   type FollowupResolutionInput,
   type FollowupResolutionResult,
@@ -53,6 +63,20 @@ export interface SystemAgentInput {
   text: string;
   metadata?: Record<string, string>;
 }
+
+export {
+  buildManagerReplyPrompt,
+  parseManagerReplyReply,
+  type ManagerReplyInput,
+  type ManagerReplyResult,
+} from "../planners/manager-reply/index.js";
+
+export {
+  buildMessageRouterPrompt,
+  parseMessageRouterReply,
+  type MessageRouterInput,
+  type MessageRouterResult,
+} from "../planners/message-router/index.js";
 
 export {
   buildFollowupResolutionPrompt,
@@ -540,6 +564,40 @@ export async function runResearchSynthesisTurn(
   input: ResearchSynthesisInput,
 ): Promise<ResearchSynthesisResult> {
   return runResearchSynthesisTurnWithExecutor(
+    (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
+      config,
+      paths,
+      prompt,
+      systemPrompt,
+      sessionSuffix,
+    ),
+    input,
+  );
+}
+
+export async function runMessageRouterTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: MessageRouterInput,
+): Promise<MessageRouterResult> {
+  return runMessageRouterTurnWithExecutor(
+    (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
+      config,
+      paths,
+      prompt,
+      systemPrompt,
+      sessionSuffix,
+    ),
+    input,
+  );
+}
+
+export async function runManagerReplyTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: ManagerReplyInput,
+): Promise<ManagerReplyResult> {
+  return runManagerReplyTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
       paths,

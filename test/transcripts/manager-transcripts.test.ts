@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
-import { handleManagerMessage } from "../../src/lib/manager.js";
+import { classifyManagerQuery, classifyManagerSignal, handleManagerMessage } from "../../src/lib/manager.js";
 import { ensureManagerStateFiles } from "../../src/lib/manager-state.js";
 import { buildSystemPaths } from "../../src/lib/system-workspace.js";
 import { loadTranscriptFixture, runTranscriptFixture, type TranscriptTurnFixture } from "../helpers/transcript-harness.js";
@@ -33,6 +33,8 @@ const webResearchMocks = vi.hoisted(() => ({
 }));
 
 const piSessionMocks = vi.hoisted(() => ({
+  runMessageRouterTurn: vi.fn(),
+  runManagerReplyTurn: vi.fn(),
   runTaskPlanningTurn: vi.fn(),
   runResearchSynthesisTurn: vi.fn(),
   runFollowupResolutionTurn: vi.fn(),
@@ -64,6 +66,8 @@ vi.mock("../../src/lib/web-research.js", () => ({
 }));
 
 vi.mock("../../src/lib/pi-session.js", () => ({
+  runMessageRouterTurn: piSessionMocks.runMessageRouterTurn,
+  runManagerReplyTurn: piSessionMocks.runManagerReplyTurn,
   runTaskPlanningTurn: piSessionMocks.runTaskPlanningTurn,
   runResearchSynthesisTurn: piSessionMocks.runResearchSynthesisTurn,
   runFollowupResolutionTurn: piSessionMocks.runFollowupResolutionTurn,
@@ -93,6 +97,87 @@ function defaultTaskPlan(input: { combinedRequest: string }): Record<string, unk
       { title: singleTitle, kind: "execution", dueDate: undefined },
     ],
   };
+}
+
+function defaultMessageRouter(input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) {
+  const text = input.messageText.trim();
+  if (/^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/.test(text)) {
+    return {
+      action: "conversation",
+      conversationKind: "greeting",
+      confidence: 0.95,
+      reasoningSummary: "挨拶です。",
+    };
+  }
+  const queryKind = classifyManagerQuery(text);
+  if (queryKind) {
+    return {
+      action: "query",
+      queryKind,
+      queryScope: /(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/.test(text)
+        ? "self"
+        : /(?:この件|その件|他には|ほかに|他の)/.test(text) || queryKind === "inspect-work" || queryKind === "recommend-next-step"
+          ? "thread-context"
+          : "team",
+      confidence: 0.9,
+      reasoningSummary: "query と判断しました。",
+    };
+  }
+  if (input.threadContext?.pendingClarification) {
+    return { action: "create_work", confidence: 0.9, reasoningSummary: "clarification への返答です。" };
+  }
+  const signal = classifyManagerSignal(text);
+  if (signal === "progress") return { action: "update_progress", confidence: 0.9, reasoningSummary: "進捗更新です。" };
+  if (signal === "completed") return { action: "update_completed", confidence: 0.9, reasoningSummary: "完了更新です。" };
+  if (signal === "blocked") return { action: "update_blocked", confidence: 0.9, reasoningSummary: "blocked 更新です。" };
+  if (signal === "request") return { action: "create_work", confidence: 0.9, reasoningSummary: "新規依頼です。" };
+  return { action: "conversation", conversationKind: "other", confidence: 0.6, reasoningSummary: "雑談です。" };
+}
+
+function renderMockIssue(issue: Record<string, unknown>): string {
+  return `${String(issue.identifier ?? "")} ${String(issue.title ?? "")}`.trim();
+}
+
+function defaultManagerReply(input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) {
+  const facts = input.facts ?? {};
+  if (input.kind === "conversation") {
+    return {
+      reply: input.conversationKind === "greeting"
+        ? "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。"
+        : "必要なことがあれば、そのまま続けて送ってください。",
+    };
+  }
+  if (input.kind === "list-active") {
+    const items = Array.isArray(facts.selectedItems) ? facts.selectedItems as Array<Record<string, unknown>> : [];
+    return { reply: ["タスク一覧を確認しました。", ...items.map((item) => `- ${renderMockIssue(item)}`)].join("\n") };
+  }
+  if (input.kind === "what-should-i-do") {
+    const items = Array.isArray(facts.selectedItems) ? facts.selectedItems as Array<Record<string, unknown>> : [];
+    const viewerDisplayLabel = typeof facts.viewerDisplayLabel === "string" ? facts.viewerDisplayLabel : undefined;
+    return {
+      reply: [
+        viewerDisplayLabel
+          ? `今日まず手を付けるなら ${viewerDisplayLabel} の中では ${renderMockIssue(items[0] ?? {})} から見るのがよさそうです。`
+          : `今日まず手を付けるなら ${renderMockIssue(items[0] ?? {})} から見るのがよさそうです。`,
+        ...items.map((item) => `- ${renderMockIssue(item)}`),
+      ].join("\n"),
+    };
+  }
+  if (input.kind === "inspect-work") {
+    const issue = (facts.issue ?? {}) as Record<string, unknown>;
+    return { reply: `${renderMockIssue(issue)} の状況を確認しました。` };
+  }
+  if (input.kind === "recommend-next-step") {
+    const issue = (facts.issue ?? {}) as Record<string, unknown>;
+    return {
+      reply: [
+        `${renderMockIssue(issue)} について、次の一手を整理しました。`,
+        typeof facts.recentThreadSummary === "string" ? facts.recentThreadSummary : undefined,
+        typeof facts.recommendedAction === "string" ? facts.recommendedAction : undefined,
+      ].filter(Boolean).join(" "),
+    };
+  }
+  return { reply: "対応しました。" };
 }
 
 function makeActiveIssue(overrides: Record<string, unknown> & { identifier: string; title: string }) {
@@ -166,6 +251,8 @@ describe("manager transcript fixtures", () => {
       title: "Example",
       snippet: "Example snippet",
     });
+    piSessionMocks.runMessageRouterTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) => defaultMessageRouter(input));
+    piSessionMocks.runManagerReplyTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) => defaultManagerReply(input));
     piSessionMocks.runTaskPlanningTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { combinedRequest: string }) => defaultTaskPlan(input));
     piSessionMocks.runResearchSynthesisTurn.mockReset().mockResolvedValue({
       findings: ["関連情報の洗い出しを開始しました。"],
@@ -210,6 +297,26 @@ describe("manager transcript fixtures", () => {
             }),
           ]);
           return;
+        case "list-active-followup":
+          linearMocks.listRiskyLinearIssues.mockResolvedValueOnce([
+            makeActiveIssue({
+              identifier: "AIC-930",
+              title: "今日の優先 task",
+              assignee: { id: "user-1", displayName: "y.kakui" },
+              dueDate: "2026-03-19",
+              priority: 1,
+              priorityLabel: "Urgent",
+            }),
+            makeActiveIssue({
+              identifier: "AIC-931",
+              title: "他メンバーの task",
+              assignee: { id: "user-2", displayName: "t.tahira" },
+              dueDate: "2026-03-20",
+              priority: 2,
+              priorityLabel: "High",
+            }),
+          ]);
+          return;
         case "create-invite-task":
           linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
             id: "issue-940",
@@ -223,6 +330,27 @@ describe("manager transcript fixtures", () => {
           });
           return;
         case "inspect-created-task":
+          linearMocks.getLinearIssue.mockResolvedValueOnce({
+            id: "issue-940",
+            identifier: "AIC-940",
+            title: "OPT社の社内チャネルへの招待依頼",
+            url: "https://linear.app/kyaukyuai/issue/AIC-940",
+            assignee: { id: "user-1", displayName: "y.kakui" },
+            state: { id: "state-started", name: "Started", type: "started" },
+            dueDate: "2026-03-21",
+            relations: [],
+            inverseRelations: [],
+          });
+          return;
+        case "recommend-next-step":
+          slackContextMocks.getSlackThreadContext.mockResolvedValue({
+            channelId: "C0ALAMDRB9V",
+            rootThreadTs: "thread-transcript",
+            entries: [
+              { type: "assistant", text: "招待先を確認したら、そのまま依頼してください。" },
+              { type: "user", text: "OPT社に投げる文面の下書きまではできています" },
+            ],
+          });
           linearMocks.getLinearIssue.mockResolvedValueOnce({
             id: "issue-940",
             identifier: "AIC-940",

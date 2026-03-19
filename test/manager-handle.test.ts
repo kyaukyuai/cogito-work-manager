@@ -2,7 +2,14 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildHeartbeatReviewDecision, buildManagerReview, formatIssueSelectionReply, handleManagerMessage } from "../src/lib/manager.js";
+import {
+  buildHeartbeatReviewDecision,
+  buildManagerReview,
+  classifyManagerQuery,
+  classifyManagerSignal,
+  formatIssueSelectionReply,
+  handleManagerMessage,
+} from "../src/lib/manager.js";
 import { ensureManagerStateFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
@@ -33,6 +40,8 @@ const webResearchMocks = vi.hoisted(() => ({
 }));
 
 const piSessionMocks = vi.hoisted(() => ({
+  runMessageRouterTurn: vi.fn(),
+  runManagerReplyTurn: vi.fn(),
   runTaskPlanningTurn: vi.fn(),
   runResearchSynthesisTurn: vi.fn(),
   runFollowupResolutionTurn: vi.fn(),
@@ -64,6 +73,8 @@ vi.mock("../src/lib/web-research.js", () => ({
 }));
 
 vi.mock("../src/lib/pi-session.js", () => ({
+  runMessageRouterTurn: piSessionMocks.runMessageRouterTurn,
+  runManagerReplyTurn: piSessionMocks.runManagerReplyTurn,
   runTaskPlanningTurn: piSessionMocks.runTaskPlanningTurn,
   runResearchSynthesisTurn: piSessionMocks.runResearchSynthesisTurn,
   runFollowupResolutionTurn: piSessionMocks.runFollowupResolutionTurn,
@@ -192,6 +203,172 @@ function defaultTaskPlan(input: { combinedRequest: string }): Record<string, unk
   };
 }
 
+function defaultMessageRouter(input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) {
+  const text = input.messageText.trim();
+  if (/^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/.test(text)) {
+    return {
+      action: "conversation",
+      conversationKind: "greeting",
+      confidence: 0.95,
+      reasoningSummary: "挨拶です。",
+    };
+  }
+
+  const queryKind = classifyManagerQuery(text);
+  if (queryKind) {
+    const queryScope = /(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/.test(text)
+      ? "self"
+      : /(?:この件|その件|他には|ほかに|他の)/.test(text) || queryKind === "inspect-work" || queryKind === "recommend-next-step"
+        ? "thread-context"
+        : "team";
+    return {
+      action: "query",
+      queryKind,
+      queryScope,
+      confidence: 0.9,
+      reasoningSummary: "query と判断しました。",
+    };
+  }
+
+  if (input.threadContext?.pendingClarification) {
+    return {
+      action: "create_work",
+      confidence: 0.9,
+      reasoningSummary: "clarification への返答として扱います。",
+    };
+  }
+
+  const signal = classifyManagerSignal(text);
+  if (signal === "progress") {
+    return { action: "update_progress", confidence: 0.9, reasoningSummary: "進捗更新です。" };
+  }
+  if (signal === "completed") {
+    return { action: "update_completed", confidence: 0.9, reasoningSummary: "完了更新です。" };
+  }
+  if (signal === "blocked") {
+    return { action: "update_blocked", confidence: 0.9, reasoningSummary: "blocked 更新です。" };
+  }
+  if (signal === "request") {
+    return { action: "create_work", confidence: 0.9, reasoningSummary: "新規依頼です。" };
+  }
+  return {
+    action: "conversation",
+    conversationKind: "other",
+    confidence: 0.6,
+    reasoningSummary: "雑談として扱います。",
+  };
+}
+
+function renderMockIssue(issue: Record<string, unknown>): string {
+  const identifier = String(issue.identifier ?? "");
+  const title = String(issue.title ?? "");
+  return `${identifier} ${title}`.trim();
+}
+
+function defaultManagerReply(input: {
+  kind: string;
+  conversationKind?: string;
+  facts?: Record<string, unknown>;
+}) {
+  const facts = input.facts ?? {};
+
+  if (input.kind === "conversation") {
+    if (input.conversationKind === "greeting") {
+      return {
+        reply: "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。",
+      };
+    }
+    return {
+      reply: "必要なことがあれば、そのまま続けて送ってください。状況確認でも task の相談でも対応します。",
+    };
+  }
+
+  if (input.kind === "list-active") {
+    const items = Array.isArray(facts.selectedItems) ? facts.selectedItems as Array<Record<string, unknown>> : [];
+    if (items.length === 0) {
+      return { reply: "いま active な task は見当たりません。" };
+    }
+    return {
+      reply: [
+        "タスク一覧を確認しました。",
+        ...items.map((item) => `- ${renderMockIssue(item)}`),
+        "気になる issue があれば、issue ID を返してもらえれば詳細も追えます。",
+      ].join("\n"),
+    };
+  }
+
+  if (input.kind === "list-today") {
+    const items = Array.isArray(facts.selectedItems) ? facts.selectedItems as Array<Record<string, unknown>> : [];
+    const viewerDisplayLabel = typeof facts.viewerDisplayLabel === "string" ? facts.viewerDisplayLabel : undefined;
+    return {
+      reply: [
+        viewerDisplayLabel ? `${viewerDisplayLabel} を基準に、今日優先して見たい task を整理しました。` : "今日優先して見たい task を整理しました。",
+        ...items.map((item) => `- ${renderMockIssue(item)}`),
+        facts.viewerMappingMissing ? "ownerMap.slackUserId を入れると自分向けに寄せられます。" : undefined,
+      ].filter(Boolean).join("\n"),
+    };
+  }
+
+  if (input.kind === "what-should-i-do") {
+    const items = Array.isArray(facts.selectedItems) ? facts.selectedItems as Array<Record<string, unknown>> : [];
+    const top = items[0];
+    const viewerDisplayLabel = typeof facts.viewerDisplayLabel === "string" ? facts.viewerDisplayLabel : undefined;
+    return {
+      reply: [
+        top
+          ? viewerDisplayLabel
+            ? `今日まず手を付けるなら ${viewerDisplayLabel} の中では ${renderMockIssue(top)} から見るのがよさそうです。`
+            : `今日まず手を付けるなら ${renderMockIssue(top)} から見るのがよさそうです。`
+          : "いま着手中の task は見当たりません。",
+        ...items.map((item) => `- ${renderMockIssue(item)}`),
+        facts.viewerMappingMissing ? "ownerMap.slackUserId を入れると自分向けに寄せられます。" : undefined,
+        "必要なら、このまま優先順位を一緒に絞ります。",
+      ].filter(Boolean).join("\n"),
+    };
+  }
+
+  if (input.kind === "inspect-work") {
+    const issue = (facts.issue ?? {}) as Record<string, unknown>;
+    return {
+      reply: [
+        `${renderMockIssue(issue)} の状況を確認しました。`,
+        issue.state ? `状態は ${issue.state} です。` : undefined,
+        issue.dueDate ? `期限は ${issue.dueDate} です。` : undefined,
+        issue.priorityLabel ? `優先度は ${issue.priorityLabel} です。` : undefined,
+      ].filter(Boolean).join(" "),
+    };
+  }
+
+  if (input.kind === "search-existing") {
+    const issues = Array.isArray(facts.issues) ? facts.issues as Array<Record<string, unknown>> : [];
+    if (issues.length >= 2) {
+      return {
+        reply: [
+          "近い既存 issue が複数見つかりました。",
+          ...issues.map((issue) => `- ${renderMockIssue(issue)}`),
+        ].join("\n"),
+      };
+    }
+    if (issues.length === 1) {
+      return { reply: `近い既存 issue が見つかりました。対象は ${renderMockIssue(issues[0])} です。` };
+    }
+    return { reply: "近い既存 issue はまだ見当たりませんでした。" };
+  }
+
+  if (input.kind === "recommend-next-step") {
+    const issue = (facts.issue ?? {}) as Record<string, unknown>;
+    return {
+      reply: [
+        `${renderMockIssue(issue)} について、次の一手を整理しました。`,
+        typeof facts.recentThreadSummary === "string" ? facts.recentThreadSummary : undefined,
+        typeof facts.recommendedAction === "string" ? facts.recommendedAction : undefined,
+      ].filter(Boolean).join(" "),
+    };
+  }
+
+  return { reply: "対応しました。" };
+}
+
 function makeActiveIssue(overrides: Record<string, unknown> & { identifier: string; title: string }) {
   return {
     id: `issue-${overrides.identifier}`,
@@ -291,6 +468,8 @@ describe("handleManagerMessage clarification flow", () => {
       title: "Example",
       snippet: "Example snippet",
     });
+    piSessionMocks.runMessageRouterTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) => defaultMessageRouter(input));
+    piSessionMocks.runManagerReplyTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) => defaultManagerReply(input));
     piSessionMocks.runTaskPlanningTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { combinedRequest: string }) => defaultTaskPlan(input));
     piSessionMocks.runResearchSynthesisTurn.mockReset().mockResolvedValue({
       findings: ["関連情報の洗い出しを開始しました。"],
@@ -923,7 +1102,7 @@ describe("handleManagerMessage clarification flow", () => {
     );
     piSessionMocks.runTaskPlanningTurn.mockClear();
 
-    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+    slackContextMocks.getSlackThreadContext.mockResolvedValue({
       channelId: "C0ALAMDRB9V",
       rootThreadTs: "thread-next-step",
       entries: [
@@ -962,6 +1141,81 @@ describe("handleManagerMessage clarification flow", () => {
     expect(result.reply).toContain("下書きまではできています");
     expect(result.reply).toContain("次は今の進捗を 1 行で返すか");
     expect(piSessionMocks.runTaskPlanningTurn).not.toHaveBeenCalled();
+  });
+
+  it("handles greetings inside manager when the LLM router classifies them as conversation", async () => {
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-conversation",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんばんは",
+      },
+      new Date("2026-03-19T12:00:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("こんばんは。");
+    expect(piSessionMocks.runTaskPlanningTurn).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the legacy classifier when the LLM router fails technically", async () => {
+    piSessionMocks.runMessageRouterTurn.mockRejectedValueOnce(new Error("router failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-router-fallback",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんばんは",
+      },
+      new Date("2026-03-19T12:01:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("こんばんは。");
+    expect(result.diagnostics?.router).toMatchObject({
+      source: "fallback",
+      action: "conversation",
+    });
+    expect(result.diagnostics?.router.technicalFailure).toContain("router failure");
+  });
+
+  it("falls back to the fixed query formatter when the reply planner fails technically", async () => {
+    linearMocks.listRiskyLinearIssues.mockResolvedValueOnce([
+      makeActiveIssue({
+        identifier: "AIC-880",
+        title: "期限が今日の task",
+        assignee: { id: "user-1", displayName: "y.kakui" },
+        dueDate: "2026-03-19",
+        priority: 1,
+        priorityLabel: "Urgent",
+      }),
+    ]);
+    piSessionMocks.runManagerReplyTurn.mockRejectedValueOnce(new Error("reply failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-fallback",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "今日やるべきタスクある？",
+      },
+      new Date("2026-03-19T12:02:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-880");
+    expect(result.reply).toContain("今日まず手を付けるなら");
   });
 
   it("searches for existing issues before new creation when asked conversationally", async () => {
