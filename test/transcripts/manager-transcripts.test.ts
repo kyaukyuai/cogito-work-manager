@@ -1,10 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { classifyManagerQuery, classifyManagerSignal, handleManagerMessage } from "../../src/lib/manager.js";
 import { ensureManagerStateFiles } from "../../src/lib/manager-state.js";
 import { buildSystemPaths } from "../../src/lib/system-workspace.js";
+import { createFileBackedManagerRepositories } from "../../src/state/repositories/file-backed-manager-repositories.js";
+import { recordPlanningOutcome } from "../../src/state/workgraph/recorder.js";
 import { loadTranscriptFixture, runTranscriptFixture, type TranscriptTurnFixture } from "../helpers/transcript-harness.js";
 
 const linearMocks = vi.hoisted(() => ({
@@ -277,10 +279,6 @@ describe("manager transcript fixtures", () => {
   });
 
   it("replays realistic Slack conversations from transcript fixtures", async () => {
-    const fixture = await loadTranscriptFixture(
-      new URL("./fixtures/greeting-query-create-inspect-progress.json", import.meta.url).pathname,
-    );
-
     const scenarioSetup = async (turn: TranscriptTurnFixture): Promise<void> => {
       switch (turn.beforeScenario) {
         case "list-my-work":
@@ -382,20 +380,86 @@ describe("manager transcript fixtures", () => {
             inverseRelations: [],
           });
           return;
+        case "ambiguous-progress-rejected":
+          await recordPlanningOutcome(createFileBackedManagerRepositories(systemPaths).workgraph, {
+            occurredAt: "2026-03-19T02:00:00.000Z",
+            source: {
+              channelId: "C0ALAMDRB9V",
+              rootThreadTs: "thread-ambiguous-update",
+              messageTs: "seed-msg-1",
+            },
+            messageFingerprint: "ambiguous update seed",
+            childIssues: [
+              { issueId: "AIC-951", title: "親承認の確認", kind: "execution" },
+              { issueId: "AIC-952", title: "文面の反映", kind: "execution" },
+            ],
+            planningReason: "complex-request",
+            lastResolvedIssueId: "AIC-951",
+            originalText: "複数 task の起票",
+          });
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "進捗を反映します。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "update_progress",
+                    confidence: 0.88,
+                    summary: "進捗更新です。",
+                  },
+                },
+              },
+              {
+                toolName: "propose_update_issue_status",
+                details: {
+                  proposal: {
+                    commandType: "update_issue_status",
+                    issueId: "AIC-952",
+                    signal: "progress",
+                    reasonSummary: "この thread の更新と判断しました。",
+                  },
+                },
+              },
+            ],
+            proposals: [
+              {
+                commandType: "update_issue_status",
+                issueId: "AIC-952",
+                signal: "progress",
+                reasonSummary: "この thread の更新と判断しました。",
+              },
+            ],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.88,
+              summary: "進捗更新です。",
+            },
+          });
+          return;
         default:
       }
     };
 
-    await runTranscriptFixture({
-      fixture,
-      systemPaths,
-      beforeTurn: scenarioSetup,
-      invokeTurn: (message, now) => handleManagerMessage(
-        { ...config, workspaceDir },
+    const fixtureDir = new URL("./fixtures/", import.meta.url);
+    const fixtureNames = (await readdir(fixtureDir))
+      .filter((entry) => entry.endsWith(".json"))
+      .sort();
+
+    for (const fixtureName of fixtureNames) {
+      const loadedFixture = await loadTranscriptFixture(new URL(`./fixtures/${fixtureName}`, import.meta.url).pathname);
+      await runTranscriptFixture({
+        fixture: loadedFixture,
         systemPaths,
-        message,
-        now,
-      ),
-    });
+        beforeTurn: scenarioSetup,
+        invokeTurn: (message, now) => handleManagerMessage(
+          { ...config, workspaceDir },
+          systemPaths,
+          message,
+          now,
+        ),
+      });
+    }
   });
 });

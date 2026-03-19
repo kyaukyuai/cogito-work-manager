@@ -1,0 +1,35 @@
+{
+  "name": "ambiguous-update-needs-clarify",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U1",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "ambiguous-progress",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-ambiguous-update",
+      "messageTs": "msg-ambiguous-1",
+      "userId": "U1",
+      "text": "進捗です。確認依頼は出しました",
+      "now": "2026-03-19T02:05:00.000Z",
+      "beforeScenario": "ambiguous-progress-rejected",
+      "expect": {
+        "handled": true,
+        "replyIncludes": [
+          "進捗を反映します。",
+          "どの issue を更新するか判断できませんでした。",
+          "issue ID を添えてください。"
+        ]
+      }
+    }
+  ]
+}

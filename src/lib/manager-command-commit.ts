@@ -15,6 +15,7 @@ import {
   type LinearCommandEnv,
   type LinearIssue,
 } from "./linear.js";
+import { getSlackThreadContext } from "./slack-context.js";
 import type {
   FollowupLedgerEntry,
   ManagerPolicy,
@@ -28,7 +29,10 @@ import {
   recordPlanningOutcome,
 } from "../state/workgraph/recorder.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
-import { findExistingThreadIntakeByFingerprint } from "../state/workgraph/queries.js";
+import {
+  findExistingThreadIntakeByFingerprint,
+  getThreadPlanningContext,
+} from "../state/workgraph/queries.js";
 import { chooseOwner } from "../orchestrators/intake/planning-support.js";
 import {
   compactLinearIssues,
@@ -247,6 +251,122 @@ function dedupeProposalKey(proposal: ManagerCommandProposal): string {
       commandType: proposal.commandType,
       proposal,
     });
+}
+
+function unique<T>(values: Array<T | undefined>): T[] {
+  return Array.from(new Set(values.filter((value): value is T => value !== undefined)));
+}
+
+function extractIssueIdentifiers(text: string): string[] {
+  return unique(
+    Array.from(text.matchAll(/\b([A-Z][A-Z0-9]+-\d+)\b/g))
+      .map((match) => match[1]?.trim())
+      .filter(Boolean),
+  );
+}
+
+interface CommitIssueHints {
+  threadKey: string;
+  explicitIssueIds: string[];
+  recentIssueIds: string[];
+  candidateIssueIds: string[];
+  latestFocusIssueId?: string;
+  lastResolvedIssueId?: string;
+}
+
+async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<CommitIssueHints> {
+  const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
+  const explicitIssueIds = extractIssueIdentifiers(args.message.text);
+  const recentThread = await getSlackThreadContext(
+    args.config.workspaceDir,
+    args.message.channelId,
+    args.message.rootThreadTs,
+    8,
+  ).catch(() => undefined);
+  const recentIssueIds = unique(
+    (recentThread?.entries ?? [])
+      .slice(-6)
+      .flatMap((entry) => extractIssueIdentifiers(entry.text ?? "")),
+  );
+  const planningContext = await getThreadPlanningContext(args.repositories.workgraph, threadKey);
+  const latestFocusIssueId = planningContext?.thread.latestFocusIssueId;
+  const lastResolvedIssueId = planningContext?.latestResolvedIssue?.issueId ?? planningContext?.thread.lastResolvedIssueId;
+  const candidateIssueIds = unique([
+    latestFocusIssueId,
+    lastResolvedIssueId,
+    planningContext?.parentIssue?.issueId,
+    ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
+    ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
+  ]);
+
+  return {
+    threadKey,
+    explicitIssueIds,
+    recentIssueIds,
+    candidateIssueIds,
+    latestFocusIssueId,
+    lastResolvedIssueId,
+  };
+}
+
+async function validateUpdateIssueStatusProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof updateIssueStatusProposalSchema>,
+): Promise<string | undefined> {
+  const hints = await collectCommitIssueHints(args);
+
+  if (hints.explicitIssueIds.length > 0 && !hints.explicitIssueIds.includes(proposal.issueId)) {
+    return `このメッセージでは ${hints.explicitIssueIds.join(", ")} が明示されていますが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+  }
+
+  if (hints.explicitIssueIds.length === 0 && hints.recentIssueIds.length === 1) {
+    const recentIssueId = hints.recentIssueIds[0];
+    if (recentIssueId && recentIssueId !== proposal.issueId) {
+      return `直近の会話では ${recentIssueId} を見ていましたが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+    }
+  }
+
+  if (hints.candidateIssueIds.length === 0 && hints.explicitIssueIds.length === 0) {
+    return "更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。";
+  }
+
+  if (hints.candidateIssueIds.length === 1 && hints.candidateIssueIds[0] !== proposal.issueId) {
+    return `この thread で確認できる更新対象は ${hints.candidateIssueIds[0]} ですが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+  }
+
+  if (
+    hints.candidateIssueIds.length > 1
+    && !hints.explicitIssueIds.includes(proposal.issueId)
+    && proposal.issueId !== hints.latestFocusIssueId
+    && proposal.issueId !== hints.lastResolvedIssueId
+  ) {
+    return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";
+  }
+
+  return undefined;
+}
+
+function validateFollowupProposalFields(
+  current: FollowupLedgerEntry,
+  proposal: z.infer<typeof resolveFollowupProposalSchema>,
+): string | undefined {
+  const extractedFields = proposal.extractedFields ?? {};
+
+  if (current.requestKind && proposal.requestKind && current.requestKind !== proposal.requestKind) {
+    return `待っている follow-up は ${current.requestKind} 向けですが、提案は ${proposal.requestKind} 向けでした。必要な内容を補足してください。`;
+  }
+
+  const requestKind = proposal.requestKind ?? current.requestKind;
+  if (requestKind === "owner" && !extractedFields.assignee) {
+    return "担当者の確認依頼を解消するには、担当者名が必要です。担当者を明記してください。";
+  }
+  if (requestKind === "due-date" && !extractedFields.dueDate) {
+    return "期限確認の follow-up を解消するには、期限が必要です。日付を明記してください。";
+  }
+  if (!proposal.answered && proposal.confidence < 0.7 && Object.keys(extractedFields).length === 0) {
+    return "follow-up への返答として十分か判断しきれませんでした。状況や不足情報をもう少し具体的に送ってください。";
+  }
+  return undefined;
 }
 
 function isMessageContext(value: CommitManagerCommandArgs["message"]): value is ManagerCommitMessageContext {
@@ -587,6 +707,14 @@ async function commitUpdateIssueStatusProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof updateIssueStatusProposalSchema>,
 ): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  const rejectionReason = await validateUpdateIssueStatusProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
+
   const followups = await args.repositories.followups.load();
   const occurredAt = buildOccurredAt(args.now);
   const message = args.message;
@@ -701,6 +829,14 @@ async function commitResolveFollowupProposal(
     return {
       proposal,
       reason: "no awaiting follow-up found",
+    };
+  }
+
+  const rejectionReason = validateFollowupProposalFields(current, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
     };
   }
 

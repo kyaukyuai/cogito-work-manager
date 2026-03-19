@@ -193,3 +193,17 @@ docker compose up --build
 ```bash
 npm test
 ```
+
+## Operator Diagnostics
+
+thread の解釈を確認する場合:
+
+```bash
+npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 /workspace
+```
+
+issue の context を確認する場合:
+
+```bash
+npm run manager:diagnostics -- issue AIC-38 /workspace
+```

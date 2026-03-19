@@ -237,6 +237,13 @@ event log を snapshot に畳み込んで active log を空にする場合:
 npm run workgraph:compact -- /workspace
 ```
 
+thread の解釈や issue context を確認する場合:
+
+```bash
+npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 /workspace
+npm run manager:diagnostics -- issue AIC-38 /workspace
+```
+
 replay recovery 手順:
 
 1. bot を止める
