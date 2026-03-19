@@ -11,6 +11,7 @@
 - 2026-03-19 時点で、Phase 1-4 の完了条件は `main` で満たしている
 - この文書は今後、追加の構造変更を開始するための計画ではなく、完了条件と移行判断の記録として扱う
 - 新規作業は refactor の継続ではなく、運用耐性、可観測性、work graph の保守性改善を優先する
+- 2026-03-19 時点で、post-refactor runtime は `agent-first / tool-contract-first / manager commit` を primary path とする
 
 ## Global Rules
 

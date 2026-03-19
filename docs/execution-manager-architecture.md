@@ -2,12 +2,14 @@
 
 `pi-slack-linear` を今後「Slack 上の会話 bot」ではなく「Linear を system of record とする execution manager」として進化させるための設計方針をまとめる。
 
-この文書では skill 依存は前提にしない。LLM は計画と評価に使い、状態管理と副作用実行はアプリケーションコードで担保する。
+この文書では skill 依存は前提にしない。runtime の主役は agent + tool contracts とし、状態管理と副作用実行は manager commit で担保する。
 
 ## Current Status
 
 - 2026-03-19 時点で、planner 分離、workflow 分離、repository 化、unified work graph 導入は `main` で完了している
 - 現在の本体 workflow は `workgraph` を primary read model として扱い、Linear を work の source of truth とする
+- 2026-03-19 時点で、Slack message / query / create / update の primary path は `pi-coding-agent + strict tools + manager commit` に移行している
+- scheduler / heartbeat も同じ agent/tool surface を primary path とし、旧 planner / regex / review builder は emergency fallback に縮退している
 - 今後の主題は大規模 refactor の継続ではなく、運用耐性、可観測性、event log の保守性改善である
 
 ## Goals
@@ -26,17 +28,16 @@
 
 ## Core Principles
 
-### 1. Deterministic Shell Around a Probabilistic Core
+### 1. Agent-First, Tool-Contract-First
 
-LLM は次のような「解釈」だけに使う。
+LLM/agent は次のような「理解と提案」に使う。
 
-- 親子構造の計画
-- clarification の要否
-- research-first 判定
-- follow-up への回答判定
-- review 用の要約と優先度づけ
+- 会話 / query / create / update / review の intent 解釈
+- tool を使った Slack / Linear / workgraph の read
+- business command proposal の組み立て
+- Slack reply の自然文生成
 
-一方で、次のような「副作用」は必ずコードで実行する。
+一方で、次のような「副作用」は必ず manager commit がコードで実行する。
 
 - Linear issue 作成
 - due date 更新
@@ -44,8 +45,11 @@ LLM は次のような「解釈」だけに使う。
 - comment 追加
 - blocked / completed の状態変更
 - duplicate 防止
+- command validation
+- permission / policy check
+- workgraph append
 
-この分離により、LLM の出力を typed contract で受け、外部副作用は idempotent に制御できる。
+この分離により、agent の自然言語理解を活かしつつ、外部副作用は typed contract と idempotent commit で制御できる。
 
 ### 2. State-First, Not Chat-First
 
@@ -63,25 +67,28 @@ LLM は次のような「解釈」だけに使う。
 
 Slack thread は入力チャネルであり、状態の主語ではない。
 
-### 3. Typed Planner Contracts
+### 3. Typed Tool Contracts
 
-planner は自由文を返すのではなく、必ず schema 付き JSON を返す。
+agent は自由文のまま副作用を起こさない。read / proposal / internal commit の tool contract を通して実行面を固定する。
 
 例:
 
-- `TaskPlanningResult`
-- `FollowupResolutionResult`
-- `ResearchSynthesisResult`
+- `linear_list_active_issues`
+- `workgraph_get_thread_context`
+- `propose_create_issue`
+- `propose_update_issue_status`
+- `propose_review_followup`
 
-各 planner は prompt と parser を対で持ち、返却型を固定する。manager はその型だけを見て次の command を決める。
+agent は proposal までを返し、manager commit が schema validate と execution を引き受ける。
 
 ### 4. Idempotent Commands and Append-Only History
 
 Slack の再送、同一 thread の追記、scheduler の再実行があっても、同じ副作用を重複実行しない設計にする。
 
-そのために必要なのは次の 2 点。
+そのために必要なのは次の 3 点。
 
 - command 実行前に十分な dedupe key を持つこと
+- proposal を manager commit で 1 回だけ確定すること
 - 実行結果を append-only な履歴として残し、projection で現在状態を作ること
 
 現状の ledger はこの方向の第一歩だが、workflow ごとに分断されている。

@@ -40,6 +40,8 @@ const webResearchMocks = vi.hoisted(() => ({
 }));
 
 const piSessionMocks = vi.hoisted(() => ({
+  runManagerAgentTurn: vi.fn(),
+  runManagerSystemTurn: vi.fn(),
   runMessageRouterTurn: vi.fn(),
   runManagerReplyTurn: vi.fn(),
   runTaskPlanningTurn: vi.fn(),
@@ -73,6 +75,8 @@ vi.mock("../src/lib/web-research.js", () => ({
 }));
 
 vi.mock("../src/lib/pi-session.js", () => ({
+  runManagerAgentTurn: piSessionMocks.runManagerAgentTurn,
+  runManagerSystemTurn: piSessionMocks.runManagerSystemTurn,
   runMessageRouterTurn: piSessionMocks.runMessageRouterTurn,
   runManagerReplyTurn: piSessionMocks.runManagerReplyTurn,
   runTaskPlanningTurn: piSessionMocks.runTaskPlanningTurn,
@@ -468,6 +472,8 @@ describe("handleManagerMessage clarification flow", () => {
       title: "Example",
       snippet: "Example snippet",
     });
+    piSessionMocks.runManagerAgentTurn.mockReset().mockRejectedValue(new Error("manager agent fallback"));
+    piSessionMocks.runManagerSystemTurn.mockReset().mockRejectedValue(new Error("manager system fallback"));
     piSessionMocks.runMessageRouterTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) => defaultMessageRouter(input));
     piSessionMocks.runManagerReplyTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) => defaultManagerReply(input));
     piSessionMocks.runTaskPlanningTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { combinedRequest: string }) => defaultTaskPlan(input));
@@ -3044,5 +3050,137 @@ describe("handleManagerMessage clarification flow", () => {
         status: "awaiting-response",
       }),
     ]));
+  });
+
+  it("uses the manager agent as the primary path for conversational replies", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "こんばんは。確認したいことがあれば、そのまま続けてください。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "conversation",
+              confidence: 0.98,
+              summary: "挨拶です。",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "conversation",
+        confidence: 0.98,
+        summary: "挨拶です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-agent-conversation",
+        messageTs: "msg-agent-1",
+        userId: "U1",
+        text: "こんばんは",
+      },
+      new Date("2026-03-19T06:00:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("こんばんは。");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "agent",
+      intent: "conversation",
+      proposalCount: 0,
+    });
+    expect(piSessionMocks.runMessageRouterTurn).not.toHaveBeenCalled();
+  });
+
+  it("commits agent issue creation proposals exactly once", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "この依頼は登録しておきます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "create_work",
+              confidence: 0.93,
+              summary: "新規 task の依頼です。",
+            },
+          },
+        },
+        {
+          toolName: "propose_create_issue",
+          details: {
+            proposal: {
+              commandType: "create_issue",
+              planningReason: "single-issue",
+              issue: {
+                title: "OPT社の社内チャネルへの招待依頼",
+                description: "## Slack source\n招待してもらう task を追加する",
+              },
+              reasonSummary: "単発 task と判断しました。",
+              dedupeKeyCandidate: "thread-create-1",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          issue: {
+            title: "OPT社の社内チャネルへの招待依頼",
+            description: "## Slack source\n招待してもらう task を追加する",
+          },
+          reasonSummary: "単発 task と判断しました。",
+          dedupeKeyCandidate: "thread-create-1",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "create_work",
+        confidence: 0.93,
+        summary: "新規 task の依頼です。",
+      },
+    });
+
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-900",
+      identifier: "AIC-900",
+      title: "OPT社の社内チャネルへの招待依頼",
+      url: "https://linear.app/issue/AIC-900",
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      state: { id: "state-1", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-agent-create",
+        messageTs: "msg-agent-2",
+        userId: "U1",
+        text: "OPT社の社内チャネルに招待してもらうタスクを追加して",
+      },
+      new Date("2026-03-19T06:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledTimes(1);
+    expect(result.reply).toContain("AIC-900");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "agent",
+      intent: "create_work",
+      proposalCount: 1,
+      committedCommands: ["create_issue"],
+    });
   });
 });

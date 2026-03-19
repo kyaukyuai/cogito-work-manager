@@ -33,6 +33,8 @@ const webResearchMocks = vi.hoisted(() => ({
 }));
 
 const piSessionMocks = vi.hoisted(() => ({
+  runManagerAgentTurn: vi.fn(),
+  runManagerSystemTurn: vi.fn(),
   runMessageRouterTurn: vi.fn(),
   runManagerReplyTurn: vi.fn(),
   runTaskPlanningTurn: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock("../../src/lib/web-research.js", () => ({
 }));
 
 vi.mock("../../src/lib/pi-session.js", () => ({
+  runManagerAgentTurn: piSessionMocks.runManagerAgentTurn,
+  runManagerSystemTurn: piSessionMocks.runManagerSystemTurn,
   runMessageRouterTurn: piSessionMocks.runMessageRouterTurn,
   runManagerReplyTurn: piSessionMocks.runManagerReplyTurn,
   runTaskPlanningTurn: piSessionMocks.runTaskPlanningTurn,
@@ -251,6 +255,8 @@ describe("manager transcript fixtures", () => {
       title: "Example",
       snippet: "Example snippet",
     });
+    piSessionMocks.runManagerAgentTurn.mockReset().mockRejectedValue(new Error("manager agent fallback"));
+    piSessionMocks.runManagerSystemTurn.mockReset().mockRejectedValue(new Error("manager system fallback"));
     piSessionMocks.runMessageRouterTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { messageText: string; threadContext?: { pendingClarification?: boolean } }) => defaultMessageRouter(input));
     piSessionMocks.runManagerReplyTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) => defaultManagerReply(input));
     piSessionMocks.runTaskPlanningTurn.mockReset().mockImplementation(async (_config: unknown, _paths: unknown, input: { combinedRequest: string }) => defaultTaskPlan(input));

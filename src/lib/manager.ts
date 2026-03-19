@@ -11,6 +11,7 @@ import {
   type ManagerQueryKind,
 } from "../orchestrators/query/handle-query.js";
 import {
+  runManagerAgentTurn,
   runManagerReplyTurn,
   runMessageRouterTurn,
   type MessageRouterInput,
@@ -44,6 +45,10 @@ import { handleManagerUpdates } from "../orchestrators/updates/handle-updates.js
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { composeSlackReply, formatSlackBullets, joinSlackSentences } from "../orchestrators/shared/slack-conversation.js";
+import {
+  commitManagerCommandProposals,
+  type ManagerIntentReport,
+} from "./manager-command-commit.js";
 import {
   type LinearIssue,
 } from "./linear.js";
@@ -95,7 +100,21 @@ export interface ManagerHandleResult {
   handled: boolean;
   reply?: string;
   diagnostics?: {
-    router: {
+    agent?: {
+      source: "agent" | "fallback";
+      intent?: ManagerIntentReport["intent"];
+      queryKind?: ManagerIntentReport["queryKind"];
+      queryScope?: ManagerIntentReport["queryScope"];
+      confidence?: number;
+      reasoningSummary?: string;
+      toolCalls: string[];
+      proposalCount: number;
+      invalidProposalCount?: number;
+      committedCommands: string[];
+      commitRejections: string[];
+      technicalFailure?: string;
+    };
+    router?: {
       source: "llm" | "fallback";
       action: MessageRouterResult["action"] | ManagerMessageKind;
       queryKind?: ManagerQueryKind;
@@ -226,6 +245,37 @@ function buildFallbackConversationReply(kind: "greeting" | "smalltalk" | "other"
     return "確認したいことがあれば、そのまま続けて送ってください。状況確認でも task 追加でも大丈夫です。";
   }
   return "必要なことがあれば、そのまま続けて送ってください。状況確認でも task の相談でも対応します。";
+}
+
+function buildCommitRejectionReply(rejections: string[]): string | undefined {
+  if (rejections.length === 0) return undefined;
+  if (rejections.length === 1) {
+    return `今回は ${rejections[0]} ため、すぐには確定できませんでした。必要なら少し補足してください。`;
+  }
+  return composeSlackReply([
+    "いくつか確認したい点があり、そのままでは確定できませんでした。",
+    formatSlackBullets(rejections),
+    "必要なら少し補足してください。",
+  ]);
+}
+
+function mergeAgentReplyWithCommit(args: {
+  agentReply: string;
+  commitSummaries: string[];
+  commitRejections: string[];
+}): string {
+  const paragraphs: string[] = [];
+  if (args.agentReply.trim()) {
+    paragraphs.push(args.agentReply.trim());
+  }
+  if (args.commitSummaries.length > 0) {
+    paragraphs.push(...args.commitSummaries);
+  }
+  const rejectionReply = buildCommitRejectionReply(args.commitRejections);
+  if (rejectionReply) {
+    paragraphs.push(rejectionReply);
+  }
+  return composeSlackReply(paragraphs);
 }
 
 async function buildConversationReply(
@@ -613,7 +663,6 @@ function isManagerRepositories(value: unknown): value is ManagerRepositories {
     && value !== null
     && "policy" in value
     && "ownerMap" in value
-    && "intake" in value
     && "followups" in value
     && "planning" in value
     && "workgraph" in value;
@@ -663,6 +712,100 @@ export async function buildHeartbeatReviewDecision(
 }
 
 export async function handleManagerMessage(
+  config: AppConfig,
+  systemPaths: SystemPaths,
+  message: ManagerSlackMessage,
+  repositoriesOrNow?: ManagerRepositories | Date,
+  maybeNow?: Date,
+): Promise<ManagerHandleResult> {
+  const repositories = isManagerRepositories(repositoriesOrNow)
+    ? repositoriesOrNow
+    : createFileBackedManagerRepositories(systemPaths);
+  const now = repositoriesOrNow instanceof Date ? repositoriesOrNow : (maybeNow ?? new Date());
+  const policy = await repositories.policy.load();
+  const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
+  await ensureThreadWorkspace(paths);
+  const env = {
+    ...process.env,
+    LINEAR_API_KEY: config.linearApiKey,
+    LINEAR_WORKSPACE: config.linearWorkspace,
+    LINEAR_TEAM_KEY: config.linearTeamKey,
+  };
+
+  try {
+    const agentTurn = await runManagerAgentTurn(config, paths, {
+      kind: "message",
+      channelId: message.channelId,
+      rootThreadTs: message.rootThreadTs,
+      messageTs: message.messageTs,
+      userId: message.userId,
+      text: message.text,
+      currentDate: currentDateInJst(now),
+    });
+
+    if (agentTurn.invalidProposalCount > 0 && agentTurn.proposals.length === 0) {
+      throw new Error(`manager agent returned ${agentTurn.invalidProposalCount} invalid proposals`);
+    }
+
+    const commitResult = await commitManagerCommandProposals({
+      config,
+      repositories,
+      proposals: agentTurn.proposals,
+      message,
+      now,
+      policy,
+      env,
+    });
+
+    return {
+      handled: true,
+      reply: mergeAgentReplyWithCommit({
+        agentReply: agentTurn.reply,
+        commitSummaries: commitResult.replySummaries,
+        commitRejections: commitResult.rejected.map((entry) => entry.reason),
+      }),
+      diagnostics: {
+        agent: {
+          source: "agent",
+          intent: agentTurn.intentReport?.intent,
+          queryKind: agentTurn.intentReport?.queryKind,
+          queryScope: agentTurn.intentReport?.queryScope,
+          confidence: agentTurn.intentReport?.confidence,
+          reasoningSummary: agentTurn.intentReport?.summary,
+          toolCalls: agentTurn.toolCalls.map((call) => call.toolName),
+          proposalCount: agentTurn.proposals.length,
+          invalidProposalCount: agentTurn.invalidProposalCount,
+          committedCommands: commitResult.committed.map((entry) => entry.commandType),
+          commitRejections: commitResult.rejected.map((entry) => entry.reason),
+        },
+      },
+    };
+  } catch (error) {
+    const legacyResult = await handleManagerMessageLegacy(
+      config,
+      systemPaths,
+      message,
+      repositories,
+      now,
+    );
+    return {
+      ...legacyResult,
+      diagnostics: {
+        ...legacyResult.diagnostics,
+        agent: {
+          source: "fallback",
+          toolCalls: [],
+          proposalCount: 0,
+          committedCommands: [],
+          commitRejections: [],
+          technicalFailure: error instanceof Error ? error.message : String(error),
+        },
+      },
+    };
+  }
+}
+
+async function handleManagerMessageLegacy(
   config: AppConfig,
   systemPaths: SystemPaths,
   message: ManagerSlackMessage,

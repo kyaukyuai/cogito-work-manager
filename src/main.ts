@@ -8,12 +8,13 @@ import { HeartbeatService } from "./lib/heartbeat.js";
 import { verifyLinearCli } from "./lib/linear.js";
 import { Logger } from "./lib/logger.js";
 import { buildHeartbeatReviewDecision, buildManagerReview, formatControlRoomReviewForSlack, handleManagerMessage, type ManagerReviewResult } from "./lib/manager.js";
+import { commitManagerCommandProposals } from "./lib/manager-command-commit.js";
 import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
-import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runAgentTurn, runSystemTurn } from "./lib/pi-session.js";
+import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runManagerSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
 import { formatSlackMessageText } from "./lib/slack-format.js";
-import { classifyTaskIntent, isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "./lib/slack.js";
+import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "./lib/slack.js";
 import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace } from "./lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "./state/repositories/file-backed-manager-repositories.js";
 import { runWorkgraphMaintenance } from "./state/workgraph/maintenance.js";
@@ -74,6 +75,19 @@ async function formatManagerReviewForSlack(
   }
 
   return formatControlRoomReviewForSlack(result, threadReference);
+}
+
+function mergeSystemReply(agentReply: string, commitSummaries: string[], commitRejections: string[]): string {
+  const parts = [agentReply.trim(), ...commitSummaries];
+  if (commitRejections.length === 1) {
+    parts.push(`一部は ${commitRejections[0]} ため、そのまま確定していません。`);
+  } else if (commitRejections.length > 1) {
+    parts.push([
+      "一部はそのまま確定できていません。",
+      ...commitRejections.map((reason) => `- ${reason}`),
+    ].join("\n"));
+  }
+  return parts.filter(Boolean).join("\n\n");
 }
 
 async function downloadAttachments(
@@ -219,6 +233,68 @@ async function main(): Promise<void> {
     throw new Error("Unable to resolve Slack bot user ID");
   }
 
+  const currentDateInJst = () => new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const linearEnv = {
+    ...process.env,
+    LINEAR_API_KEY: config.linearApiKey,
+    LINEAR_WORKSPACE: config.linearWorkspace,
+    LINEAR_TEAM_KEY: config.linearTeamKey,
+  };
+
+  const executeManagerSystemTask = async (args: {
+    paths: ReturnType<typeof buildThreadPaths>;
+    input: Parameters<typeof runManagerSystemTurn>[2];
+    fallback: () => Promise<string>;
+  }): Promise<string> => {
+    try {
+      const agentResult = await runManagerSystemTurn(config, args.paths, args.input);
+      const commitResult = await commitManagerCommandProposals({
+        config,
+        repositories: managerRepositories,
+        proposals: agentResult.proposals,
+        message: {
+          channelId: args.input.channelId,
+          rootThreadTs: args.input.rootThreadTs,
+          messageTs: args.input.messageTs,
+          text: args.input.text,
+        },
+        now: new Date(),
+        policy: managerPolicy,
+        env: linearEnv,
+      });
+      logger.info("Manager system agent result", {
+        intent: agentResult.intentReport?.intent,
+        queryKind: agentResult.intentReport?.queryKind,
+        queryScope: agentResult.intentReport?.queryScope,
+        toolCalls: agentResult.toolCalls.map((call) => call.toolName),
+        proposalCount: agentResult.proposals.length,
+        invalidProposalCount: agentResult.invalidProposalCount,
+        committedCommands: commitResult.committed.map((entry) => entry.commandType),
+        commitRejections: commitResult.rejected.map((entry) => entry.reason),
+        channelId: args.input.channelId,
+        threadTs: args.input.rootThreadTs,
+      });
+      return mergeSystemReply(
+        agentResult.reply,
+        commitResult.replySummaries,
+        commitResult.rejected.map((entry) => entry.reason),
+      );
+    } catch (error) {
+      logger.warn("Manager system agent fell back to legacy flow", {
+        channelId: args.input.channelId,
+        threadTs: args.input.rootThreadTs,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return args.fallback();
+    }
+  };
+
   logger.info("Slack bot starting", {
     channels: Array.from(config.slackAllowedChannelIds),
     model: config.botModel,
@@ -270,8 +346,6 @@ async function main(): Promise<void> {
         attachments,
       });
 
-      const intent = classifyTaskIntent(message.text);
-
       try {
         const managerResult = await handleManagerMessage(
           config,
@@ -285,6 +359,29 @@ async function main(): Promise<void> {
           },
           managerRepositories,
         );
+        if (managerResult.diagnostics?.agent) {
+          const agent = managerResult.diagnostics.agent;
+          const logPayload = {
+            intent: agent.intent,
+            queryKind: agent.queryKind,
+            queryScope: agent.queryScope,
+            confidence: agent.confidence,
+            reasoningSummary: agent.reasoningSummary,
+            toolCalls: agent.toolCalls,
+            proposalCount: agent.proposalCount,
+            invalidProposalCount: agent.invalidProposalCount,
+            committedCommands: agent.committedCommands,
+            commitRejections: agent.commitRejections,
+            technicalFailure: agent.technicalFailure,
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+          };
+          if (agent.source === "fallback") {
+            logger.warn("Manager agent fell back to legacy path", logPayload);
+          } else {
+            logger.info("Manager agent decision", logPayload);
+          }
+        }
         if (managerResult.diagnostics?.router) {
           const router = managerResult.diagnostics.router;
           const logPayload = {
@@ -304,16 +401,7 @@ async function main(): Promise<void> {
           }
         }
 
-        const reply = managerResult.handled
-          ? managerResult.reply ?? "対応しました。"
-          : await runAgentTurn(config, paths, {
-              channelId: message.channelId,
-              userId: message.userId,
-              text: message.text,
-              rootThreadTs: message.rootThreadTs,
-              intent,
-              attachments,
-            });
+        const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
 
         const formattedReply = formatSlackMessageText(reply);
         await webClient.chat.postMessage({
@@ -373,10 +461,31 @@ async function main(): Promise<void> {
         text: prompt,
       });
 
-      const decision = await buildHeartbeatReviewDecision(config, systemPaths, managerRepositories);
-      if (!decision.review) {
-        const reason = decision.reason ?? "no-urgent-items";
-        const reply = `heartbeat noop: ${reason}`;
+      const reply = formatSlackMessageText(await executeManagerSystemTask({
+        paths,
+        input: {
+          kind: "heartbeat",
+          channelId,
+          rootThreadTs: "heartbeat",
+          messageTs: "heartbeat",
+          currentDate: currentDateInJst(),
+          text: prompt,
+        },
+        fallback: async () => {
+          const decision = await buildHeartbeatReviewDecision(config, systemPaths, managerRepositories);
+          if (!decision.review) {
+            return `heartbeat noop: ${decision.reason ?? "no-urgent-items"}`;
+          }
+          return formatManagerReviewForSlack(webClient, logger, decision.review);
+        },
+      }));
+      if (reply.startsWith("heartbeat noop:")) {
+        const rawReason = reply.replace("heartbeat noop:", "").trim();
+        const reason = (
+          rawReason === "outside-business-hours"
+          || rawReason === "no-active-channels"
+          || rawReason === "suppressed-by-cooldown"
+        ) ? rawReason : "no-urgent-items";
         await appendThreadLog(paths, {
           type: "system",
           ts: `${Date.now() / 1000}`,
@@ -385,8 +494,6 @@ async function main(): Promise<void> {
         });
         return { reply, status: "noop", reason };
       }
-      const review = decision.review;
-      const reply = formatSlackMessageText(await formatManagerReviewForSlack(webClient, logger, review));
       await webClient.chat.postMessage({
         channel: channelId,
         text: reply,
@@ -415,14 +522,37 @@ async function main(): Promise<void> {
 
       if (job.action) {
         const mappedKind = job.action;
-        const review = await buildManagerReview(config, systemPaths, mappedKind, managerRepositories);
-        if (!review) {
+        const paths = buildSchedulerPaths(config.workspaceDir, job.id);
+        await ensureThreadWorkspace(paths);
+        const reply = formatSlackMessageText(await executeManagerSystemTask({
+          paths,
+          input: {
+            kind: mappedKind,
+            channelId: job.channelId,
+            rootThreadTs: job.id,
+            messageTs: job.id,
+            currentDate: currentDateInJst(),
+            text: job.prompt,
+            metadata: {
+              jobId: job.id,
+              scheduleKind: job.kind,
+              reviewKind: mappedKind,
+            },
+          },
+          fallback: async () => {
+            const review = await buildManagerReview(config, systemPaths, mappedKind, managerRepositories);
+            if (!review) {
+              return "No review output";
+            }
+            return formatManagerReviewForSlack(webClient, logger, review);
+          },
+        }));
+        if (reply === "No review output") {
           return {
             delivered: false,
-            summary: "No review output",
+            summary: reply,
           };
         }
-        const reply = formatSlackMessageText(await formatManagerReviewForSlack(webClient, logger, review));
 
         await webClient.chat.postMessage({
           channel: job.channelId,
@@ -444,14 +574,21 @@ async function main(): Promise<void> {
         text: job.prompt,
       });
 
-      const reply = formatSlackMessageText(await runSystemTurn(config, paths, {
-        kind: "scheduler",
-        channelId: job.channelId,
-        text: job.prompt,
-        metadata: {
-          jobId: job.id,
-          scheduleKind: job.kind,
+      const reply = formatSlackMessageText(await executeManagerSystemTask({
+        paths,
+        input: {
+          kind: "scheduler",
+          channelId: job.channelId,
+          rootThreadTs: job.id,
+          messageTs: job.id,
+          currentDate: currentDateInJst(),
+          text: job.prompt,
+          metadata: {
+            jobId: job.id,
+            scheduleKind: job.kind,
+          },
         },
+        fallback: async () => "処理に失敗しました。設定や連携を確認してください。",
       }));
 
       await webClient.chat.postMessage({

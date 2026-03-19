@@ -7,6 +7,7 @@
 ## Current Mode
 
 - 2026-03-19 時点で、Phase 1-4 の refactor は完了済みと扱う
+- 2026-03-19 時点で、runtime の primary path は `agent-first / tool-contract-first / manager commit` で動かす
 - 以後の変更は、原則として新たな大規模構造変更ではなく、運用耐性、可観測性、保守性改善を優先する
 - 新しい構造再編を始める場合は、既存 architecture / roadmap のどの完了条件が不足しているかを先に明記する
 
@@ -21,12 +22,15 @@
 
 - 本番の中核ロジックを skill や自由文 prompt に依存させない
 - Linear 以外の内部 todo system を作らない
-- LLM の自由文出力をそのまま外部副作用へつなげない
+- agent の自由文出力をそのまま外部副作用へつなげない
 - 巨大な manager 関数や巨大な prompt ファイルへ機能を継ぎ足さない
 
 ## Architecture Rules
 
 - `main.ts` は薄く保つ。起動、配線、ルーティング以外の業務ロジックを入れない。
+- manager の primary path は `agent + strict tools + manager commit` とする。
+- read と write proposal の tool surface を分ける。
+- workgraph や Linear の mutation は agent から直接実行させず、manager commit で確定する。
 - workflow ごとの処理は `orchestrators/` に分ける。
 - LLM を使う判断処理は `planners/` に分ける。
 - 外部 API / CLI / Slack context / web research は `gateways/` に集約する。
@@ -38,8 +42,8 @@
 
 ## LLM Rules
 
-- LLM は `plan` と `assess` にのみ使う。
-- create / update / comment / assign / relation / state change は必ずコード側の command で実行する。
+- agent は intent 理解、read tool 利用、proposal 組み立て、reply 生成に使う。
+- create / update / comment / assign / relation / state change は必ず manager commit の command で実行する。
 - planner は必ず schema 付き JSON を返す。
 - planner ごとに `contract.ts`, `prompt.ts`, `parser.ts`, `runner.ts` を分ける。
 - parser は保守的に実装し、曖昧な応答は失敗または clarify に倒す。
@@ -48,6 +52,7 @@
 ## Side Effects and State
 
 - 外部副作用は idempotent に扱う。
+- proposal 実行前に schema validate, policy check, dedupe を行う。
 - duplicate 防止、再送耐性、再実行耐性を常に考慮する。
 - Slack thread は入力チャネルであり、状態の主語ではない。
 - ローカル state は orchestration 補助に限定する。
@@ -63,6 +68,7 @@
 - follow-up request / resolution は `orchestrators/followups/` と `planners/followup-resolution/` に分ける。
 - review / heartbeat の判断は `orchestrators/review/` に置く。
 - Linear custom tools や Linear command/query は `gateways/linear/` に寄せる。
+- agent に渡す tool は read-only tool と proposal tool を first-class にする。
 
 新しい workflow を追加する場合は、最低限次を同時に定義する。
 
@@ -91,6 +97,7 @@
 ## Decision Heuristics
 
 - 判断を LLM に任せる前に、必要な contract が定義されているか確認する。
+- agent に任せる場合も、tool contract が無ければ自由文判断に逃がさない。
 - state を増やす前に、その state が Linear では表現できない orchestration 補助か確認する。
 - 新しい抽象を足す前に、それが workflow 境界か外部依存境界か状態境界かを明確にする。
 - 会話として自然かより、再実行して壊れないかを優先する。

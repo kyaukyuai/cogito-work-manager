@@ -5,7 +5,6 @@ import {
   type AgentSession,
   AuthStorage,
   createAgentSession,
-  createReadTool,
   DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
@@ -37,6 +36,7 @@ import {
   type TaskPlanningInput,
   type TaskPlanningResult,
 } from "../planners/task-intake/index.js";
+import { createManagerAgentTools } from "./manager-agent-tools.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
@@ -44,6 +44,13 @@ import { getThreadPlanningContext } from "../state/workgraph/queries.js";
 import type { AppConfig } from "./config.js";
 import { getLinearIssue } from "./linear.js";
 import { createLinearCustomTools } from "./linear-tools.js";
+import {
+  extractIntentReport,
+  extractManagerCommandProposals,
+  type ManagerAgentToolCall,
+  type ManagerCommandProposal,
+  type ManagerIntentReport,
+} from "./manager-command-commit.js";
 import type { TaskIntent } from "./slack.js";
 import { buildSystemPaths } from "./system-workspace.js";
 import type { AttachmentRecord, ThreadPaths } from "./thread-workspace.js";
@@ -62,6 +69,34 @@ export interface SystemAgentInput {
   channelId: string;
   text: string;
   metadata?: Record<string, string>;
+}
+
+export interface ManagerAgentInput {
+  kind: "message";
+  channelId: string;
+  rootThreadTs: string;
+  messageTs: string;
+  userId: string;
+  text: string;
+  currentDate: string;
+}
+
+export interface ManagerSystemInput {
+  kind: "heartbeat" | "scheduler" | "morning-review" | "evening-review" | "weekly-review";
+  channelId: string;
+  rootThreadTs: string;
+  messageTs: string;
+  text: string;
+  currentDate: string;
+  metadata?: Record<string, string>;
+}
+
+export interface ManagerAgentTurnResult {
+  reply: string;
+  toolCalls: ManagerAgentToolCall[];
+  proposals: ManagerCommandProposal[];
+  invalidProposalCount: number;
+  intentReport?: ManagerIntentReport;
 }
 
 export {
@@ -220,26 +255,26 @@ export function buildSystemPrompt(config: AppConfig): string {
     "Slack thread is the primary operator surface for day-to-day work.",
     "Do not use or invent any internal todo list.",
     "Treat the allowed Slack channel as a control room for task execution.",
-    "Use Linear to store truth, but return normal task execution results to the originating Slack thread.",
     "Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.",
-    "Create, search, inspect, assign, and update Linear issues when task progression requires it.",
+    "Use read tools to inspect Linear, workgraph, Slack context, and lightweight web results.",
+    "Use proposal tools for create/update/follow-up actions. Proposal tools do not execute side effects.",
+    "Never pretend a proposal has already been committed. The manager will validate and commit proposals after your turn.",
+    "Report your current intent with report_manager_intent once per turn before or during tool usage.",
     "Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.",
-    "Search before creating, and inspect the issue hierarchy before updating tracked work.",
-    "If a thread already maps to an issue, prefer updating that issue for progress, completion, and blocked signals.",
+    "Search before proposing new tracked work, and inspect the issue hierarchy before proposing updates.",
+    "If a thread already maps to an issue, prefer that issue for progress, completion, blocked, inspect, and next-step requests.",
     "For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.",
-    "For larger requests, create a parent issue and execution-sized child issues.",
-    "When research is required, gather evidence from Slack thread context, related Linear issues, and lightweight web search before proposing follow-up tasks.",
+    "For larger requests, propose a parent issue and execution-sized child issues.",
     "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
-    "Use owner hints from the conversation when assigning work, but do not ask for API keys or workspace/team identifiers.",
-    "If the request is ambiguous, ask exactly one concise follow-up question before taking action.",
-    "Do not ask the user for API keys. Slack and Linear credentials are already configured in the environment.",
-    "Use the dedicated Linear tools for tracked task work.",
+    "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
+    "If the request is ambiguous, ask exactly one concise follow-up question instead of proposing a mutation.",
+    "Do not ask the user for API keys, workspace identifiers, or team identifiers. They are fixed in the environment.",
+    "Do not mutate internal state directly. Only the manager commit layer may update Linear, workgraph, planning, or follow-up ledgers.",
     `The fixed Linear workspace slug is ${config.linearWorkspace}.`,
     `The fixed Linear team key is ${config.linearTeamKey}.`,
     "Interpret relative dates in Asia/Tokyo and convert them to YYYY-MM-DD before passing due dates to Linear.",
-    "The Linear tools already target the configured workspace and team. Do not ask for workspace, team, or API credentials.",
-    "Keep public Slack replies short. Do not expose tool logs or raw shell output unless the user asks.",
-    "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
+    "Keep public Slack replies short and natural. Do not expose tool logs or raw output unless the user asks.",
+    "Use issue identifiers, due dates, owners, and thread context facts in replies when they materially help the user.",
   ].join("\n");
 }
 
@@ -482,8 +517,8 @@ async function createThreadRuntime(config: AppConfig, paths: ThreadPaths): Promi
     resourceLoader: loader,
     sessionManager,
     settingsManager,
-    tools: [createReadTool(paths.rootDir)],
-    customTools: createLinearCustomTools(config, shared.managerRepositories),
+    tools: [],
+    customTools: createManagerAgentTools(config, shared.managerRepositories),
   });
 
   return {
@@ -556,6 +591,39 @@ export async function runAgentTurn(config: AppConfig, paths: ThreadPaths, input:
 
 export async function runSystemTurn(config: AppConfig, paths: ThreadPaths, input: SystemAgentInput): Promise<string> {
   return runPromptTurn(config, paths, buildSystemPromptInput(input, config));
+}
+
+function buildManagerAgentPrompt(input: ManagerAgentInput): string {
+  return [
+    "Manager message context:",
+    `- channelId: ${input.channelId}`,
+    `- rootThreadTs: ${input.rootThreadTs}`,
+    `- sourceMessageTs: ${input.messageTs}`,
+    `- userId: ${input.userId}`,
+    `- currentDateJst: ${input.currentDate}`,
+    "",
+    "User message:",
+    input.text || "(empty)",
+  ].join("\n");
+}
+
+function buildManagerSystemPromptInput(input: ManagerSystemInput): string {
+  const metadataLines = Object.entries(input.metadata ?? {})
+    .map(([key, value]) => `- ${key}: ${value}`)
+    .join("\n");
+
+  return [
+    "Manager system task context:",
+    `- runKind: ${input.kind}`,
+    `- channelId: ${input.channelId}`,
+    `- rootThreadTs: ${input.rootThreadTs}`,
+    `- sourceMessageTs: ${input.messageTs}`,
+    `- currentDateJst: ${input.currentDate}`,
+    ...(metadataLines ? ["", "Metadata:", metadataLines] : []),
+    "",
+    "Task:",
+    input.text,
+  ].join("\n");
 }
 
 export async function runResearchSynthesisTurn(
@@ -641,6 +709,81 @@ export async function runFollowupResolutionTurn(
     ),
     input,
   );
+}
+
+async function runStructuredPromptTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  prompt: string,
+): Promise<ManagerAgentTurnResult> {
+  const runtimeKey = buildThreadRuntimeKey(paths);
+  const runtime = await getOrCreateThreadRuntime(config, paths);
+  const messageCountBefore = runtime.session.messages.length;
+  const deltas: string[] = [];
+  const toolCalls: ManagerAgentToolCall[] = [];
+
+  const unsubscribe = runtime.session.subscribe((event) => {
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      deltas.push(event.assistantMessageEvent.delta);
+      return;
+    }
+
+    if (event.type === "tool_execution_end") {
+      const result = event.result as { details?: unknown } | undefined;
+      toolCalls.push({
+        toolName: event.toolName,
+        details: result?.details,
+        isError: event.isError,
+      });
+    }
+  });
+
+  try {
+    await runtime.session.prompt(prompt);
+    await runtime.session.agent.waitForIdle();
+
+    const newMessages = (runtime.session.messages as unknown[]).slice(messageCountBefore);
+    const reply = deltas.join("").trim() || extractAssistantText(newMessages);
+    if (!reply) {
+      throw new Error("Agent finished without producing a reply");
+    }
+
+    runtime.lastUsedAt = Date.now();
+
+    const lastReplyPath = join(paths.scratchDir, "last-reply.txt");
+    await writeFile(lastReplyPath, `${reply}\n`, "utf8");
+
+    const { proposals, invalidProposalCount } = extractManagerCommandProposals(toolCalls);
+    return {
+      reply,
+      toolCalls,
+      proposals,
+      invalidProposalCount,
+      intentReport: extractIntentReport(toolCalls),
+    };
+  } catch (error) {
+    await disposeThreadRuntime(runtimeKey);
+    throw error;
+  } finally {
+    unsubscribe();
+    runtime.lastUsedAt = Date.now();
+  }
+}
+
+export async function runManagerAgentTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: ManagerAgentInput,
+): Promise<ManagerAgentTurnResult> {
+  return runStructuredPromptTurn(config, paths, buildManagerAgentPrompt(input));
+}
+
+export async function runManagerSystemTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: ManagerSystemInput,
+): Promise<ManagerAgentTurnResult> {
+  return runStructuredPromptTurn(config, paths, buildManagerSystemPromptInput(input));
 }
 
 async function runPromptTurn(config: AppConfig, paths: ThreadPaths, prompt: string): Promise<string> {
