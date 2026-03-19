@@ -32,7 +32,6 @@ import {
 import { handleManagerUpdates } from "../orchestrators/updates/handle-updates.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
-import { createCompatIntakeLedgerWriterFromRepositories } from "../state/compat/intake-ledger-writer.js";
 import {
   type LinearIssue,
 } from "./linear.js";
@@ -562,15 +561,10 @@ export async function handleManagerMessage(
     LINEAR_WORKSPACE: config.linearWorkspace,
     LINEAR_TEAM_KEY: config.linearTeamKey,
   };
-  const compatIntakeLedger = createCompatIntakeLedgerWriterFromRepositories(repositories, {
-    fingerprintText,
-    nowIso,
-  });
 
   const updatesResult = await handleManagerUpdates({
     config,
     repositories,
-    compatIntakeLedger,
     message,
     now,
     signal,
@@ -599,7 +593,6 @@ export async function handleManagerMessage(
   return handleIntakeRequest({
     config,
     repositories,
-    compatIntakeLedger,
     message,
     now,
     policy,

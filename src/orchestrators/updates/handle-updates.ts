@@ -39,7 +39,6 @@ import {
   formatFollowupResolutionReply,
   formatStatusReply,
 } from "./reply-format.js";
-import type { CompatIntakeLedgerWriter } from "../../state/compat/intake-ledger-writer.js";
 
 export type UpdateSignal = "progress" | "completed" | "blocked";
 export type ManagerSignal = UpdateSignal | "request" | "conversation";
@@ -66,7 +65,6 @@ export interface UpdatesHelpers {
 export interface HandleManagerUpdatesArgs {
   config: AppConfig;
   repositories: Pick<ManagerRepositories, "followups" | "workgraph">;
-  compatIntakeLedger: CompatIntakeLedgerWriter;
   message: UpdatesMessage;
   now: Date;
   signal: ManagerSignal;
@@ -80,7 +78,6 @@ export interface HandleManagerUpdatesArgs {
 export async function handleManagerUpdates({
   config,
   repositories,
-  compatIntakeLedger,
   message,
   now,
   signal,
@@ -202,11 +199,6 @@ export async function handleManagerUpdates({
       );
       await repositories.followups.save(nextFollowups);
 
-      await compatIntakeLedger.patchLastResolvedIssue({
-        message,
-        issueId: updatedIssue.identifier,
-        now,
-      });
       await recordFollowupTransitions(repositories.workgraph, followups, nextFollowups, {
         occurredAt,
         source: workgraphSource,
@@ -266,13 +258,6 @@ export async function handleManagerUpdates({
       }
     }
   }
-
-  await compatIntakeLedger.patchIssueStatus({
-    message,
-    status: signal === "progress" ? "progressed" : signal,
-    lastResolvedIssueId: targetIssueIds[0],
-    now,
-  });
 
   const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   const followupState = updateFollowupsWithIssueResponse(

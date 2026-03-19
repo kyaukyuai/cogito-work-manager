@@ -146,7 +146,7 @@
 - `src/state/repositories/` を追加し、現行 JSON file を背後に持つ repository を実装する
 - `manager-state.ts` は schema と互換ヘルパーに縮小するか、repository 内部へ段階移行する
 - workflow からの state access は repository 経由に寄せる
-- 既存の `policy.json`, `owner-map.json`, `intake-ledger.json`, `followups.json`, `planning-ledger.json` は format を維持する
+- 既存の `policy.json`, `owner-map.json`, `followups.json`, `planning-ledger.json` は format を維持する
 
 ### Validation
 
@@ -192,10 +192,9 @@ planning / intake / followup を横断する work graph を導入し、append-on
 - Linear は引き続き work 自体の source of truth とする
 - work graph は cross-workflow read model の優先経路として扱う
 - 現在の read-side では、review 件数集計、issue source lookup、thread planning context、pending clarification の照合、latest resolved issue、updates の target-resolution candidate discovery を work graph query から取得する
-- legacy ledger は互換レイヤとして残し、未移行 helper の補助情報と互換 export を保持する
-- legacy intake ledger への production write は compat adapter 経由に閉じ込め、workflow は ledger schema を直接扱わない
-- `issueFocusHistory` は historical compatibility のみとし、新規には記録しない
-- source of truth の切り替えは dual-write と query migration を段階的に進め、ledger の削除は最後に行う
+- manager / intake / updates / review の主要判断は work graph query を前提にする
+- legacy intake ledger は runtime から削除し、旧 `intake-ledger.json` は bootstrap 時に掃除する
+- source of truth の切り替えは dual-write と query migration を段階的に進め、最終的に intake ledger を撤去した
 
 ### Validation
 
@@ -208,6 +207,7 @@ planning / intake / followup を横断する work graph を導入し、append-on
 - work graph のイベント定義、repository、projection が存在する
 - 既存 ledger と work graph の責務分担が明文化されている
 - intake / planning / followup の主要判断が unified state を前提に扱える
+- legacy intake ledger が runtime から除去され、workflow が work graph と現行 ledger だけで成立している
 
 ## Validation Checklist
 

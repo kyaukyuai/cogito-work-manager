@@ -203,9 +203,9 @@ docker compose down
 
 - `policy.json`
 - `owner-map.json`
-- `intake-ledger.json`
 - `followups.json`
 - `planning-ledger.json`
+- `workgraph-events.jsonl`
 - `jobs.json`
 - `HEARTBEAT.md`
 

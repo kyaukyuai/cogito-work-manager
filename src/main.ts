@@ -8,7 +8,7 @@ import { HeartbeatService } from "./lib/heartbeat.js";
 import { verifyLinearCli } from "./lib/linear.js";
 import { Logger } from "./lib/logger.js";
 import { buildHeartbeatReviewDecision, buildManagerReview, formatControlRoomReviewForSlack, handleManagerMessage, type ManagerReviewResult } from "./lib/manager.js";
-import { ensureManagerSystemFiles } from "./lib/manager-state.js";
+import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runAgentTurn, runSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
 import { formatSlackMessageText } from "./lib/slack-format.js";
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
   cleanupTimer.unref();
 
   await ensureSystemWorkspace(systemPaths);
-  await ensureManagerSystemFiles(systemPaths);
+  await ensureManagerStateFiles(systemPaths);
   await verifyLinearCli(config.linearTeamKey);
   const managerRepositories = createFileBackedManagerRepositories(systemPaths);
   const managerPolicy = await managerRepositories.policy.load();

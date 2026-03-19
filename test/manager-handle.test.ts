@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHeartbeatReviewDecision, buildManagerReview, formatIssueSelectionReply, handleManagerMessage } from "../src/lib/manager.js";
-import { ensureManagerSystemFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
+import { ensureManagerStateFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
@@ -226,7 +226,7 @@ describe("handleManagerMessage clarification flow", () => {
   beforeEach(async () => {
     workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-manager-"));
     systemPaths = buildSystemPaths(workspaceDir);
-    await ensureManagerSystemFiles(systemPaths);
+    await ensureManagerStateFiles(systemPaths);
 
     linearMocks.searchLinearIssues.mockReset().mockResolvedValue([]);
     linearMocks.createManagedLinearIssue.mockReset();
@@ -409,8 +409,6 @@ describe("handleManagerMessage clarification flow", () => {
     expect(first.handled).toBe(true);
     expect(first.reply).toContain("起票前に確認したい点があります");
 
-    await repositories.compatIntake.save([]);
-
     linearMocks.createManagedLinearIssueBatch.mockResolvedValueOnce({
       parent: {
         id: "parent-10",
@@ -495,8 +493,6 @@ describe("handleManagerMessage clarification flow", () => {
     );
 
     expect(first.handled).toBe(true);
-    await repositories.compatIntake.save([]);
-
     const second = await handleManagerMessage(
       { ...config, workspaceDir },
       systemPaths,

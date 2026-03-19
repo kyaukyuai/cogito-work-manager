@@ -240,7 +240,6 @@ src/
     repositories/
       policy-repository.ts
       owner-map-repository.ts
-      intake-repository.ts
       followup-repository.ts
       planning-repository.ts
       workgraph-repository.ts
@@ -249,7 +248,6 @@ src/
       issue-focus-projection.ts
       review-suppression-projection.ts
     schemas/
-      intake-ledger-schema.ts
       followup-ledger-schema.ts
       planning-ledger-schema.ts
       workgraph-event-schema.ts
@@ -420,7 +418,6 @@ execution manager の主要 workflow には、明示的な入出力型を持た�
 
 - `policy.json`
 - `owner-map.json`
-- `intake-ledger.json`
 - `followups.json`
 - `planning-ledger.json`
 

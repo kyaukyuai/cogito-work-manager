@@ -1,6 +1,6 @@
 // Compatibility layer for legacy callers and tests.
-import { mkdir, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
   DEFAULT_OWNER_MAP,
   DEFAULT_POLICY,
@@ -103,13 +103,13 @@ function mergeSchedulerJob(existing: SchedulerJob | undefined, desired: Schedule
   };
 }
 
-export async function ensureManagerSystemFiles(paths: SystemPaths): Promise<void> {
+export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void> {
   await ensureJsonFile(paths.policyFile, DEFAULT_POLICY);
   await ensureJsonFile(paths.ownerMapFile, DEFAULT_OWNER_MAP);
-  await ensureJsonFile(paths.compatIntakeLedgerFile, []);
   await ensureJsonFile(paths.followupsFile, []);
   await ensureJsonFile(paths.planningLedgerFile, []);
   await ensureTextFile(paths.workgraphEventsFile, "");
+  await rm(join(paths.rootDir, "intake-ledger.json"), { force: true });
 
   const policy = await loadManagerPolicy(paths);
   const jobs = await loadSchedulerJobs(paths);

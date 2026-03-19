@@ -3,12 +3,11 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
-  ensureManagerSystemFiles,
+  ensureManagerStateFiles,
   loadFollowupsLedger,
   loadPlanningLedger,
 } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
-import { loadCompatIntakeLedger } from "../src/state/compat/intake-ledger-store.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
 describe("file-backed manager repositories", () => {
@@ -24,18 +23,17 @@ describe("file-backed manager repositories", () => {
     await expect(repositories.ownerMap.load()).resolves.toMatchObject({
       defaultOwner: "kyaukyuai",
     });
-    await expect(repositories.compatIntake.load()).resolves.toEqual([]);
     await expect(repositories.followups.load()).resolves.toEqual([]);
     await expect(repositories.planning.load()).resolves.toEqual([]);
     await expect(repositories.workgraph.list()).resolves.toEqual([]);
   });
 
-  it("persists manager state without changing compatibility reads", async () => {
+  it("persists manager state without changing file-backed reads", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-repositories-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const now = new Date("2026-03-18T00:00:00.000Z").toISOString();
 
-    await ensureManagerSystemFiles(systemPaths);
+    await ensureManagerStateFiles(systemPaths);
 
     const repositories = createFileBackedManagerRepositories(systemPaths);
     const policy = await repositories.policy.load();
@@ -43,20 +41,6 @@ describe("file-backed manager repositories", () => {
 
     expect(policy.controlRoomChannelId).toBe("C0ALAMDRB9V");
     expect(ownerMap.defaultOwner).toBe("kyaukyuai");
-
-    const intakeLedger = [
-      {
-        sourceChannelId: "C123",
-        sourceThreadTs: "1710000000.000100",
-        sourceMessageTs: "1710000000.000100",
-        messageFingerprint: "contract-signing",
-        childIssueIds: ["AIC-2"],
-        status: "planned",
-        clarificationReasons: [],
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
     const followups = [
       {
         issueId: "AIC-2",
@@ -74,11 +58,9 @@ describe("file-backed manager repositories", () => {
       },
     ];
 
-    await repositories.compatIntake.save(intakeLedger);
     await repositories.followups.save(followups);
     await repositories.planning.save(planningLedger);
 
-    expect(await loadCompatIntakeLedger(systemPaths)).toEqual(intakeLedger);
     expect(await loadFollowupsLedger(systemPaths)).toEqual(followups);
     expect(await loadPlanningLedger(systemPaths)).toEqual(planningLedger);
   });

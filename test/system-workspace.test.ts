@@ -1,8 +1,8 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ensureManagerSystemFiles, loadManagerPolicy, loadOwnerMap } from "../src/lib/manager-state.js";
+import { ensureManagerStateFiles, loadManagerPolicy, loadOwnerMap } from "../src/lib/manager-state.js";
 import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace } from "../src/lib/system-workspace.js";
 
 describe("system workspace helpers", () => {
@@ -14,7 +14,6 @@ describe("system workspace helpers", () => {
     expect(paths.heartbeatPromptFile).toBe("/workspace/system/HEARTBEAT.md");
     expect(paths.policyFile).toBe("/workspace/system/policy.json");
     expect(paths.ownerMapFile).toBe("/workspace/system/owner-map.json");
-    expect(paths.compatIntakeLedgerFile).toBe("/workspace/system/intake-ledger.json");
     expect(paths.workgraphEventsFile).toBe("/workspace/system/workgraph-events.jsonl");
   });
 
@@ -36,7 +35,7 @@ describe("system workspace helpers", () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-system-"));
     const paths = buildSystemPaths(workspaceDir);
 
-    await ensureManagerSystemFiles(paths);
+    await ensureManagerStateFiles(paths);
 
     const policy = await loadManagerPolicy(paths);
     const ownerMap = await loadOwnerMap(paths);
@@ -51,6 +50,18 @@ describe("system workspace helpers", () => {
         "manager-review-weekly",
       ]),
     );
+  });
+
+  it("removes the legacy intake ledger file during manager state bootstrap", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-system-legacy-"));
+    const paths = buildSystemPaths(workspaceDir);
+    const legacyFile = join(paths.rootDir, "intake-ledger.json");
+
+    await ensureSystemWorkspace(paths);
+    await writeFile(legacyFile, "[]\n", "utf8");
+    await ensureManagerStateFiles(paths);
+
+    await expect(access(legacyFile)).rejects.toThrow();
   });
 
   it("writes a default heartbeat prompt for fresh workspaces", async () => {

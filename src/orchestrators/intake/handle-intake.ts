@@ -49,7 +49,6 @@ import {
   formatAutonomousCreateReply,
   formatIssueReference,
 } from "./formatting.js";
-import type { CompatIntakeLedgerWriter } from "../../state/compat/intake-ledger-writer.js";
 import {
   chooseExistingResearchParent,
   chooseOwner,
@@ -78,7 +77,6 @@ export interface IntakeHelpers {
 export interface HandleIntakeRequestArgs {
   config: AppConfig;
   repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "workgraph">;
-  compatIntakeLedger: CompatIntakeLedgerWriter;
   message: IntakeMessage;
   now: Date;
   policy: ManagerPolicy;
@@ -89,16 +87,9 @@ export interface HandleIntakeRequestArgs {
   helpers: IntakeHelpers;
 }
 
-function getPendingClarificationCreatedAt(
-  pendingClarification: PendingClarificationContext | undefined,
-): string | undefined {
-  return pendingClarification?.clarificationRequestedAt;
-}
-
 export async function handleIntakeRequest({
   config,
   repositories,
-  compatIntakeLedger,
   message,
   now,
   policy,
@@ -157,16 +148,6 @@ export async function handleIntakeRequest({
   );
 
   if (taskPlan.action === "clarify") {
-    await compatIntakeLedger.writeClarificationRequested({
-      message: requestMessage,
-      sourceMessageTs: pendingClarification?.sourceMessageTs,
-      messageFingerprint: fingerprint,
-      clarificationQuestion: taskPlan.clarificationQuestion,
-      clarificationReasons: taskPlan.clarificationReasons,
-      originalText: requestMessage.text,
-      createdAt: getPendingClarificationCreatedAt(pendingClarification),
-      now,
-    });
     await recordIntakeClarificationRequested(repositories.workgraph, {
       occurredAt,
       source: workgraphSource,
@@ -198,15 +179,6 @@ export async function handleIntakeRequest({
   );
 
   if (duplicates.length > 0 && !research) {
-    await compatIntakeLedger.writeLinkedExisting({
-      message: requestMessage,
-      sourceMessageTs: pendingClarification?.sourceMessageTs,
-      messageFingerprint: fingerprint,
-      linkedIssueIds: duplicates.map((issue) => issue.identifier),
-      lastResolvedIssueId: duplicates.length === 1 ? duplicates[0]?.identifier : undefined,
-      originalText: requestMessage.text,
-      now,
-    });
     await recordIntakeLinkedExisting(repositories.workgraph, {
       occurredAt,
       source: workgraphSource,
@@ -491,18 +463,6 @@ export async function handleIntakeRequest({
 
     const allCreatedChildren = [...createdChildren, ...followupChildren];
 
-    await compatIntakeLedger.writeCreated({
-      message: requestMessage,
-      sourceMessageTs: pendingClarification?.sourceMessageTs,
-      messageFingerprint: fingerprint,
-      parentIssueId: parent?.identifier,
-      childIssueIds: allCreatedChildren.map((issue) => issue.identifier),
-      ownerResolution: usedFallbackOwners.size > 0 ? "fallback" : "mapped",
-      originalText: requestMessage.text,
-      lastResolvedIssueId: researchChild.identifier,
-      now,
-    });
-
     const planningEntry: PlanningLedgerEntry = {
       sourceThread: `${message.channelId}:${message.rootThreadTs}`,
       parentIssueId: parent?.identifier,
@@ -561,17 +521,6 @@ export async function handleIntakeRequest({
   const lastResolvedIssueId = createdChildren.length === 1
     ? createdChildren[0]?.identifier
     : createdChildren.length === 0 ? parent?.identifier : undefined;
-  await compatIntakeLedger.writeCreated({
-    message: requestMessage,
-    sourceMessageTs: pendingClarification?.sourceMessageTs,
-    messageFingerprint: fingerprint,
-    parentIssueId: parent?.identifier,
-    childIssueIds: createdChildren.map((issue) => issue.identifier),
-    ownerResolution,
-    originalText: requestMessage.text,
-    lastResolvedIssueId,
-    now,
-  });
 
   const planningEntry: PlanningLedgerEntry = {
     sourceThread: `${message.channelId}:${message.rootThreadTs}`,
