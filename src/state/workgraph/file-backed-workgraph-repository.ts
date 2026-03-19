@@ -20,6 +20,8 @@ export interface WorkgraphRepository {
   project(): Promise<WorkgraphProjection>;
   loadSnapshot(): Promise<WorkgraphSnapshot>;
   rebuildSnapshot(): Promise<WorkgraphSnapshot>;
+  compact(): Promise<WorkgraphSnapshot>;
+  recoverSnapshotFromLog(): Promise<WorkgraphSnapshot>;
 }
 
 export function createFileBackedWorkgraphRepository(paths: SystemPaths): WorkgraphRepository {
@@ -51,6 +53,32 @@ export function createFileBackedWorkgraphRepository(paths: SystemPaths): Workgra
     }
   };
 
+  const writeSnapshot = async (snapshot: WorkgraphSnapshot): Promise<void> => {
+    await mkdir(dirname(paths.workgraphSnapshotFile), { recursive: true });
+    await writeFile(paths.workgraphSnapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  };
+
+  const projectFromStoredState = async (): Promise<{
+    snapshot: WorkgraphSnapshot;
+    events: WorkgraphEvent[];
+    projection: WorkgraphProjection;
+  }> => {
+    const [snapshot, events] = await Promise.all([loadSnapshot(), list()]);
+    const replayStart = Math.max(0, snapshot.eventCount - snapshot.compactedEventCount);
+    if (replayStart > events.length) {
+      return {
+        snapshot,
+        events,
+        projection: projectWorkgraph([], snapshot),
+      };
+    }
+    return {
+      snapshot,
+      events,
+      projection: projectWorkgraph(events.slice(replayStart), snapshot),
+    };
+  };
+
   return {
     list,
     async append(events: WorkgraphEventInput | WorkgraphEventInput[]): Promise<WorkgraphEvent[]> {
@@ -70,27 +98,43 @@ export function createFileBackedWorkgraphRepository(paths: SystemPaths): Workgra
     },
     loadSnapshot,
     async project(): Promise<WorkgraphProjection> {
-      const [snapshot, events] = await Promise.all([loadSnapshot(), list()]);
-      if (snapshot.eventCount > events.length) {
-        return projectWorkgraph(events);
-      }
-      if (snapshot.eventCount === events.length) {
-        return projectWorkgraph([], snapshot);
-      }
-      return projectWorkgraph(events.slice(snapshot.eventCount), snapshot);
+      return (await projectFromStoredState()).projection;
     },
     async rebuildSnapshot(): Promise<WorkgraphSnapshot> {
+      const { snapshot: currentSnapshot, events, projection } = await projectFromStoredState();
+      const snapshot: WorkgraphSnapshot = {
+        version: 1,
+        eventCount: currentSnapshot.compactedEventCount + events.length,
+        compactedEventCount: currentSnapshot.compactedEventCount,
+        lastEventId: events.at(-1)?.id ?? currentSnapshot.lastEventId,
+        lastOccurredAt: events.at(-1)?.occurredAt ?? currentSnapshot.lastOccurredAt,
+        projection,
+      };
+      await writeSnapshot(snapshot);
+      return snapshot;
+    },
+    async compact(): Promise<WorkgraphSnapshot> {
+      const snapshot = await this.rebuildSnapshot();
+      const compactedSnapshot: WorkgraphSnapshot = {
+        ...snapshot,
+        compactedEventCount: snapshot.eventCount,
+      };
+      await writeSnapshot(compactedSnapshot);
+      await mkdir(dirname(paths.workgraphEventsFile), { recursive: true });
+      await writeFile(paths.workgraphEventsFile, "", "utf8");
+      return compactedSnapshot;
+    },
+    async recoverSnapshotFromLog(): Promise<WorkgraphSnapshot> {
       const events = await list();
-      const projection = projectWorkgraph(events);
       const snapshot: WorkgraphSnapshot = {
         version: 1,
         eventCount: events.length,
+        compactedEventCount: 0,
         lastEventId: events.at(-1)?.id,
         lastOccurredAt: events.at(-1)?.occurredAt,
-        projection,
+        projection: projectWorkgraph(events),
       };
-      await mkdir(dirname(paths.workgraphSnapshotFile), { recursive: true });
-      await writeFile(paths.workgraphSnapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+      await writeSnapshot(snapshot);
       return snapshot;
     },
   };

@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -286,7 +286,7 @@ describe("workgraph repository", () => {
     });
   });
 
-  it("projects from a persisted snapshot plus replayed tail events", async () => {
+  it("projects from a compacted snapshot plus replayed tail events", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-snapshot-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
@@ -328,13 +328,15 @@ describe("workgraph repository", () => {
       },
     ]);
 
-    const snapshot = await repository.rebuildSnapshot();
+    const snapshot = await repository.compact();
     expect(snapshot.eventCount).toBe(3);
+    expect(snapshot.compactedEventCount).toBe(3);
     expect(snapshot.projection.threads["C123:thread-snapshot"]).toMatchObject({
       parentIssueId: "AIC-20",
       childIssueIds: ["AIC-21"],
       latestFocusIssueId: "AIC-21",
     });
+    await expect(repository.list()).resolves.toEqual([]);
 
     await repository.append({
       type: "issue.blocked",
@@ -350,6 +352,7 @@ describe("workgraph repository", () => {
     expect(await repository.loadSnapshot()).toMatchObject({
       version: 1,
       eventCount: 3,
+      compactedEventCount: 3,
       lastOccurredAt: "2026-03-18T00:01:00.000Z",
     });
 
@@ -365,6 +368,70 @@ describe("workgraph repository", () => {
       issues: {
         "AIC-21": expect.objectContaining({
           lastStatus: "blocked",
+        }),
+      },
+    });
+  });
+
+  it("recovers a fresh snapshot by replaying the current event log", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-recover-"));
+    const paths = buildSystemPaths(workspaceDir);
+    const repository = createFileBackedWorkgraphRepository(paths);
+
+    await repository.append([
+      {
+        type: "planning.parent_created",
+        occurredAt: "2026-03-18T03:00:00.000Z",
+        threadKey: "C123:thread-recover",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-recover",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-30",
+        title: "障害切り分け",
+      },
+      {
+        type: "issue.progressed",
+        occurredAt: "2026-03-18T03:10:00.000Z",
+        threadKey: "C123:thread-recover",
+        sourceChannelId: "C123",
+        sourceThreadTs: "thread-recover",
+        sourceMessageTs: "msg-2",
+        issueId: "AIC-30",
+      },
+    ]);
+
+    await writeFile(paths.workgraphSnapshotFile, `${JSON.stringify({
+      version: 1,
+      eventCount: 999,
+      compactedEventCount: 999,
+      projection: { issues: {}, threads: {} },
+    }, null, 2)}\n`, "utf8");
+
+    const recovered = await repository.recoverSnapshotFromLog();
+    expect(recovered).toMatchObject({
+      eventCount: 2,
+      compactedEventCount: 0,
+      projection: {
+        issues: {
+          "AIC-30": expect.objectContaining({
+            lastStatus: "progress",
+          }),
+        },
+      },
+    });
+
+    expect(await repository.project()).toMatchObject({
+      issues: {
+        "AIC-30": expect.objectContaining({
+          lastStatus: "progress",
+        }),
+      },
+      threads: {
+        "C123:thread-recover": expect.objectContaining({
+          latestFocusIssueId: "AIC-30",
+          issueStatuses: {
+            "AIC-30": "progress",
+          },
         }),
       },
     });

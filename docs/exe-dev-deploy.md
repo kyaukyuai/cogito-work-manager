@@ -212,6 +212,54 @@ docker compose down
 
 このうち、明示的に編集したくなるのは主に `policy.json`, `owner-map.json`, `HEARTBEAT.md` です。
 
+## 9. Workgraph maintenance
+
+snapshot だけ作り直す場合:
+
+```bash
+npm run workgraph:snapshot -- /workspace
+```
+
+event log を snapshot に畳み込んで active log を空にする場合:
+
+```bash
+npm run workgraph:compact -- /workspace
+```
+
+replay recovery 手順:
+
+1. bot を止める
+
+```bash
+docker compose down
+```
+
+2. 現在の workgraph files を退避する
+
+```bash
+cp workspace/system/workgraph-events.jsonl workspace/system/workgraph-events.jsonl.bak
+cp workspace/system/workgraph-snapshot.json workspace/system/workgraph-snapshot.json.bak
+```
+
+3. active `workgraph-events.jsonl` を replay して snapshot を再生成する
+
+```bash
+npm run workgraph:recover -- /workspace
+```
+
+4. bot を起動してログを確認する
+
+```bash
+docker compose up -d --build
+docker compose logs --tail 20 bot
+```
+
+注意:
+
+- `workgraph:recover` は現在の `workgraph-events.jsonl` を replay して fresh snapshot を作る
+- 既に `workgraph:compact` 済みで active log が空の場合、recovery に必要なのは `workgraph-snapshot.json` 側であり、pre-compact の log backup がないと full replay はできない
+- recovery 後に `Slack bot connected` が出ることを確認する
+
 例:
 
 ```bash

@@ -48,6 +48,7 @@ export const workgraphProjectionSchema = z.object({
 export const workgraphSnapshotSchema = z.object({
   version: z.literal(1),
   eventCount: z.number().int().nonnegative(),
+  compactedEventCount: z.number().int().nonnegative().default(0),
   lastEventId: z.string().uuid().optional(),
   lastOccurredAt: z.string().datetime().optional(),
   projection: workgraphProjectionSchema,
@@ -58,6 +59,7 @@ export type WorkgraphSnapshot = z.infer<typeof workgraphSnapshotSchema>;
 export const EMPTY_WORKGRAPH_SNAPSHOT: WorkgraphSnapshot = {
   version: 1,
   eventCount: 0,
+  compactedEventCount: 0,
   projection: {
     issues: {},
     threads: {},
