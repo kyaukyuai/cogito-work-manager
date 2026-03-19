@@ -6,6 +6,12 @@
 
 この roadmap は中期の Phase 1-4 完了までを対象にする。runtime API や user-facing interface の変更は目的に含めない。
 
+## Status
+
+- 2026-03-19 時点で、Phase 1-4 の完了条件は `main` で満たしている
+- この文書は今後、追加の構造変更を開始するための計画ではなく、完了条件と移行判断の記録として扱う
+- 新規作業は refactor の継続ではなく、運用耐性、可観測性、work graph の保守性改善を優先する
+
 ## Global Rules
 
 - LLM は planner / assessor に限定して使う
@@ -18,12 +24,12 @@
 
 ## Phase Overview
 
-| Phase | Name | Primary Goal | Depends On | Entry Condition | Completion Gate |
-| --- | --- | --- | --- | --- | --- |
-| 1 | Planner Extraction | planner を `src/planners/` へ分離する | none | architecture doc と AGENTS の方針が確定している | planner 群が `pi-session.ts` から論理分離され、挙動互換が保たれている |
-| 2 | Workflow Split | workflow を `orchestrators/` 単位へ分離する | Phase 1 | planner 呼び出し境界が安定している | `manager.ts` が router 寄りになり、主要 workflow が独立モジュール化されている |
-| 3 | Repository Layer | file-backed repository を導入する | Phase 2 | workflow 境界が明確で state access 箇所が把握できている | `manager-state.ts` 直 read/write 依存が repository 経由に置き換わっている |
-| 4 | Unified Work Graph | planning / intake / followup を横断する work graph を導入する | Phase 3 | repository 層が安定し、既存 ledger の責務が整理されている | append-only event log と projection を用いた work graph が導入されている |
+| Phase | Name | Status | Primary Goal | Depends On | Entry Condition | Completion Gate |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Planner Extraction | Completed | planner を `src/planners/` へ分離する | none | architecture doc と AGENTS の方針が確定している | planner 群が `pi-session.ts` から論理分離され、挙動互換が保たれている |
+| 2 | Workflow Split | Completed | workflow を `orchestrators/` 単位へ分離する | Phase 1 | planner 呼び出し境界が安定している | `manager.ts` が router 寄りになり、主要 workflow が独立モジュール化されている |
+| 3 | Repository Layer | Completed | file-backed repository を導入する | Phase 2 | workflow 境界が明確で state access 箇所が把握できている | `manager-state.ts` 直 read/write 依存が repository 経由に置き換わっている |
+| 4 | Unified Work Graph | Completed | planning / intake / followup を横断する work graph を導入する | Phase 3 | repository 層が安定し、既存 ledger の責務が整理されている | append-only event log と projection を用いた work graph が導入されている |
 
 ## PR Rules
 
@@ -222,3 +228,9 @@ planning / intake / followup を横断する work graph を導入し、append-on
 - 各 phase は phase-gated で進める
 - 先に構造を分け、その後に state 統合へ進む
 - docs-only の更新であり、この文書自体はコード変更を直接伴わない
+
+## Post-Refactor Priorities
+
+- `workgraph-events.jsonl` の snapshot / compaction / replay 運用を整備する
+- review / scheduler / control room の失敗診断と health check を強化する
+- 主要 workflow の可観測性を上げ、thread / issue / event の追跡を容易にする

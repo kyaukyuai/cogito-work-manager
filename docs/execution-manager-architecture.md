@@ -4,6 +4,12 @@
 
 この文書では skill 依存は前提にしない。LLM は計画と評価に使い、状態管理と副作用実行はアプリケーションコードで担保する。
 
+## Current Status
+
+- 2026-03-19 時点で、planner 分離、workflow 分離、repository 化、unified work graph 導入は `main` で完了している
+- 現在の本体 workflow は `workgraph` を primary read model として扱い、Linear を work の source of truth とする
+- 今後の主題は大規模 refactor の継続ではなく、運用耐性、可観測性、event log の保守性改善である
+
 ## Goals
 
 - Slack の依頼を安定して work item に変換する

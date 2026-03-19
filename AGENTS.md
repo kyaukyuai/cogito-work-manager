@@ -4,6 +4,12 @@
 
 設計方針の一次文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) とし、実装順序と完了条件は [docs/refactor-roadmap.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/refactor-roadmap.md) を参照する。この `AGENTS.md` は日々の実装判断で厳守するルールを定義する。
 
+## Current Mode
+
+- 2026-03-19 時点で、Phase 1-4 の refactor は完了済みと扱う
+- 以後の変更は、原則として新たな大規模構造変更ではなく、運用耐性、可観測性、保守性改善を優先する
+- 新しい構造再編を始める場合は、既存 architecture / roadmap のどの完了条件が不足しているかを先に明記する
+
 ## Mission
 
 - Slack の依頼を安定して work item に変換する
@@ -97,6 +103,8 @@
 2. `src/lib/manager.ts` から workflow を切り出す
 3. `src/lib/manager-state.ts` から repository を切り出す
 4. gateway と orchestrator の境界を明確にする
+
+上記は未整理な legacy 領域に触るときの整理順であり、refactor roadmap を再開する宣言ではない。通常の優先順位は `workgraph` の運用改善、health check、observability、replay/snapshot 整備とする。
 
 ## Documentation Rule
 
