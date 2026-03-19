@@ -30,7 +30,8 @@ export type ManagerQueryKind =
   | "list-today"
   | "what-should-i-do"
   | "inspect-work"
-  | "search-existing";
+  | "search-existing"
+  | "recommend-next-step";
 
 export interface QueryHandleResult {
   handled: boolean;
@@ -59,6 +60,8 @@ const LIST_TODAY_PATTERN =
   /(?:今日|本日).*(?:タスク|todo|issue|イシュー|チケット|一覧|確認|見せ|教えて|見たい|チェック|list)/i;
 const LIST_ACTIVE_PATTERN =
   /(?:(?:タスク|todo|issue|イシュー|チケット).*(?:一覧|確認|見せ|教えて|見たい|チェック|list)|(?:進行中|稼働中|active).*(?:タスク|todo|issue|イシュー|チケット)?)/i;
+const RECOMMEND_NEXT_STEP_PATTERN =
+  /(?:(?:\b[A-Z][A-Z0-9]+-\d+\b|この件|その件|このタスク|そのタスク|このissue|そのissue|このイシュー|そのイシュー).*(?:次(?:どう|に)?進める|次(?:何|なに)(?:を|から)?(?:する|すれば|したら)|次アクション|次の一手|どう進めれば|next step)|(?:次(?:どう|に)?進める|次(?:何|なに)(?:を|から)?(?:する|すれば|したら)|次アクション|次の一手|what(?:'s| is) next|next step))/i;
 const INSPECT_WORK_PATTERN =
   /(?:(?:\b[A-Z][A-Z0-9]+-\d+\b|この件|その件|このタスク|そのタスク|このissue|そのissue|このイシュー|そのイシュー).*(?:状況|状態|進捗|詳細|どうなってる|どうなっています|どこまで|止まってる|止まっている|見せて|教えて|知りたい|確認したい)|(?:状況|状態|進捗|詳細|どこまで|どうなってる|止まってる).*(?:教えて|見せて|知りたい|確認したい|[?？]))/i;
 const SEARCH_EXISTING_PATTERN =
@@ -106,6 +109,7 @@ export function classifyManagerQuery(text: string): ManagerQueryKind | undefined
     .length;
   if (taskBreakdownLineCount >= 2) return undefined;
   if (SEARCH_EXISTING_PATTERN.test(normalized)) return "search-existing";
+  if (RECOMMEND_NEXT_STEP_PATTERN.test(normalized)) return "recommend-next-step";
   if (INSPECT_WORK_PATTERN.test(normalized)) return "inspect-work";
   if (WHAT_SHOULD_I_DO_PATTERN.test(normalized)) return "what-should-i-do";
   if (LIST_TODAY_PATTERN.test(normalized)) return "list-today";
@@ -435,6 +439,29 @@ function buildInspectSelectionReply(candidates: Array<{ issueId: string; title?:
   ]);
 }
 
+function summarizeSlackSnippet(text: string, maxLength = 72): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxLength - 1)).trim()}…`;
+}
+
+function formatRecentThreadSummary(
+  context: Awaited<ReturnType<typeof getSlackThreadContext>> | undefined,
+): string | undefined {
+  const entries = context?.entries
+    .filter((entry) => typeof entry.text === "string" && entry.text.trim().length > 0)
+    .slice(-4) ?? [];
+  if (entries.length === 0) return undefined;
+
+  const latestUser = [...entries].reverse().find((entry) => entry.type === "user");
+  const latestAssistant = [...entries].reverse().find((entry) => entry.type === "assistant");
+
+  return joinSlackSentences([
+    latestUser ? `直近の共有では「${summarizeSlackSnippet(latestUser.text)}」まで見えています。` : undefined,
+    latestAssistant ? `直近の案内では「${summarizeSlackSnippet(latestAssistant.text)}」と伝えています。` : undefined,
+  ]);
+}
+
 function formatIssueHealthSummary(issue: LinearIssue, assessment: RiskAssessment): string | undefined {
   const reasons = formatRiskReasons(assessment.riskCategories);
   if (!reasons) {
@@ -481,6 +508,85 @@ function formatIssueContextReply(args: {
       parent ? `親 issue は ${buildSlackTargetLabel(parent)} です。` : undefined,
       children.length > 0 ? `子 issue は ${children.slice(0, 3).map((child) => buildSlackTargetLabel(child)).join("、")} です。` : undefined,
     ]),
+    args.sourceThread
+      ? `元の thread は channel ${args.sourceThread.channelId} / thread ${args.sourceThread.rootThreadTs} です。`
+      : undefined,
+  ]);
+}
+
+function buildFollowupReplyGuidance(category: string | undefined): string {
+  switch (category) {
+    case "blocked-details":
+      return "いまは follow-up の返答待ちなので、次は blocked の原因、待ち先、再開条件を thread で返してください。";
+    case "owner":
+      return "いまは follow-up の返答待ちなので、次は誰が担当するかを thread で返してください。";
+    case "due-date":
+      return "いまは follow-up の返答待ちなので、次はいつまでに完了見込みかを thread で返してください。";
+    default:
+      return "いまは follow-up の返答待ちなので、次は現在の進捗と次に動く内容を thread で返してください。";
+  }
+}
+
+function buildGenericNextStep(args: {
+  issue: LinearIssue;
+  workgraphIssue?: WorkgraphIssueContext;
+  assessment: RiskAssessment;
+}): string {
+  const categories = new Set(args.assessment.riskCategories);
+  const stateType = args.issue.state?.type ?? undefined;
+  const firstChild = args.issue.children?.[0];
+
+  if (stateType === "completed" || args.workgraphIssue?.lastStatus === "completed") {
+    return "完了として見えているので、次は関連する残件がないかだけ確認すれば十分です。";
+  }
+
+  if (args.workgraphIssue?.followupStatus === "awaiting-response") {
+    return buildFollowupReplyGuidance(args.workgraphIssue.lastFollowupCategory);
+  }
+
+  if (categories.has("blocked") || args.workgraphIssue?.lastStatus === "blocked") {
+    return "blocked が見えているので、次は原因、待ち先、再開条件を共有して再開条件をはっきりさせるのが先です。";
+  }
+
+  if (categories.has("overdue") || categories.has("due_today")) {
+    return "期限が近いので、次は今日中に終える最小ステップを決めて、その進捗をこの thread に返すのがよさそうです。";
+  }
+
+  if ((stateType === "unstarted" || stateType === "backlog") && firstChild) {
+    return `${buildSlackTargetLabel(firstChild)} から着手するのが進めやすそうです。着手したら、そのままこの thread に進捗を返してください。`;
+  }
+
+  if (stateType === "unstarted" || stateType === "backlog") {
+    return "未着手に近い状態なので、次は最初の具体作業に着手して、その内容をこの thread に返すのがよさそうです。";
+  }
+
+  if (firstChild) {
+    return `次は ${buildSlackTargetLabel(firstChild)} の状態を確認して、進んでいなければそこから動くのがよさそうです。`;
+  }
+
+  return "次は今の進捗を 1 行で返すか、詰まりがあるなら blocked として理由を共有するのがよさそうです。";
+}
+
+function formatNextStepReply(args: {
+  issue: LinearIssue;
+  workgraphIssue?: WorkgraphIssueContext;
+  assessment: RiskAssessment;
+  sourceThread?: Awaited<ReturnType<typeof getLatestIssueSource>>;
+  recentThreadSummary?: string;
+}): string {
+  const assignee = args.issue.assignee?.displayName ?? args.issue.assignee?.name ?? args.workgraphIssue?.assignee ?? "未割当";
+  const state = args.issue.state?.name ?? "未設定";
+  const due = args.issue.dueDate ?? args.workgraphIssue?.dueDate ?? "未設定";
+
+  return composeSlackReply([
+    joinSlackSentences([
+      `${buildSlackTargetLabel(args.issue)} について、次の一手を整理しました。`,
+      `担当は ${assignee} です。`,
+      `状態は ${state} です。`,
+      `期限は ${due} です。`,
+    ]),
+    args.recentThreadSummary,
+    buildGenericNextStep(args),
     args.sourceThread
       ? `元の thread は channel ${args.sourceThread.channelId} / thread ${args.sourceThread.rootThreadTs} です。`
       : undefined,
@@ -581,7 +687,12 @@ function buildListActiveReply(items: RankedQueryItem[]): string {
 function buildListTodayReply(
   items: RankedQueryItem[],
   policy: ManagerPolicy,
-  options?: { viewerAssignee?: string; viewerDisplayLabel?: string; preferViewerOwned?: boolean },
+  options?: {
+    viewerAssignee?: string;
+    viewerDisplayLabel?: string;
+    preferViewerOwned?: boolean;
+    viewerMappingMissing?: boolean;
+  },
 ): string {
   const scopedItems = options?.preferViewerOwned ? preferViewerOwnedItems(items, options.viewerAssignee) : items;
   const todayItems = scopedItems.filter((item) => isTodayCandidate(item, policy));
@@ -604,6 +715,7 @@ function buildListTodayReply(
   return composeSlackReply([
     intro,
     formatSlackBullets(visible.map((item) => formatQueryIssueLine(item))),
+    buildViewerMappingNotice(options?.viewerMappingMissing),
     "進めるものが決まったら、その issue ID か thread で進捗を返してください。",
   ]);
 }
@@ -612,7 +724,12 @@ function buildWhatShouldIDoReply(
   items: RankedQueryItem[],
   policy: ManagerPolicy,
   now: Date,
-  options?: { viewerAssignee?: string; viewerDisplayLabel?: string; preferViewerOwned?: boolean },
+  options?: {
+    viewerAssignee?: string;
+    viewerDisplayLabel?: string;
+    preferViewerOwned?: boolean;
+    viewerMappingMissing?: boolean;
+  },
 ): string {
   if (items.length === 0) {
     return composeSlackReply([
@@ -644,8 +761,16 @@ function buildWhatShouldIDoReply(
   return composeSlackReply([
     intro,
     formatSlackBullets(visible.map((item) => formatQueryIssueLine(item))),
+    options?.viewerMappingMissing
+      ? "Slack user と担当者の対応付けがまだ無いので、いったんチーム全体から候補を出しています。ownerMap.slackUserId を入れると自分向けに寄せられます。"
+      : undefined,
     "必要なら、このまま優先順位を一緒に絞ります。",
   ]);
+}
+
+function buildViewerMappingNotice(viewerMappingMissing: boolean | undefined): string | undefined {
+  if (!viewerMappingMissing) return undefined;
+  return "Slack user と担当者の対応付けがまだ無いので、いったんチーム全体から候補を出しています。ownerMap.slackUserId を入れると自分向けに寄せられます。";
 }
 
 function shouldPreferViewerOwned(kind: ManagerQueryKind, text: string, viewerAssignee: string | undefined): boolean {
@@ -668,6 +793,40 @@ export async function handleManagerQuery({
   const viewerAssignee = viewerOwnerEntry?.linearAssignee;
   const viewerDisplayLabel = viewerAssignee ? `${viewerAssignee} さんの担当` : undefined;
   const preferViewerOwned = shouldPreferViewerOwned(kind, message.text, viewerAssignee);
+  const viewerMappingMissing = !viewerAssignee && (kind === "list-today" || kind === "what-should-i-do" || SELF_WORK_PATTERN.test(message.text));
+
+  if (kind === "recommend-next-step") {
+    const resolution = await resolveInspectIssue(repositories.workgraph, workspaceDir, message);
+    if (!resolution.issueId) {
+      return {
+        handled: true,
+        reply: buildInspectSelectionReply(resolution.candidates),
+      };
+    }
+
+    const issue = await getLinearIssue(resolution.issueId, env, undefined, { includeComments: true });
+    const workgraphIssue = await getIssueContext(repositories.workgraph, resolution.issueId);
+    const sourceThread = await getLatestIssueSource(repositories.workgraph, resolution.issueId);
+    const recentThreadSummary = await getSlackThreadContext(
+      workspaceDir,
+      sourceThread?.channelId ?? message.channelId,
+      sourceThread?.rootThreadTs ?? message.rootThreadTs,
+      12,
+    )
+      .then((context) => formatRecentThreadSummary(context))
+      .catch(() => undefined);
+
+    return {
+      handled: true,
+      reply: formatNextStepReply({
+        issue,
+        workgraphIssue,
+        assessment: assessRisk(issue, policy, now),
+        sourceThread,
+        recentThreadSummary,
+      }),
+    };
+  }
 
   if (kind === "inspect-work") {
     const resolution = await resolveInspectIssue(repositories.workgraph, workspaceDir, message);
@@ -737,8 +896,8 @@ export async function handleManagerQuery({
   const reply = kind === "list-active"
     ? buildListActiveReply(rankedItems)
     : kind === "list-today"
-      ? buildListTodayReply(rankedItems, policy, { viewerAssignee, viewerDisplayLabel, preferViewerOwned })
-      : buildWhatShouldIDoReply(rankedItems, policy, now, { viewerAssignee, viewerDisplayLabel, preferViewerOwned });
+      ? buildListTodayReply(rankedItems, policy, { viewerAssignee, viewerDisplayLabel, preferViewerOwned, viewerMappingMissing })
+      : buildWhatShouldIDoReply(rankedItems, policy, now, { viewerAssignee, viewerDisplayLabel, preferViewerOwned, viewerMappingMissing });
 
   return {
     handled: true,

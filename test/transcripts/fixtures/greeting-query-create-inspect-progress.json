@@ -1,0 +1,86 @@
+{
+  "name": "greeting-query-create-inspect-progress",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U1",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "greeting",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript",
+      "messageTs": "msg-0",
+      "userId": "U1",
+      "text": "おはよう",
+      "now": "2026-03-19T00:50:00.000Z",
+      "expect": {
+        "handled": false
+      }
+    },
+    {
+      "id": "query",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript-query",
+      "messageTs": "msg-1",
+      "userId": "U1",
+      "text": "今日やるべきタスクある？",
+      "now": "2026-03-19T01:00:00.000Z",
+      "beforeScenario": "list-my-work",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-930"],
+        "replyExcludes": ["AIC-931"]
+      }
+    },
+    {
+      "id": "create",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript",
+      "messageTs": "msg-2",
+      "userId": "U1",
+      "text": "OPT社の社内チャネルに招待してもらうタスクを追加して",
+      "now": "2026-03-19T01:05:00.000Z",
+      "beforeScenario": "create-invite-task",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-940"]
+      }
+    },
+    {
+      "id": "inspect",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript",
+      "messageTs": "msg-3",
+      "userId": "U1",
+      "text": "この件どうなってる？",
+      "now": "2026-03-19T01:10:00.000Z",
+      "beforeScenario": "inspect-created-task",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-940"]
+      }
+    },
+    {
+      "id": "progress",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-transcript",
+      "messageTs": "msg-4",
+      "userId": "U1",
+      "text": "進捗です。招待依頼を出しました",
+      "now": "2026-03-19T01:15:00.000Z",
+      "beforeScenario": "progress-created-task",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["進捗を反映しました。"]
+      }
+    }
+  ]
+}

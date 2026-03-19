@@ -73,6 +73,7 @@ describe("manager helpers", () => {
     expect(classifyManagerSignal("今日やるべきタスクある？")).toBe("query");
     expect(classifyManagerSignal("タスク一覧を確認して")).toBe("query");
     expect(classifyManagerSignal("AIC-38 の状況は？")).toBe("query");
+    expect(classifyManagerSignal("AIC-38 次どう進める？")).toBe("query");
     expect(classifyManagerSignal("既存 issue あったっけ？")).toBe("query");
     expect(classifyManagerSignal("AIC-2 は完了しました")).toBe("completed");
     expect(classifyManagerSignal("AIC-2 は blocked です")).toBe("blocked");
@@ -83,6 +84,8 @@ describe("manager helpers", () => {
     expect(classifyManagerQuery("自分の今日やるべきタスクある？")).toBe("what-should-i-do");
     expect(classifyManagerQuery("今日のタスク一覧を確認して")).toBe("list-today");
     expect(classifyManagerQuery("タスク一覧を確認して")).toBe("list-active");
+    expect(classifyManagerQuery("AIC-38 次どう進める？")).toBe("recommend-next-step");
+    expect(classifyManagerQuery("この件次どう進める？")).toBe("recommend-next-step");
     expect(classifyManagerQuery("この件どうなってる？")).toBe("inspect-work");
     expect(classifyManagerQuery("AIC-38 の状況は？")).toBe("inspect-work");
     expect(classifyManagerQuery("既存 issue あったっけ？")).toBe("search-existing");

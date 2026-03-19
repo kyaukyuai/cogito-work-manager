@@ -9,6 +9,7 @@ import { verifyLinearCli } from "./lib/linear.js";
 import { Logger } from "./lib/logger.js";
 import { buildHeartbeatReviewDecision, buildManagerReview, formatControlRoomReviewForSlack, handleManagerMessage, type ManagerReviewResult } from "./lib/manager.js";
 import { ensureManagerStateFiles } from "./lib/manager-state.js";
+import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runAgentTurn, runSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
 import { formatSlackMessageText } from "./lib/slack-format.js";
@@ -135,10 +136,26 @@ async function main(): Promise<void> {
   await verifyLinearCli(config.linearTeamKey);
   const managerRepositories = createFileBackedManagerRepositories(systemPaths);
   const managerPolicy = await managerRepositories.policy.load();
+  const ownerMap = await managerRepositories.ownerMap.load();
   const workgraphPolicy = {
     warnActiveLogEvents: config.workgraphHealthWarnActiveEvents,
     autoCompactMaxActiveLogEvents: config.workgraphAutoCompactMaxActiveEvents,
   };
+  const ownerMapDiagnostics = analyzeOwnerMap(ownerMap);
+
+  if (ownerMapDiagnostics.unmappedSlackEntries.length > 0) {
+    logger.warn("Owner map has entries without slackUserId mapping", {
+      unmappedEntries: ownerMapDiagnostics.unmappedSlackEntries.map((entry) => ({
+        id: entry.id,
+        linearAssignee: entry.linearAssignee,
+      })),
+    });
+  }
+  if (ownerMapDiagnostics.duplicateSlackUserIds.length > 0) {
+    logger.warn("Owner map has duplicate slackUserId mappings", {
+      duplicateSlackUserIds: ownerMapDiagnostics.duplicateSlackUserIds,
+    });
+  }
 
   const logWorkgraphMaintenance = async (source: "startup" | "interval"): Promise<void> => {
     try {
@@ -213,6 +230,9 @@ async function main(): Promise<void> {
     workgraphMaintenanceIntervalMin: config.workgraphMaintenanceIntervalMin,
     workgraphHealthWarnActiveEvents: config.workgraphHealthWarnActiveEvents,
     workgraphAutoCompactMaxActiveEvents: config.workgraphAutoCompactMaxActiveEvents,
+    ownerMapTotalEntries: ownerMapDiagnostics.totalEntries,
+    ownerMapMappedSlackEntries: ownerMapDiagnostics.mappedSlackEntries,
+    ownerMapUnmappedSlackEntries: ownerMapDiagnostics.unmappedSlackEntries.length,
   });
 
   socketClient.on("message", async ({ event, ack }) => {
