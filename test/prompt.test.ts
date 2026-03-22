@@ -17,6 +17,7 @@ import { DEFAULT_HEARTBEAT_PROMPT } from "../src/lib/heartbeat.js";
 import { createLinearCustomTools } from "../src/lib/linear-tools.js";
 import {
   buildAgentPrompt,
+  buildManagerAgentPrompt,
   buildSystemPrompt,
   type ThreadPromptContext,
 } from "../src/lib/pi-session.js";
@@ -55,6 +56,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
+    expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
+    expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
 
   it("embeds thread-linked issue context into the runtime prompt", () => {
@@ -94,6 +97,23 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("- preferredIssueIds: AIC-17, AIC-18, AIC-11");
     expect(prompt).toContain("- AIC-17 / 調査: ログイン画面の不具合");
     expect(prompt).toContain("- AIC-11 / ログイン画面の不具合修正");
+  });
+
+  it("adds concise continuation guidance to the manager runtime prompt", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "他にはどのようなタスクがある？",
+      currentDate: "2026-03-23",
+    });
+
+    expect(prompt).toContain("Public reply style hints:");
+    expect(prompt).toContain("Do not use markdown headings, separator lines, warning icons, or emojis.");
+    expect(prompt).toContain("Treat this as a continuation of the previous list or prioritization reply in the same thread");
+    expect(prompt).toContain("If there is only one additional relevant issue or no additional issue, say that plainly in one sentence.");
   });
 
   it("defines an issue-centric heartbeat prompt", () => {

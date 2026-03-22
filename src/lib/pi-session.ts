@@ -274,6 +274,12 @@ export function buildSystemPrompt(config: AppConfig): string {
     `The fixed Linear team key is ${config.linearTeamKey}.`,
     "Interpret relative dates in Asia/Tokyo and convert them to YYYY-MM-DD before passing due dates to Linear.",
     "Keep public Slack replies short and natural. Do not expose tool logs or raw output unless the user asks.",
+    "For public Slack replies, default to 1-3 short sentences.",
+    "Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.",
+    "For a single important issue, answer directly in one sentence before adding any supporting detail.",
+    "Only use bullets when naming multiple issues, and keep that list to at most 3 short bullets unless the user explicitly asks for a full list.",
+    "If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread, continue that list naturally instead of reframing the answer as an inspect-work reply.",
+    "Avoid date-heavy opening phrases like 今日（3/23）時点で unless the user explicitly asks for a dated summary.",
     "Use issue identifiers, due dates, owners, and thread context facts in replies when they materially help the user.",
   ].join("\n");
 }
@@ -593,7 +599,34 @@ export async function runSystemTurn(config: AppConfig, paths: ThreadPaths, input
   return runPromptTurn(config, paths, buildSystemPromptInput(input, config));
 }
 
-function buildManagerAgentPrompt(input: ManagerAgentInput): string {
+function buildManagerReplyStyleHints(messageText: string): string[] {
+  const normalized = messageText.trim();
+  const hints = [
+    "Keep the public Slack reply to 1-3 short sentences by default.",
+    "Do not use markdown headings, separator lines, warning icons, or emojis.",
+    "Do not turn a short answer into a report.",
+    "If you need a list, use at most 3 short bullets and only after the main conclusion sentence.",
+  ];
+
+  if (/(他には|ほかには|他のタスク|ほかのタスク)/.test(normalized)) {
+    hints.push("Treat this as a continuation of the previous list or prioritization reply in the same thread, not as a narrow inspect-work request.");
+    hints.push("If there is only one additional relevant issue or no additional issue, say that plainly in one sentence.");
+  }
+
+  if (/(今日やるべき|何から|優先順位)/.test(normalized)) {
+    hints.push("Answer the top recommendation first in one sentence. Add only one short supporting sentence unless the user asks for more detail.");
+  }
+
+  if (/(タスク一覧|一覧|どのようなタスク|どんなタスク)/.test(normalized)) {
+    hints.push("For task-list replies, prefer a plain conversational sentence before any bullets.");
+  }
+
+  return hints;
+}
+
+export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
+  const styleHints = buildManagerReplyStyleHints(input.text)
+    .map((hint) => `- ${hint}`);
   return [
     "Manager message context:",
     `- channelId: ${input.channelId}`,
@@ -604,6 +637,9 @@ function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "User message:",
     input.text || "(empty)",
+    "",
+    "Public reply style hints:",
+    ...styleHints,
   ].join("\n");
 }
 
