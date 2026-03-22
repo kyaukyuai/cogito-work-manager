@@ -321,6 +321,62 @@ describe("manager transcript fixtures", () => {
             }),
           ]);
           return;
+        case "agent-prioritize-single-overdue":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "今日まず見るなら AIC-38 の対応状況を確認するのがよさそうです。ほかに動いている task は今のところ見当たりません。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "query",
+                    queryKind: "what-should-i-do",
+                    queryScope: "team",
+                    confidence: 0.94,
+                    summary: "優先順位の確認です。",
+                  },
+                },
+              },
+            ],
+            proposals: [],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "query",
+              queryKind: "what-should-i-do",
+              queryScope: "team",
+              confidence: 0.94,
+              summary: "優先順位の確認です。",
+            },
+          });
+          return;
+        case "agent-list-continuation-after-prioritize":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "他に動いている task は今のところありません。見ておくべきものは AIC-38 だけです。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "query",
+                    queryKind: "list-active",
+                    queryScope: "thread-context",
+                    confidence: 0.92,
+                    summary: "直前の一覧の続きです。",
+                  },
+                },
+              },
+            ],
+            proposals: [],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "thread-context",
+              confidence: 0.92,
+              summary: "直前の一覧の続きです。",
+            },
+          });
+          return;
         case "create-invite-task":
           linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
             id: "issue-940",

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildManagerIssueDiagnostics, buildManagerThreadDiagnostics } from "../src/lib/manager-diagnostics.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
+import { saveThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { appendThreadLog, buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
@@ -94,6 +95,14 @@ describe("manager diagnostics", () => {
       threadTs: "thread-diagnostics",
       text: "AIC-970 として登録しました。",
     });
+    await saveThreadQueryContinuation(threadPaths, {
+      kind: "what-should-i-do",
+      scope: "team",
+      userMessage: "今日やるべきタスクある？",
+      replySummary: "今日まず見るなら AIC-970 です。",
+      issueIds: ["AIC-970"],
+      recordedAt: "2026-03-19T04:05:00.000Z",
+    });
 
     const diagnostics = await buildManagerThreadDiagnostics({
       config: { ...config, workspaceDir },
@@ -104,6 +113,10 @@ describe("manager diagnostics", () => {
 
     expect(diagnostics.threadKey).toBe("C0ALAMDRB9V:thread-diagnostics");
     expect(diagnostics.planningContext?.latestResolvedIssue?.issueId).toBe("AIC-970");
+    expect(diagnostics.lastQueryContext).toMatchObject({
+      kind: "what-should-i-do",
+      issueIds: ["AIC-970"],
+    });
     expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
     expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(0);
     expect(diagnostics.ownerMapDiagnostics.mappedSlackEntries).toBe(1);

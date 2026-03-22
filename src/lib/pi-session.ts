@@ -44,6 +44,7 @@ import { getThreadPlanningContext } from "../state/workgraph/queries.js";
 import type { AppConfig } from "./config.js";
 import { getLinearIssue } from "./linear.js";
 import { createLinearCustomTools } from "./linear-tools.js";
+import type { ThreadQueryContinuation } from "./query-continuation.js";
 import {
   extractIntentReport,
   extractManagerCommandProposals,
@@ -79,6 +80,7 @@ export interface ManagerAgentInput {
   userId: string;
   text: string;
   currentDate: string;
+  lastQueryContext?: ThreadQueryContinuation;
 }
 
 export interface ManagerSystemInput {
@@ -599,7 +601,10 @@ export async function runSystemTurn(config: AppConfig, paths: ThreadPaths, input
   return runPromptTurn(config, paths, buildSystemPromptInput(input, config));
 }
 
-function buildManagerReplyStyleHints(messageText: string): string[] {
+function buildManagerReplyStyleHints(
+  messageText: string,
+  lastQueryContext?: ThreadQueryContinuation,
+): string[] {
   const normalized = messageText.trim();
   const hints = [
     "Keep the public Slack reply to 1-3 short sentences by default.",
@@ -611,6 +616,9 @@ function buildManagerReplyStyleHints(messageText: string): string[] {
   if (/(他には|ほかには|他のタスク|ほかのタスク)/.test(normalized)) {
     hints.push("Treat this as a continuation of the previous list or prioritization reply in the same thread, not as a narrow inspect-work request.");
     hints.push("If there is only one additional relevant issue or no additional issue, say that plainly in one sentence.");
+    if (lastQueryContext) {
+      hints.push(`Continue from the stored last query context (${lastQueryContext.kind} / ${lastQueryContext.scope}) unless the latest message clearly changes the topic.`);
+    }
   }
 
   if (/(今日やるべき|何から|優先順位)/.test(normalized)) {
@@ -625,8 +633,18 @@ function buildManagerReplyStyleHints(messageText: string): string[] {
 }
 
 export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
-  const styleHints = buildManagerReplyStyleHints(input.text)
+  const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext)
     .map((hint) => `- ${hint}`);
+  const lastQueryContextLines = input.lastQueryContext
+    ? [
+        `- kind: ${input.lastQueryContext.kind}`,
+        `- scope: ${input.lastQueryContext.scope}`,
+        `- issueIds: ${input.lastQueryContext.issueIds.join(", ") || "(none)"}`,
+        `- previousUserMessage: ${input.lastQueryContext.userMessage || "(none)"}`,
+        `- previousReplySummary: ${input.lastQueryContext.replySummary || "(none)"}`,
+        `- recordedAt: ${input.lastQueryContext.recordedAt}`,
+      ]
+    : ["- (none)"];
   return [
     "Manager message context:",
     `- channelId: ${input.channelId}`,
@@ -637,6 +655,9 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "User message:",
     input.text || "(empty)",
+    "",
+    "Last query continuation context:",
+    ...lastQueryContextLines,
     "",
     "Public reply style hints:",
     ...styleHints,

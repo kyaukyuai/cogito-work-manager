@@ -1,0 +1,47 @@
+{
+  "name": "prioritize-followup-list",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U01L86BCA9X",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "prioritize",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-prioritize-followup",
+      "messageTs": "msg-1",
+      "userId": "U01L86BCA9X",
+      "text": "今日やるべきタスクある？",
+      "now": "2026-03-23T07:54:00.000Z",
+      "beforeScenario": "agent-prioritize-single-overdue",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-38"],
+        "replyExcludes": ["Slack連携の設定が未完了", "期限超過・要対応", "---"]
+      }
+    },
+    {
+      "id": "followup",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-prioritize-followup",
+      "messageTs": "msg-2",
+      "userId": "U01L86BCA9X",
+      "text": "他にはどのようなタスクがある？",
+      "now": "2026-03-23T07:55:00.000Z",
+      "beforeScenario": "agent-list-continuation-after-prioritize",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["AIC-38", "他に動いている task は今のところありません。"],
+        "replyExcludes": ["このスレッドに関連するタスクとして", "登録したい具体的なタスク内容を教えてください"]
+      }
+    }
+  ]
+}

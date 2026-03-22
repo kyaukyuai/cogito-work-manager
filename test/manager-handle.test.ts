@@ -3099,6 +3099,106 @@ describe("handleManagerMessage clarification flow", () => {
     expect(piSessionMocks.runMessageRouterTurn).not.toHaveBeenCalled();
   });
 
+  it("stores the last query context and passes it into a follow-up query turn", async () => {
+    piSessionMocks.runManagerAgentTurn
+      .mockResolvedValueOnce({
+        reply: "今日まず見るなら AIC-38 の状況を確認するのがよさそうです。",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "query",
+                queryKind: "what-should-i-do",
+                queryScope: "team",
+                confidence: 0.94,
+                summary: "優先順位の確認です。",
+              },
+            },
+          },
+        ],
+        proposals: [],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "query",
+          queryKind: "what-should-i-do",
+          queryScope: "team",
+          confidence: 0.94,
+          summary: "優先順位の確認です。",
+        },
+      })
+      .mockImplementationOnce(async (_config: unknown, _paths: unknown, input: { lastQueryContext?: { kind: string; scope: string; issueIds: string[]; userMessage: string } }) => {
+        expect(input.lastQueryContext).toMatchObject({
+          kind: "what-should-i-do",
+          scope: "team",
+          issueIds: ["AIC-38"],
+          userMessage: "今日やるべきタスクある？",
+        });
+        return {
+          reply: "他に動いている task は今のところありません。見ておくべきものは AIC-38 だけです。",
+          toolCalls: [
+            {
+              toolName: "report_manager_intent",
+              details: {
+                intentReport: {
+                  intent: "query",
+                  queryKind: "list-active",
+                  queryScope: "thread-context",
+                  confidence: 0.92,
+                  summary: "直前の一覧の続きです。",
+                },
+              },
+            },
+          ],
+          proposals: [],
+          invalidProposalCount: 0,
+          intentReport: {
+            intent: "query",
+            queryKind: "list-active",
+            queryScope: "thread-context",
+            confidence: 0.92,
+            summary: "直前の一覧の続きです。",
+          },
+        };
+      });
+
+    const first = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-continuation",
+        messageTs: "msg-query-1",
+        userId: "U1",
+        text: "今日やるべきタスクある？",
+      },
+      new Date("2026-03-23T07:54:00.000Z"),
+    );
+
+    expect(first.reply).toContain("AIC-38");
+
+    const followup = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-continuation",
+        messageTs: "msg-query-2",
+        userId: "U1",
+        text: "他にはどのようなタスクがある？",
+      },
+      new Date("2026-03-23T07:55:00.000Z"),
+    );
+
+    expect(followup.reply).toContain("AIC-38");
+    expect(followup.diagnostics?.agent).toMatchObject({
+      source: "agent",
+      intent: "query",
+      queryKind: "list-active",
+      queryScope: "thread-context",
+    });
+  });
+
   it("commits agent issue creation proposals exactly once", async () => {
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
       reply: "この依頼は登録しておきます。",

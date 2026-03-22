@@ -79,6 +79,15 @@ export interface MessageRouterThreadContext {
   lastResolvedIssueId?: string;
 }
 
+export interface MessageRouterLastQueryContext {
+  kind: "list-active" | "list-today" | "what-should-i-do" | "inspect-work" | "search-existing" | "recommend-next-step";
+  scope: "self" | "team" | "thread-context";
+  userMessage: string;
+  replySummary: string;
+  issueIds: string[];
+  recordedAt: string;
+}
+
 export interface MessageRouterInput {
   channelId: string;
   rootThreadTs: string;
@@ -87,6 +96,7 @@ export interface MessageRouterInput {
   currentDate: string;
   recentThreadEntries: MessageRouterRecentEntry[];
   threadContext?: MessageRouterThreadContext;
+  lastQueryContext?: MessageRouterLastQueryContext;
   taskKey?: string;
 }
 

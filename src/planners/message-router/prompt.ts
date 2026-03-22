@@ -13,6 +13,7 @@ function formatRecentEntries(input: MessageRouterInput): string {
 
 export function buildMessageRouterPrompt(input: MessageRouterInput): string {
   const threadContext = input.threadContext;
+  const lastQueryContext = input.lastQueryContext;
 
   return [
     "Classify the latest Slack message for a Slack-first execution manager.",
@@ -51,6 +52,14 @@ export function buildMessageRouterPrompt(input: MessageRouterInput): string {
     `- linkedIssueIds: ${threadContext?.linkedIssueIds.join(", ") || "(none)"}`,
     `- latestFocusIssueId: ${threadContext?.latestFocusIssueId ?? "(none)"}`,
     `- lastResolvedIssueId: ${threadContext?.lastResolvedIssueId ?? "(none)"}`,
+    "",
+    "Last query continuation context:",
+    `- kind: ${lastQueryContext?.kind ?? "(none)"}`,
+    `- scope: ${lastQueryContext?.scope ?? "(none)"}`,
+    `- issueIds: ${lastQueryContext?.issueIds.join(", ") || "(none)"}`,
+    `- previousUserMessage: ${lastQueryContext?.userMessage ?? "(none)"}`,
+    `- previousReplySummary: ${lastQueryContext?.replySummary ?? "(none)"}`,
+    `- recordedAt: ${lastQueryContext?.recordedAt ?? "(none)"}`,
     "",
     "Recent thread messages:",
     formatRecentEntries(input),

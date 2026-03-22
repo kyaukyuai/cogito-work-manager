@@ -63,6 +63,16 @@ import {
 import { getSlackThreadContext } from "./slack-context.js";
 import type { SystemPaths } from "./system-workspace.js";
 import { buildThreadPaths, ensureThreadWorkspace } from "./thread-workspace.js";
+import {
+  clearThreadQueryContinuation,
+  extractIssueIdsFromText,
+  loadThreadQueryContinuation,
+  saveThreadQueryContinuation,
+  summarizeSlackReply,
+  type ThreadQueryContinuation,
+  type ThreadQueryKind,
+  type ThreadQueryScope,
+} from "./query-continuation.js";
 
 export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation";
 export type ClarificationNeed = "scope" | "due_date" | "execution_plan";
@@ -259,6 +269,70 @@ function buildCommitRejectionReply(rejections: string[]): string | undefined {
   ]);
 }
 
+function inferQueryScopeFromText(
+  text: string,
+  queryKind: ThreadQueryKind,
+): ThreadQueryScope {
+  if (/(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/.test(text)) {
+    return "self";
+  }
+  if (/(?:この件|その件|他には|ほかに|他の|ほかの)/.test(text) || queryKind === "inspect-work" || queryKind === "recommend-next-step") {
+    return "thread-context";
+  }
+  return "team";
+}
+
+function buildThreadQueryContinuation(args: {
+  queryKind?: ThreadQueryKind;
+  queryScope?: ThreadQueryScope;
+  messageText: string;
+  reply: string;
+  recordedAt: Date;
+}): ThreadQueryContinuation | undefined {
+  if (!args.queryKind) {
+    return undefined;
+  }
+
+  const userMessage = args.messageText.trim();
+  const replySummary = summarizeSlackReply(args.reply);
+  return {
+    kind: args.queryKind,
+    scope: args.queryScope ?? inferQueryScopeFromText(userMessage, args.queryKind),
+    userMessage,
+    replySummary,
+    issueIds: extractIssueIdsFromText(args.reply),
+    recordedAt: args.recordedAt.toISOString(),
+  };
+}
+
+async function persistQueryContinuationForAction(args: {
+  paths: ReturnType<typeof buildThreadPaths>;
+  action: "query" | "conversation" | "mutation";
+  queryKind?: ThreadQueryKind;
+  queryScope?: ThreadQueryScope;
+  messageText: string;
+  reply?: string;
+  now: Date;
+}): Promise<void> {
+  if (args.action === "query" && args.reply?.trim()) {
+    const continuation = buildThreadQueryContinuation({
+      queryKind: args.queryKind,
+      queryScope: args.queryScope,
+      messageText: args.messageText,
+      reply: args.reply,
+      recordedAt: args.now,
+    });
+    if (continuation) {
+      await saveThreadQueryContinuation(args.paths, continuation);
+    }
+    return;
+  }
+
+  if (args.action === "mutation") {
+    await clearThreadQueryContinuation(args.paths);
+  }
+}
+
 function mergeAgentReplyWithCommit(args: {
   agentReply: string;
   commitSummaries: string[];
@@ -312,6 +386,7 @@ async function loadMessageRouterInput(
   now: Date,
   pendingClarification?: Awaited<ReturnType<typeof getPendingClarificationForThread>>,
 ): Promise<MessageRouterInput> {
+  const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   const recentThread = await getSlackThreadContext(
     config.workspaceDir,
     message.channelId,
@@ -322,6 +397,7 @@ async function loadMessageRouterInput(
     repositories.workgraph,
     buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
   ).catch(() => undefined);
+  const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
 
   return {
     channelId: message.channelId,
@@ -335,6 +411,7 @@ async function loadMessageRouterInput(
         role: entry.type,
         text: entry.text,
       })),
+    lastQueryContext,
     threadContext: {
       intakeStatus: pendingClarification?.intakeStatus ?? planningContext?.thread.intakeStatus,
       pendingClarification: pendingClarification?.pendingClarification ?? planningContext?.thread.pendingClarification ?? false,
@@ -733,6 +810,7 @@ export async function handleManagerMessage(
   };
 
   try {
+    const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
     const agentTurn = await runManagerAgentTurn(config, paths, {
       kind: "message",
       channelId: message.channelId,
@@ -741,6 +819,7 @@ export async function handleManagerMessage(
       userId: message.userId,
       text: message.text,
       currentDate: currentDateInJst(now),
+      lastQueryContext,
     });
 
     if (agentTurn.invalidProposalCount > 0 && agentTurn.proposals.length === 0) {
@@ -756,6 +835,35 @@ export async function handleManagerMessage(
       policy,
       env,
     });
+    const agentIntent = agentTurn.intentReport?.intent;
+    if (agentIntent === "query") {
+      const queryKind = agentTurn.intentReport?.queryKind ?? classifyManagerQuery(message.text) ?? undefined;
+      await persistQueryContinuationForAction({
+        paths,
+        action: "query",
+        queryKind: queryKind as ThreadQueryKind | undefined,
+        queryScope: agentTurn.intentReport?.queryScope,
+        messageText: message.text,
+        reply: agentTurn.reply,
+        now,
+      });
+    } else if (
+      agentIntent === "create_work"
+      || agentIntent === "update_progress"
+      || agentIntent === "update_completed"
+      || agentIntent === "update_blocked"
+      || agentIntent === "followup_resolution"
+      || agentIntent === "review"
+      || agentIntent === "heartbeat"
+      || agentIntent === "scheduler"
+    ) {
+      await persistQueryContinuationForAction({
+        paths,
+        action: "mutation",
+        messageText: message.text,
+        now,
+      });
+    }
 
     return {
       handled: true,
@@ -929,6 +1037,12 @@ async function handleManagerMessageLegacy(
     },
   });
   if (updatesResult) {
+    await persistQueryContinuationForAction({
+      paths,
+      action: "mutation",
+      messageText: message.text,
+      now,
+    });
     return {
       ...updatesResult,
       diagnostics: routerDiagnostics,
@@ -946,6 +1060,17 @@ async function handleManagerMessageLegacy(
       workspaceDir: config.workspaceDir,
       env,
     });
+    if (result.handled && result.reply) {
+      await persistQueryContinuationForAction({
+        paths,
+        action: "query",
+        queryKind: routerResult.queryKind,
+        queryScope: routerResult.queryScope,
+        messageText: message.text,
+        reply: result.reply,
+        now,
+      });
+    }
     return {
       ...result,
       diagnostics: routerDiagnostics,
@@ -980,6 +1105,14 @@ async function handleManagerMessageLegacy(
       nowIso,
     },
   });
+  if (intakeResult.handled) {
+    await persistQueryContinuationForAction({
+      paths,
+      action: "mutation",
+      messageText: message.text,
+      now,
+    });
+  }
   return {
     ...intakeResult,
     diagnostics: routerDiagnostics,

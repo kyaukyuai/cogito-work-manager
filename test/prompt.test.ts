@@ -108,12 +108,24 @@ describe("prompt helpers", () => {
       userId: "U123",
       text: "他にはどのようなタスクがある？",
       currentDate: "2026-03-23",
+      lastQueryContext: {
+        kind: "what-should-i-do",
+        scope: "team",
+        userMessage: "今日やるべきタスクある？",
+        replySummary: "今日まず見るなら AIC-38 です。",
+        issueIds: ["AIC-38"],
+        recordedAt: "2026-03-23T07:54:00.000Z",
+      },
     });
 
+    expect(prompt).toContain("Last query continuation context:");
+    expect(prompt).toContain("- kind: what-should-i-do");
+    expect(prompt).toContain("- issueIds: AIC-38");
     expect(prompt).toContain("Public reply style hints:");
     expect(prompt).toContain("Do not use markdown headings, separator lines, warning icons, or emojis.");
     expect(prompt).toContain("Treat this as a continuation of the previous list or prioritization reply in the same thread");
     expect(prompt).toContain("If there is only one additional relevant issue or no additional issue, say that plainly in one sentence.");
+    expect(prompt).toContain("Continue from the stored last query context (what-should-i-do / team)");
   });
 
   it("defines an issue-centric heartbeat prompt", () => {
@@ -238,11 +250,21 @@ describe("prompt helpers", () => {
         linkedIssueIds: [],
         latestFocusIssueId: "AIC-930",
       },
+      lastQueryContext: {
+        kind: "what-should-i-do",
+        scope: "team",
+        userMessage: "今日やるべきタスクある？",
+        replySummary: "今日まず手を付けるなら AIC-930 です。",
+        issueIds: ["AIC-930"],
+        recordedAt: "2026-03-19T01:00:00.000Z",
+      },
       taskKey: "router-test",
     });
 
     expect(prompt).toContain("Reply with a single JSON object only.");
     expect(prompt).toContain('"queryKind":"list-active"|"list-today"|"what-should-i-do"|"inspect-work"|"search-existing"|"recommend-next-step"');
+    expect(prompt).toContain("Last query continuation context:");
+    expect(prompt).toContain("- kind: what-should-i-do");
     expect(prompt).toContain('Example: "他にはどのようなタスクがある？" after a task-list reply in the same thread');
 
     const parsed = parseMessageRouterReply('{"action":"query","queryKind":"list-active","queryScope":"thread-context","confidence":0.91,"reasoningSummary":"直前の一覧の続きです。"}');
