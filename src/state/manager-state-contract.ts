@@ -131,6 +131,7 @@ export const DEFAULT_OWNER_MAP: OwnerMap = {
       domains: ["default", "research", "slack", "linear"],
       keywords: ["slack", "linear", "bot", "manager", "調査", "確認"],
       linearAssignee: "y.kakui",
+      slackUserId: "U01L86BCA9X",
       primary: true,
     },
   ],

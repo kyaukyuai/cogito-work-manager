@@ -105,7 +105,8 @@ describe("manager diagnostics", () => {
     expect(diagnostics.threadKey).toBe("C0ALAMDRB9V:thread-diagnostics");
     expect(diagnostics.planningContext?.latestResolvedIssue?.issueId).toBe("AIC-970");
     expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
-    expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(1);
+    expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(0);
+    expect(diagnostics.ownerMapDiagnostics.mappedSlackEntries).toBe(1);
   });
 
   it("builds issue diagnostics with followup and latest source", async () => {
