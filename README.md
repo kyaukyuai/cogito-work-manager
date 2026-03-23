@@ -1,6 +1,6 @@
 # pi-slack-linear
 
-Slack の専用チャンネルを常時監視し、`pi-coding-agent` を使って Linear を task system of record として扱う execution manager bot です。
+Slack の専用チャンネルを常時監視し、`pi-coding-agent` を使って Linear を task system of record として扱う execution manager assistant「コギト」です。
 
 ## What It Does
 

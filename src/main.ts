@@ -280,7 +280,7 @@ async function main(): Promise<void> {
     }
   };
 
-  logger.info("Slack bot starting", {
+  logger.info("Slack assistant starting", {
     assistantName: managerPolicy.assistantName,
     channels: Array.from(config.slackAllowedChannelIds),
     model: config.botModel,
@@ -428,7 +428,9 @@ async function main(): Promise<void> {
   });
 
   await socketClient.start();
-  logger.info("Slack bot connected");
+  logger.info("Slack assistant connected", {
+    assistantName: managerPolicy.assistantName,
+  });
 
   const heartbeatService = new HeartbeatService({
     logger,

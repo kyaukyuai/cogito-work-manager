@@ -132,8 +132,8 @@ docker compose logs -f
 
 正常なら次のようなログが出ます。
 
-- `Slack bot starting`
-- `Slack bot connected`
+- `Slack assistant starting`
+- `Slack assistant connected`
 
 ## 6. Verify in Slack
 
@@ -276,7 +276,7 @@ docker compose logs --tail 20 bot
 
 - `workgraph:recover` は現在の `workgraph-events.jsonl` を replay して fresh snapshot を作る
 - 既に `workgraph:compact` 済みで active log が空の場合、recovery に必要なのは `workgraph-snapshot.json` 側であり、pre-compact の log backup がないと full replay はできない
-- recovery 後に `Slack bot connected` が出ることを確認する
+- recovery 後に `Slack assistant connected` が出ることを確認する
 
 例:
 
