@@ -62,9 +62,10 @@ async function postSlackReply(
     channel: string;
     reply: string;
     threadTs?: string;
+    linearWorkspace: string;
   },
 ): Promise<string> {
-  const payload = buildSlackMessagePayload(args.reply);
+  const payload = buildSlackMessagePayload(args.reply, { linearWorkspace: args.linearWorkspace });
   await webClient.chat.postMessage({
     channel: args.channel,
     thread_ts: args.threadTs,
@@ -391,6 +392,7 @@ async function main(): Promise<void> {
           channel: message.channelId,
           threadTs: message.rootThreadTs,
           reply,
+          linearWorkspace: config.linearWorkspace,
         });
 
         await appendThreadLog(paths, {
@@ -411,6 +413,7 @@ async function main(): Promise<void> {
           channel: message.channelId,
           threadTs: message.rootThreadTs,
           reply: `処理に失敗しました。設定や Linear 連携を確認してください。\n\n${errorMessage}`,
+          linearWorkspace: config.linearWorkspace,
         });
 
         await appendThreadLog(paths, {
@@ -475,6 +478,7 @@ async function main(): Promise<void> {
       const postedReply = await postSlackReply(webClient, {
         channel: channelId,
         reply,
+        linearWorkspace: config.linearWorkspace,
       });
 
       await appendThreadLog(paths, {
@@ -531,6 +535,7 @@ async function main(): Promise<void> {
         const postedReply = await postSlackReply(webClient, {
           channel: job.channelId,
           reply,
+          linearWorkspace: config.linearWorkspace,
         });
 
         return {
@@ -568,6 +573,7 @@ async function main(): Promise<void> {
       const postedReply = await postSlackReply(webClient, {
         channel: job.channelId,
         reply,
+        linearWorkspace: config.linearWorkspace,
       });
 
       await appendThreadLog(paths, {

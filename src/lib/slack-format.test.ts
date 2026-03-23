@@ -36,10 +36,33 @@ describe("formatSlackMessageText", () => {
       "週次レビューの結果、注意が必要なissueが3件あります。- *AIC-38*「OPT社の社内チャネルへの招待依頼」— 3/19期限で*期限超過*。",
       "",
       "- *AIC-39*「AIマネージャーを実用レベルへ引き上げる」— 3/26期限。",
-    ].join("\n"));
+    ].join("\n"), { linearWorkspace: "kyaukyuai" });
 
     expect(payload.text).not.toContain("*AIC-38*");
-    expect(payload.blocks[0]?.text.text).toContain("あります。\n- *AIC-38*");
-    expect(payload.blocks[0]?.text.text).toContain("- *AIC-39*");
+    expect(payload.text).toContain("AIC-38");
+    expect(payload.blocks[0]).toMatchObject({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "週次レビューの結果、注意が必要なissueが3件あります。",
+      },
+    });
+    expect(payload.blocks[1]).toMatchObject({
+      type: "rich_text",
+      elements: [{
+        type: "rich_text_list",
+        style: "bullet",
+      }],
+    });
+    const richList = payload.blocks[1] as { elements: Array<{ elements: Array<{ elements: Array<{ type: string; url?: string; text?: string }> }> }> };
+    expect(richList.elements[0]?.elements[0]?.elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "link",
+          url: "https://linear.app/kyaukyuai/issue/AIC-38",
+          text: "AIC-38",
+        }),
+      ]),
+    );
   });
 });
