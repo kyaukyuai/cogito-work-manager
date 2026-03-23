@@ -10,6 +10,11 @@ import {
   type LinearIssue,
   type LinearCommandEnv,
 } from "./linear.js";
+import {
+  getNotionPageFacts,
+  searchNotionPages,
+  type NotionCommandEnv,
+} from "./notion.js";
 import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
 import { webFetchUrl, webSearchFetch } from "./web-research.js";
 import { createWorkgraphReadTools } from "./workgraph-tools.js";
@@ -26,6 +31,13 @@ function buildLinearEnv(config: AppConfig): LinearCommandEnv {
     LINEAR_API_KEY: config.linearApiKey,
     LINEAR_WORKSPACE: config.linearWorkspace,
     LINEAR_TEAM_KEY: config.linearTeamKey,
+  };
+}
+
+function buildNotionEnv(config: AppConfig): NotionCommandEnv {
+  return {
+    ...process.env,
+    NOTION_API_TOKEN: config.notionApiToken,
   };
 }
 
@@ -280,6 +292,46 @@ function createLinearReadTools(
         return {
           content: [{ type: "text", text: members.length > 0 ? formatJsonDetails(members) : "No active team members found." }],
           details: members,
+        };
+      },
+    },
+  ];
+}
+
+function createNotionReadTools(config: AppConfig): ToolDefinition[] {
+  const env = buildNotionEnv(config);
+
+  return [
+    {
+      name: "notion_search_pages",
+      label: "Notion Search Pages",
+      description: "Search Notion pages as raw facts. Read-only.",
+      promptSnippet: "Use this when Notion may contain relevant specs, notes, or operating context for the current task.",
+      parameters: Type.Object({
+        query: Type.String({ description: "Search text." }),
+        pageSize: Type.Optional(Type.Number({ description: "Maximum number of pages to return." })),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const pages = await searchNotionPages(params as { query: string; pageSize?: number }, env, signal);
+        return {
+          content: [{ type: "text", text: pages.length > 0 ? formatJsonDetails(pages) : "No matching Notion pages found." }],
+          details: pages,
+        };
+      },
+    },
+    {
+      name: "notion_get_page_facts",
+      label: "Notion Get Page Facts",
+      description: "Load one Notion page as raw facts. Read-only.",
+      promptSnippet: "Use this after selecting a relevant Notion page from search results.",
+      parameters: Type.Object({
+        pageId: Type.String({ description: "Notion page ID." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const page = await getNotionPageFacts((params as { pageId: string }).pageId, env, signal);
+        return {
+          content: [{ type: "text", text: formatJsonDetails(page) }],
+          details: page,
         };
       },
     },
@@ -563,6 +615,7 @@ export function createManagerAgentTools(
     createPendingClarificationDecisionTool(),
     createQuerySnapshotTool(),
     ...createLinearReadTools(config),
+    ...createNotionReadTools(config),
     ...createSlackContextTools(config),
     ...createWorkgraphReadTools(repositories),
     ...createWebReadTools(),

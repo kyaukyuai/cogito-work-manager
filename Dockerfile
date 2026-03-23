@@ -1,11 +1,13 @@
 FROM node:22-slim
 
 ARG LINEAR_CLI_VERSION=2.7.0
+ARG NOTION_CLI_VERSION=0.4.0
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bash ca-certificates curl git jq ripgrep tini xz-utils \
   && update-ca-certificates \
   && npm install -g "@kyaukyuai/linear-cli@${LINEAR_CLI_VERSION}" \
+  && npm install -g "ntn@${NOTION_CLI_VERSION}" \
   && npm cache clean --force \
   && rm -rf /var/lib/apt/lists/*
 
