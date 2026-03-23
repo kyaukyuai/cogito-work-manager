@@ -1,7 +1,4 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { spawn } from "node:child_process";
 
 export interface NotionCommandEnv {
   NOTION_API_TOKEN?: string;
@@ -58,20 +55,40 @@ async function execNotionJson<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   ensureNotionAuthConfigured(env);
-  try {
-    const result = await execFileAsync("sh", ["-lc", buildNotionShellCommand(args)], { env, signal });
-    const raw = String(result.stdout ?? result.stderr ?? "").trim();
-    if (!raw) {
-      throw new Error("ntn returned empty output");
-    }
-    return JSON.parse(raw) as T;
-  } catch (error) {
-    const stdout = String((error as { stdout?: string }).stdout ?? "").trim();
-    const stderr = String((error as { stderr?: string }).stderr ?? "").trim();
-    const message = error instanceof Error ? error.message : String(error);
-    const combined = [stdout, stderr, message].filter(Boolean).join("\n").trim();
-    throw new Error(combined || `ntn ${args.join(" ")} failed`);
+  const command = buildNotionShellCommand(args);
+  const child = spawn("sh", ["-lc", command], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    signal,
+  });
+
+  const raw = await new Promise<string>((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      reject(error);
+    });
+    child.on("close", (code) => {
+      const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n").trim();
+      if (code !== 0) {
+        reject(new Error(combined || `ntn ${args.join(" ")} failed with exit code ${code ?? "unknown"}`));
+        return;
+      }
+      resolve(combined);
+    });
+  });
+
+  if (!raw) {
+    throw new Error("ntn returned empty output");
   }
+  return JSON.parse(raw) as T;
 }
 
 function firstRichTextPlainText(value: unknown): string | undefined {
