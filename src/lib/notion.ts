@@ -337,7 +337,7 @@ export function buildSearchNotionDatabasesArgs(input: SearchNotionInput): string
     page_size: input.pageSize ?? 10,
     filter: {
       property: "object",
-      value: "database",
+      value: "data_source",
     },
   };
 
@@ -349,7 +349,7 @@ export function buildListNotionDatabasesArgs(input: ListNotionInput = {}): strin
     page_size: input.pageSize ?? 10,
     filter: {
       property: "object",
-      value: "database",
+      value: "data_source",
     },
   };
 
@@ -375,7 +375,7 @@ export function buildListNotionBlockChildrenArgs(pageId: string, startCursor?: s
 export function buildGetNotionDatabaseArgs(databaseId: string): string[] {
   const trimmed = databaseId.trim();
   if (!trimmed) throw new Error("Notion database ID is required");
-  return ["api", `/v1/databases/${trimmed}`];
+  return ["api", `/v1/data_sources/${trimmed}`];
 }
 
 function coerceNotionFilterValue(
@@ -462,7 +462,7 @@ export function buildQueryNotionDatabaseArgs(
 
   const payload = buildNotionDatabaseQueryPayload(input, schemaMap, startCursor);
 
-  return ["api", `/v1/databases/${databaseId}/query`, "--data", JSON.stringify(payload)];
+  return ["api", `/v1/data_sources/${databaseId}/query`, "--data", JSON.stringify(payload)];
 }
 
 export async function searchNotionPages(
@@ -491,7 +491,7 @@ export async function searchNotionDatabases(
     signal,
   );
   return (payload.results ?? [])
-    .filter((item) => item.object === "database")
+    .filter((item) => item.object === "database" || item.object === "data_source")
     .map((item) => normalizeDatabaseSummary(item));
 }
 
@@ -506,7 +506,7 @@ export async function listNotionDatabases(
     signal,
   );
   return (payload.results ?? [])
-    .filter((item) => item.object === "database")
+    .filter((item) => item.object === "database" || item.object === "data_source")
     .map((item) => normalizeDatabaseSummary(item));
 }
 

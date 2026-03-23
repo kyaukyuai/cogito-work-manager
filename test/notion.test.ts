@@ -48,7 +48,7 @@ describe("notion command builders", () => {
       page_size: 4,
       filter: {
         property: "object",
-        value: "database",
+        value: "data_source",
       },
     });
   });
@@ -63,16 +63,16 @@ describe("notion command builders", () => {
       page_size: 7,
       filter: {
         property: "object",
-        value: "database",
+        value: "data_source",
       },
     });
   });
 
   it("builds database args for one database id and a simple query", () => {
-    expect(buildGetNotionDatabaseArgs("db-1234")).toEqual(["api", "/v1/databases/db-1234"]);
+    expect(buildGetNotionDatabaseArgs("db-1234")).toEqual(["api", "/v1/data_sources/db-1234"]);
     expect(buildQueryNotionDatabaseArgs({ databaseId: "db-1234", pageSize: 3 })).toEqual([
       "api",
-      "/v1/databases/db-1234/query",
+      "/v1/data_sources/db-1234/query",
       "--data",
       JSON.stringify({ page_size: 3 }),
     ]);
@@ -103,7 +103,7 @@ describe("notion command builders", () => {
     );
 
     expect(args[0]).toBe("api");
-    expect(args[1]).toBe("/v1/databases/db-1234/query");
+    expect(args[1]).toBe("/v1/data_sources/db-1234/query");
     expect(args[2]).toBe("--data");
     expect(JSON.parse(args[3] ?? "")).toEqual({
       page_size: 5,
