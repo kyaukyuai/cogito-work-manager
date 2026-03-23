@@ -31,6 +31,7 @@ const config: AppConfig = {
   linearApiKey: "lin_api_test",
   linearWorkspace: "kyaukyuai",
   linearTeamKey: "AIC",
+  notionApiToken: "secret_test",
   botModel: "claude-sonnet-4-6",
   workspaceDir: "/tmp/pi-slack-linear",
   heartbeatIntervalMin: 30,
@@ -55,6 +56,11 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If the user asks your name or how to call you, answer コギト.");
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
+    expect(prompt).toContain("Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.");
+    expect(prompt).toContain("If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.");
+    expect(prompt).toContain("Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.");
+    expect(prompt).toContain("For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.");
+    expect(prompt).toContain("A query reply without report_query_snapshot is unsafe and will be rejected by the manager.");
     expect(prompt).toContain("Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.");
     expect(prompt).toContain("For single-issue create proposals, decide explicitly whether the issue should stay standalone or attach under the existing thread parent issue.");
     expect(prompt).toContain("Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.");
@@ -66,6 +72,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
     expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
+    expect(prompt).toContain("If Notion tools are available, use them as read-only reference material for specs, notes, and operating context.");
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
@@ -152,7 +159,6 @@ describe("prompt helpers", () => {
       messageTs: "12345.679",
       userId: "U123",
       text: "という意図です",
-      combinedRequestText: "箇条書きや太文字が Slack にそのまま表示されているので、それを修正するタスクを作成してください。\n\n補足:\nという意図です",
       currentDate: "2026-03-23",
       pendingClarification: {
         intent: "create_work",
@@ -166,10 +172,10 @@ describe("prompt helpers", () => {
       },
     });
 
-    expect(prompt).toContain("Combined request candidate:");
     expect(prompt).toContain("Pending manager clarification context:");
     expect(prompt).toContain("- intent: create_work");
     expect(prompt).toContain("- threadParentIssueId: AIC-39");
+    expect(prompt).toContain("- originalUserMessage: 箇条書きや太文字が Slack にそのまま表示されているので、それを修正するタスクを作成してください。");
     expect(prompt).toContain("If the latest message looks like a clarification or intent correction");
   });
 

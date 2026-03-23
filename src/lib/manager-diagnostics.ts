@@ -5,6 +5,8 @@ import {
   type LinearIssue,
 } from "./linear.js";
 import { analyzeOwnerMap, type OwnerMapDiagnostics } from "./owner-map-diagnostics.js";
+import { loadLastManagerAgentTurn, type LastManagerAgentTurn } from "./last-manager-agent-turn.js";
+import { loadPendingManagerClarification, type PendingManagerClarification } from "./pending-manager-clarification.js";
 import { loadThreadQueryContinuation, type ThreadQueryContinuation } from "./query-continuation.js";
 import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
 import type { FollowupLedgerEntry } from "../state/manager-state-contract.js";
@@ -28,6 +30,8 @@ export interface ManagerThreadDiagnostics {
   planningContext?: WorkgraphThreadPlanningContext;
   awaitingFollowups: WorkgraphIssueContext[];
   lastQueryContext?: ThreadQueryContinuation;
+  pendingClarification?: PendingManagerClarification;
+  lastAgentTurn?: LastManagerAgentTurn;
   slackThreadContext: Awaited<ReturnType<typeof getSlackThreadContext>>;
   recentChannelContext: Awaited<ReturnType<typeof getRecentChannelContext>>;
   ownerMapDiagnostics: OwnerMapDiagnostics;
@@ -61,13 +65,15 @@ export async function buildManagerThreadDiagnostics(args: {
 }): Promise<ManagerThreadDiagnostics> {
   const threadKey = buildWorkgraphThreadKey(args.channelId, args.rootThreadTs);
   const threadPaths = buildThreadPaths(args.config.workspaceDir, args.channelId, args.rootThreadTs);
-  const [planningContext, awaitingFollowups, slackThreadContext, recentChannelContext, ownerMap, lastQueryContext] = await Promise.all([
+  const [planningContext, awaitingFollowups, slackThreadContext, recentChannelContext, ownerMap, lastQueryContext, pendingClarification, lastAgentTurn] = await Promise.all([
     getThreadPlanningContext(args.repositories.workgraph, threadKey),
     listAwaitingFollowups(args.repositories.workgraph),
     getSlackThreadContext(args.config.workspaceDir, args.channelId, args.rootThreadTs, 12),
     getRecentChannelContext(args.config.workspaceDir, args.channelId, 5, 8),
     args.repositories.ownerMap.load(),
     loadThreadQueryContinuation(threadPaths),
+    loadPendingManagerClarification(threadPaths),
+    loadLastManagerAgentTurn(threadPaths),
   ]);
 
   const relatedIssueIds = new Set<string>([
@@ -84,6 +90,8 @@ export async function buildManagerThreadDiagnostics(args: {
     planningContext,
     awaitingFollowups: awaitingFollowups.filter((issue) => relatedIssueIds.has(issue.issueId)),
     lastQueryContext,
+    pendingClarification,
+    lastAgentTurn,
     slackThreadContext,
     recentChannelContext,
     ownerMapDiagnostics: analyzeOwnerMap(ownerMap),

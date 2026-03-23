@@ -75,6 +75,7 @@ describe("manager helpers", () => {
     expect(classifyManagerSignal("AIC-38 の状況は？")).toBe("query");
     expect(classifyManagerSignal("AIC-38 次どう進める？")).toBe("query");
     expect(classifyManagerSignal("既存 issue あったっけ？")).toBe("query");
+    expect(classifyManagerSignal("Notion を確認して")).toBe("query");
     expect(classifyManagerSignal("AIC-2 は完了しました")).toBe("completed");
     expect(classifyManagerSignal("AIC-2 は blocked です")).toBe("blocked");
   });

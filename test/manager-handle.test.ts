@@ -11,6 +11,7 @@ import {
   handleManagerMessage,
 } from "../src/lib/manager.js";
 import { loadPendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
+import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { ensureManagerStateFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { buildThreadPaths } from "../src/lib/thread-workspace.js";
@@ -239,14 +240,6 @@ function defaultMessageRouter(input: { messageText: string; threadContext?: { pe
       queryScope,
       confidence: 0.9,
       reasoningSummary: "query と判断しました。",
-    };
-  }
-
-  if (input.threadContext?.pendingClarification) {
-    return {
-      action: "create_work",
-      confidence: 0.9,
-      reasoningSummary: "clarification への返答として扱います。",
     };
   }
 
@@ -669,6 +662,82 @@ describe("handleManagerMessage clarification flow", () => {
           inverseRelations: [],
         },
       ],
+    });
+
+    piSessionMocks.runManagerAgentTurn.mockImplementationOnce(async (_config, _paths, input) => {
+      expect(input.pendingClarification).toMatchObject({
+        intent: "create_work",
+        originalUserMessage: "来週のリリースに向けた対応を進めておいて",
+      });
+      expect(input.text).toBe("期限は 2026-03-20 で、作業は\n- API レート制限の確認\n- 修正対応\nに分けて進めて");
+      return {
+        reply: "来週のリリースに向けた対応を親 issue として、子 task に分けて起票します。",
+        toolCalls: [
+          {
+            toolName: "report_pending_clarification_decision",
+            details: {
+              pendingClarificationDecision: {
+                decision: "continue_pending",
+                persistence: "keep",
+                summary: "前の create clarification への補足です。",
+              },
+            },
+          },
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "create_work",
+                confidence: 0.95,
+                summary: "補足を受けて親子 task を起票します。",
+              },
+            },
+          },
+        ],
+        proposals: [
+          {
+            commandType: "create_issue_batch",
+            planningReason: "complex-request",
+            threadParentHandling: "ignore",
+            duplicateHandling: "create-new",
+            reasonSummary: "実行単位に分けて進める task 群です。",
+            parent: {
+              title: "来週のリリースに向けた対応",
+              description: "リリース前対応の親 issue。",
+              assigneeMode: "assign",
+              assignee: "y.kakui",
+              dueDate: "2026-03-20",
+            },
+            children: [
+              {
+                title: "API レート制限の確認",
+                description: "API レート制限を確認する。",
+                assigneeMode: "assign",
+                assignee: "y.kakui",
+                dueDate: "2026-03-20",
+              },
+              {
+                title: "修正対応",
+                description: "必要な修正を進める。",
+                assigneeMode: "assign",
+                assignee: "y.kakui",
+                dueDate: "2026-03-20",
+              },
+            ],
+          },
+        ],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "create_work",
+          confidence: 0.95,
+          summary: "補足を受けて親子 task を起票します。",
+        },
+        pendingClarificationDecision: {
+          decision: "continue_pending",
+          persistence: "keep",
+          summary: "前の create clarification への補足です。",
+        },
+      };
     });
 
     const second = await handleManagerMessage(
@@ -1257,21 +1326,32 @@ describe("handleManagerMessage clarification flow", () => {
       .mockImplementationOnce(async (_config, _paths, input) => {
         expect(input.pendingClarification).toMatchObject({
           intent: "create_work",
+          originalUserMessage: expect.stringContaining("箇条書きや太文字が slack に反映されず"),
         });
-        expect(input.combinedRequestText).toContain("箇条書きや太文字が slack に反映されず");
-        expect(input.combinedRequestText).toContain("という意図です");
         return {
           reply: "Slack の表示崩れを直す task として起票します。",
-          toolCalls: [{
-            toolName: "report_manager_intent",
-            details: {
-              intentReport: {
-                intent: "create_work",
-                confidence: 0.95,
-                summary: "表示不具合の修正 task 起票です。",
+          toolCalls: [
+            {
+              toolName: "report_pending_clarification_decision",
+              details: {
+              pendingClarificationDecision: {
+                decision: "continue_pending",
+                persistence: "keep",
+                summary: "前の create clarification への補足です。",
+              },
               },
             },
-          }],
+            {
+              toolName: "report_manager_intent",
+              details: {
+                intentReport: {
+                  intent: "create_work",
+                  confidence: 0.95,
+                  summary: "表示不具合の修正 task 起票です。",
+                },
+              },
+            },
+          ],
           proposals: [{
             commandType: "create_issue",
             planningReason: "single-issue",
@@ -1289,6 +1369,11 @@ describe("handleManagerMessage clarification flow", () => {
             intent: "create_work",
             confidence: 0.95,
             summary: "表示不具合の修正 task 起票です。",
+          },
+          pendingClarificationDecision: {
+            decision: "continue_pending",
+            persistence: "keep",
+            summary: "前の create clarification への補足です。",
           },
         };
       });
@@ -1372,6 +1457,99 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("前の依頼を task として確定するための補足待ちです");
+  });
+
+  it("does not treat an unrelated Notion query as a continuation of a pending create clarification", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-unrelated-after-clarify",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "箇条書きや太文字が slack に反映されず、そのまま表示されているので、それを修正するタスクを作成してください。",
+      },
+      new Date("2026-03-23T03:24:00.000Z"),
+    );
+
+    piSessionMocks.runManagerAgentTurn.mockImplementationOnce(async (_config, _paths, input) => {
+      expect(input.pendingClarification).toMatchObject({
+        intent: "create_work",
+      });
+      return {
+        reply: "Notion の内容を確認します。",
+        toolCalls: [
+          {
+            toolName: "report_pending_clarification_decision",
+            details: {
+              pendingClarificationDecision: {
+                decision: "new_request",
+                persistence: "clear",
+                summary: "pending clarification はありますが今回の発話は新しい query です。",
+              },
+            },
+          },
+          {
+            toolName: "report_query_snapshot",
+            details: {
+              querySnapshot: {
+                issueIds: [],
+                shownIssueIds: [],
+                remainingIssueIds: [],
+                totalItemCount: 0,
+                replySummary: "Notion の内容を確認します。",
+                scope: "team",
+              },
+            },
+          },
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "query",
+                queryKind: "search-existing",
+                queryScope: "team",
+                confidence: 0.84,
+                summary: "Notion の確認依頼です。",
+              },
+            },
+          },
+        ],
+        proposals: [],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "query",
+          queryKind: "search-existing",
+          queryScope: "team",
+          confidence: 0.84,
+          summary: "Notion の確認依頼です。",
+        },
+        pendingClarificationDecision: {
+          decision: "new_request",
+          persistence: "clear",
+          summary: "pending clarification はありますが今回の発話は新しい query です。",
+        },
+      };
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-unrelated-after-clarify",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "Notion を確認して",
+      },
+      new Date("2026-03-23T03:25:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("Notion の内容を確認します。");
   });
 
   it("searches for existing issues before new creation when asked conversationally", async () => {
@@ -3390,6 +3568,7 @@ describe("handleManagerMessage clarification flow", () => {
                 remainingIssueIds: ["AIC-39"],
                 totalItemCount: 2,
                 replySummary: "今日まず見るなら AIC-38 の状況を確認するのがよさそうです。",
+                scope: "team",
               },
             },
           },
@@ -3436,6 +3615,19 @@ describe("handleManagerMessage clarification flow", () => {
                   queryScope: "thread-context",
                   confidence: 0.92,
                   summary: "直前の一覧の続きです。",
+                },
+              },
+            },
+            {
+              toolName: "report_query_snapshot",
+              details: {
+                querySnapshot: {
+                  issueIds: ["AIC-38"],
+                  shownIssueIds: ["AIC-38"],
+                  remainingIssueIds: [],
+                  totalItemCount: 1,
+                  replySummary: "他に動いている task は今のところありません。見ておくべきものは AIC-38 だけです。",
+                  scope: "thread-context",
                 },
               },
             },
@@ -3487,6 +3679,58 @@ describe("handleManagerMessage clarification flow", () => {
       queryKind: "list-active",
       queryScope: "thread-context",
     });
+  });
+
+  it("returns a safety reply when the agent omits a required query snapshot", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "今日まず見るなら AIC-38 の状況を確認するのがよさそうです。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "what-should-i-do",
+              queryScope: "team",
+              confidence: 0.94,
+              summary: "優先順位の確認です。",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "what-should-i-do",
+        queryScope: "team",
+        confidence: 0.94,
+        summary: "優先順位の確認です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-missing-snapshot",
+        messageTs: "msg-query-missing-snapshot",
+        userId: "U1",
+        text: "今日やるべきタスクある？",
+      },
+      new Date("2026-03-23T07:54:00.000Z"),
+    );
+
+    expect(result.reply).toBe("いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "agent",
+      intent: "query",
+      missingQuerySnapshot: true,
+    });
+    await expect(
+      loadThreadQueryContinuation(buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-missing-snapshot")),
+    ).resolves.toBeUndefined();
   });
 
   it("commits agent issue creation proposals exactly once", async () => {

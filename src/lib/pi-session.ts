@@ -49,9 +49,11 @@ import type { ThreadQueryContinuation } from "./query-continuation.js";
 import {
   extractIntentReport,
   extractManagerCommandProposals,
+  extractPendingClarificationDecision,
   type ManagerAgentToolCall,
   type ManagerCommandProposal,
   type ManagerIntentReport,
+  type PendingClarificationDecisionReport,
 } from "./manager-command-commit.js";
 import type { TaskIntent } from "./slack.js";
 import { buildSystemPaths } from "./system-workspace.js";
@@ -102,6 +104,7 @@ export interface ManagerAgentTurnResult {
   proposals: ManagerCommandProposal[];
   invalidProposalCount: number;
   intentReport?: ManagerIntentReport;
+  pendingClarificationDecision?: PendingClarificationDecisionReport;
 }
 
 export {
@@ -263,13 +266,16 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Do not use or invent any internal todo list.",
     "Treat the allowed Slack channel as a control room for task execution.",
     "Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.",
-    "Use read tools to inspect Linear, workgraph, Slack context, and lightweight web results.",
+    "Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.",
     "Use proposal tools for create/update/follow-up actions. Proposal tools do not execute side effects.",
     "Never pretend a proposal has already been committed. The manager will validate and commit proposals after your turn.",
     "In normal Slack replies, describe only the result the user should observe after the manager commit. Do not mention an extra manual confirmation or approval step unless the manager explicitly rejected the action.",
     "Report your current intent with report_manager_intent once per turn before or during tool usage.",
-    "For query replies that mention issue IDs, call report_query_snapshot once with the issue IDs shown in this reply.",
-    "When answering list or prioritization queries, include remainingIssueIds in report_query_snapshot when you can infer additional relevant issues for a follow-up like 他には？.",
+    "If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.",
+    "Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.",
+    "For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.",
+    "A query reply without report_query_snapshot is unsafe and will be rejected by the manager.",
+    "When answering list or prioritization queries, include remainingIssueIds in report_query_snapshot whenever you can infer additional relevant issues for a follow-up like 他には？.",
     "Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.",
     "For single-issue create proposals, decide explicitly whether the issue should stay standalone or attach under the existing thread parent issue.",
     "Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.",
@@ -279,7 +285,10 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For every create proposal, decide explicitly whether to assign an owner now or leave the issue unassigned.",
     "Express that owner decision with assigneeMode=assign or leave-unassigned. When assigneeMode=assign, always include assignee.",
     "When a message describes a bug, UX issue, or rendering problem and ends by asking to create a task, classify it as create_work and propose a task instead of drifting into query mode.",
-    "If the latest message is an intent correction like という意図です, そういう意味です, つまり, or そうではなく and a pending manager clarification context exists, treat it as a continuation of that pending request.",
+    "If the latest message is an intent correction like という意図です, そういう意味です, つまり, or そうではなく and a pending manager clarification context exists, report continue_pending and usually persistence=keep or replace depending on whether the pending clarification should stay unchanged or be overwritten.",
+    "If the latest message asks what is happening with the pending clarification, report status_question and persistence=keep.",
+    "If a pending manager clarification context exists but the latest message is a new query, new task, or new update request, report new_request and usually persistence=clear unless you intentionally replace it with a new pending clarification.",
+    "Do not rely on the manager to pre-merge pending clarification text for you. If you decide continue_pending, combine the original request and the latest message yourself when reasoning.",
     "When quoted transcript or previous bot output appears inside a create request, summarize the actual problem in the title and use the transcript as supporting description only.",
     "Search before proposing new tracked work, and inspect the issue hierarchy before proposing updates.",
     "If a thread already maps to an issue, prefer that issue for progress, completion, blocked, inspect, and next-step requests.",
@@ -287,6 +296,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.",
     "For larger requests, propose a parent issue and execution-sized child issues.",
     "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
+    "If Notion tools are available, use them as read-only reference material for specs, notes, and operating context. Do not treat Notion as the task system of record.",
     "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
     "Use raw facts tools for priority and review judgments. Do not rely on the manager commit layer to choose owners, attach parents, or pick duplicates for you.",
     "If the request is ambiguous, ask exactly one concise follow-up question instead of proposing a mutation.",
@@ -698,9 +708,6 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "User message:",
     input.text || "(empty)",
     "",
-    "Combined request candidate:",
-    input.combinedRequestText ?? input.text,
-    "",
     "Last query continuation context:",
     ...lastQueryContextLines,
     "",
@@ -865,6 +872,7 @@ async function runStructuredPromptTurn(
       proposals,
       invalidProposalCount,
       intentReport: extractIntentReport(toolCalls),
+      pendingClarificationDecision: extractPendingClarificationDecision(toolCalls),
     };
   } catch (error) {
     await disposeThreadRuntime(runtimeKey);

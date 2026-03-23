@@ -17,6 +17,7 @@ import {
   managerCommandProposalSchema,
   type ManagerCommandProposal,
   type ManagerIntentReport,
+  type PendingClarificationDecisionReport,
 } from "./manager-command-commit.js";
 
 function buildLinearEnv(config: AppConfig): LinearCommandEnv {
@@ -131,16 +132,38 @@ function createQuerySnapshotTool(): ToolDefinition {
     description: "Record which issue IDs were shown in a query reply and which relevant issue IDs remain for continuation.",
     promptSnippet: "Use this once for list/prioritize/search/inspect/next-step query replies when issue IDs are available.",
     parameters: Type.Object({
-      issueIds: Type.Optional(Type.Array(Type.String({ description: "Issue IDs explicitly shown in this reply." }))),
-      shownIssueIds: Type.Optional(Type.Array(Type.String({ description: "All issue IDs already shown in this query chain, including this reply." }))),
-      remainingIssueIds: Type.Optional(Type.Array(Type.String({ description: "Relevant issue IDs not yet shown but still candidates for a follow-up like 他には?" }))),
-      totalItemCount: Type.Optional(Type.Number({ description: "Total number of relevant issues in this query result set." })),
-      replySummary: Type.Optional(Type.String({ description: "One short sentence summarizing the reply." })),
+      issueIds: Type.Array(Type.String({ description: "Issue IDs explicitly shown in this reply." })),
+      shownIssueIds: Type.Array(Type.String({ description: "All issue IDs already shown in this query chain, including this reply." })),
+      remainingIssueIds: Type.Array(Type.String({ description: "Relevant issue IDs not yet shown but still candidates for a follow-up like 他には?" })),
+      totalItemCount: Type.Number({ description: "Total number of relevant issues in this query result set." }),
+      replySummary: Type.String({ description: "One short sentence summarizing the reply." }),
+      scope: Type.String({ description: "self | team | thread-context" }),
     }),
     async execute(_toolCallId, params) {
       return {
         content: [{ type: "text", text: "Query snapshot recorded." }],
         details: { querySnapshot: params as Record<string, unknown> },
+      };
+    },
+  };
+}
+
+function createPendingClarificationDecisionTool(): ToolDefinition {
+  return {
+    name: "report_pending_clarification_decision",
+    label: "Report Pending Clarification Decision",
+    description: "Record whether the latest message continues a pending clarification, asks for its status, starts a new request, or clears the pending state.",
+    promptSnippet: "Use this once when a pending manager clarification context exists for the thread.",
+    parameters: Type.Object({
+      decision: Type.String({ description: "continue_pending | status_question | new_request | clear_pending" }),
+      persistence: Type.String({ description: "keep | replace | clear. Use replace when this turn should create or overwrite the pending clarification state." }),
+      summary: Type.Optional(Type.String({ description: "One short sentence explaining why." })),
+    }),
+    async execute(_toolCallId, params) {
+      const typed = params as PendingClarificationDecisionReport;
+      return {
+        content: [{ type: "text", text: "Pending clarification decision recorded." }],
+        details: { pendingClarificationDecision: typed },
       };
     },
   };
@@ -537,6 +560,7 @@ export function createManagerAgentTools(
 ): ToolDefinition[] {
   return [
     createIntentReportTool(),
+    createPendingClarificationDecisionTool(),
     createQuerySnapshotTool(),
     ...createLinearReadTools(config),
     ...createSlackContextTools(config),

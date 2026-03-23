@@ -8,6 +8,11 @@ import {
   type ManagerQueryKind,
 } from "../../src/lib/manager.js";
 import type { ManagerAgentInput, ManagerAgentTurnResult } from "../../src/lib/pi-session.js";
+import {
+  combinePendingManagerClarificationRequest,
+  isPendingManagerClarificationContinuation,
+  isPendingManagerClarificationStatusQuestion,
+} from "../../src/lib/pending-manager-clarification.js";
 import type { SystemPaths } from "../../src/lib/system-workspace.js";
 import { handleIntakeRequest } from "../../src/orchestrators/intake/handle-intake.js";
 import {
@@ -195,6 +200,23 @@ function buildQuerySnapshotToolCall(snapshot: Record<string, unknown>) {
   };
 }
 
+function buildPendingClarificationDecisionToolCall(
+  decision: string,
+  persistence: "keep" | "replace" | "clear",
+  summary: string,
+) {
+  return {
+    toolName: "report_pending_clarification_decision",
+    details: {
+      pendingClarificationDecision: {
+        decision,
+        persistence,
+        summary,
+      },
+    },
+  };
+}
+
 async function buildQueryTurn(
   args: DefaultManagerAgentMockArgs,
   input: ManagerAgentInput,
@@ -275,6 +297,7 @@ async function buildQueryTurn(
           remainingIssueIds: [],
           totalItemCount: issues.length,
           replySummary: summarizeSlackReply(reply),
+          scope: router.queryScope,
         }),
       ],
       proposals: [],
@@ -382,6 +405,7 @@ async function buildQueryTurn(
           remainingIssueIds: [],
           totalItemCount: 1,
           replySummary: summarizeSlackReply(reply),
+          scope: router.queryScope,
         }),
       ],
       proposals: [],
@@ -445,6 +469,7 @@ async function buildQueryTurn(
       buildQuerySnapshotToolCall({
         ...snapshot,
         replySummary: summarizeSlackReply(reply),
+        scope: router.queryScope,
       }),
     ],
     proposals: [],
@@ -465,16 +490,38 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
     const policy = await repositories.policy.load();
     const followups = await repositories.followups.load();
     const turnNow = new Date(`${input.currentDate}T00:00:00.000Z`);
-    const effectiveText = input.combinedRequestText ?? input.text;
-    const pendingClarification = await getPendingClarificationForThread(
+    const pendingClarification = input.pendingClarification;
+    const workgraphPendingClarification = await getPendingClarificationForThread(
       repositories.workgraph,
       buildWorkgraphThreadKey(input.channelId, input.rootThreadTs),
     ).catch(() => undefined);
+    const pendingDecision = pendingClarification
+      ? isPendingManagerClarificationStatusQuestion(input.text)
+        ? {
+            decision: "status_question" as const,
+            persistence: "keep" as const,
+            summary: "前の補足依頼の状況確認です。",
+          }
+        : isPendingManagerClarificationContinuation(input.text)
+          ? {
+              decision: "continue_pending" as const,
+              persistence: "keep" as const,
+              summary: "前の補足依頼への返答です。",
+            }
+          : {
+              decision: "new_request" as const,
+              persistence: "clear" as const,
+              summary: "pending clarification はありますが今回の発話は別件です。",
+            }
+      : undefined;
+    const effectiveText = pendingDecision?.decision === "continue_pending" && pendingClarification
+      ? combinePendingManagerClarificationRequest(pendingClarification, input.text)
+      : input.text;
 
     let router = args.route({
       messageText: effectiveText,
       threadContext: {
-        pendingClarification: pendingClarification?.pendingClarification,
+        pendingClarification: Boolean(pendingClarification),
       },
       lastQueryContext: input.lastQueryContext,
     });
@@ -494,6 +541,12 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         reasoningSummary: "直前の query continuation です。",
       };
     }
+    if (router.action === "query" && !router.queryScope) {
+      router = {
+        ...router,
+        queryScope: input.lastQueryContext?.scope ?? "team",
+      };
+    }
 
     if (router.action === "conversation" && !hasAwaitingFollowupOnThread) {
       const reply = args.buildReply({
@@ -502,11 +555,14 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
       }).reply;
       return {
         reply,
-        toolCalls: [buildIntentToolCall({
-          intent: "conversation",
-          confidence: router.confidence,
-          summary: router.reasoningSummary,
-        })],
+        toolCalls: [
+          ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
+          buildIntentToolCall({
+            intent: "conversation",
+            confidence: router.confidence,
+            summary: router.reasoningSummary,
+          }),
+        ],
         proposals: [],
         invalidProposalCount: 0,
         intentReport: {
@@ -514,11 +570,23 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           confidence: router.confidence,
           summary: router.reasoningSummary,
         },
+        pendingClarificationDecision: pendingDecision,
       };
     }
 
     if (router.action === "query" && router.queryKind) {
-      return buildQueryTurn(args, input, router);
+      const result = await buildQueryTurn(args, {
+        ...input,
+        text: effectiveText,
+      }, router);
+      return {
+        ...result,
+        toolCalls: [
+          ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
+          ...result.toolCalls,
+        ],
+        pendingClarificationDecision: pendingDecision,
+      };
     }
 
     if (router.action === "create_work") {
@@ -529,12 +597,13 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         userId: input.userId,
         text: effectiveText,
       };
-      const originalRequestText = pendingClarification?.originalText ?? input.text;
+      const originalRequestText = pendingDecision?.decision === "continue_pending" && pendingClarification
+        ? pendingClarification.originalUserMessage
+        : input.text;
       const requestMessage: ManagerSlackMessage = pendingClarification
         ? {
             ...message,
-            messageTs: pendingClarification.sourceMessageTs ?? input.messageTs,
-            text: `${originalRequestText}\n${effectiveText}`.trim(),
+            text: effectiveText,
           }
         : message;
       const result = await handleIntakeRequest({
@@ -543,7 +612,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         message,
         now: turnNow,
         policy,
-        pendingClarification,
+        pendingClarification: workgraphPendingClarification,
         originalRequestText,
         requestMessage,
         env: {
@@ -558,13 +627,25 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           nowIso,
         },
       });
+      const createPendingDecision = pendingDecision ?? (
+        /(?:教えてください|補足してください|補足して|言い換えて|確定できない|確認したい|もう少し具体的)/.test(result.reply ?? "")
+          ? {
+              decision: "new_request" as const,
+              persistence: "replace" as const,
+              summary: "この create request はまだ補足待ちです。",
+            }
+          : undefined
+      );
       return {
         reply: result.reply ?? "",
-        toolCalls: [buildIntentToolCall({
-          intent: "create_work",
-          confidence: router.confidence,
-          summary: router.reasoningSummary,
-        })],
+        toolCalls: [
+          ...(createPendingDecision ? [buildPendingClarificationDecisionToolCall(createPendingDecision.decision, createPendingDecision.persistence, createPendingDecision.summary)] : []),
+          buildIntentToolCall({
+            intent: "create_work",
+            confidence: router.confidence,
+            summary: router.reasoningSummary,
+          }),
+        ],
         proposals: [],
         invalidProposalCount: 0,
         intentReport: {
@@ -572,6 +653,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           confidence: router.confidence,
           summary: router.reasoningSummary,
         },
+        pendingClarificationDecision: createPendingDecision,
       };
     }
 
@@ -613,11 +695,14 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
     if (updatesResult?.handled) {
       return {
         reply: updatesResult.reply ?? "",
-        toolCalls: [buildIntentToolCall({
-          intent: router.action,
-          confidence: router.confidence,
-          summary: router.reasoningSummary,
-        })],
+        toolCalls: [
+          ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
+          buildIntentToolCall({
+            intent: router.action,
+            confidence: router.confidence,
+            summary: router.reasoningSummary,
+          }),
+        ],
         proposals: [],
         invalidProposalCount: 0,
         intentReport: {
@@ -625,6 +710,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           confidence: router.confidence,
           summary: router.reasoningSummary,
         },
+        pendingClarificationDecision: pendingDecision,
       };
     }
 
@@ -665,11 +751,14 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
 
     return {
       reply: fallbackReply,
-      toolCalls: [buildIntentToolCall({
-        intent: router.action,
-        confidence: router.confidence,
-        summary: router.reasoningSummary,
-      })],
+      toolCalls: [
+        ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
+        buildIntentToolCall({
+          intent: router.action,
+          confidence: router.confidence,
+          summary: router.reasoningSummary,
+        }),
+      ],
       proposals: [],
       invalidProposalCount: 0,
       intentReport: {
@@ -677,6 +766,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         confidence: router.confidence,
         summary: router.reasoningSummary,
       },
+      pendingClarificationDecision: pendingDecision,
     };
   };
 }

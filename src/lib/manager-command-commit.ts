@@ -231,6 +231,12 @@ export interface ManagerIntentReport {
   summary?: string;
 }
 
+export interface PendingClarificationDecisionReport {
+  decision: "continue_pending" | "status_question" | "new_request" | "clear_pending";
+  persistence: "keep" | "replace" | "clear";
+  summary?: string;
+}
+
 export interface ManagerAgentToolCall {
   toolName: string;
   input?: unknown;
@@ -556,6 +562,29 @@ export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerI
       summary: z.string().optional(),
     }).safeParse(intentReport);
     if (parsed.success) return parsed.data;
+  }
+  return undefined;
+}
+
+const pendingClarificationDecisionSchema = z.object({
+  decision: z.enum(["continue_pending", "status_question", "new_request", "clear_pending"]),
+  persistence: z.enum(["keep", "replace", "clear"]),
+  summary: optionalStringSchema,
+});
+
+export function extractPendingClarificationDecision(
+  toolCalls: ManagerAgentToolCall[],
+): PendingClarificationDecisionReport | undefined {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall?.toolName !== "report_pending_clarification_decision") {
+      continue;
+    }
+    const details = toolCall.details as { pendingClarificationDecision?: unknown } | undefined;
+    const parsed = pendingClarificationDecisionSchema.safeParse(details?.pendingClarificationDecision);
+    if (parsed.success) {
+      return parsed.data;
+    }
   }
   return undefined;
 }

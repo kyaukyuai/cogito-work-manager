@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildManagerIssueDiagnostics, buildManagerThreadDiagnostics } from "../src/lib/manager-diagnostics.js";
+import { saveLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
+import { savePendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
 import { saveThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { appendThreadLog, buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
@@ -33,6 +35,7 @@ describe("manager diagnostics", () => {
     linearApiKey: "lin_api_test",
     linearWorkspace: "kyaukyuai",
     linearTeamKey: "AIC",
+    notionApiToken: undefined,
     botModel: "claude-sonnet-4-5",
     workspaceDir: "",
     heartbeatIntervalMin: 30,
@@ -106,6 +109,24 @@ describe("manager diagnostics", () => {
       totalItemCount: 1,
       recordedAt: "2026-03-19T04:05:00.000Z",
     });
+    await savePendingManagerClarification(threadPaths, {
+      intent: "create_work",
+      originalUserMessage: "Slack 表示崩れを直す task を作成してください。",
+      lastUserMessage: "という意図です",
+      clarificationReply: "補足をもらえれば起票できます。",
+      missingDecisionSummary: "task title が曖昧です。",
+      threadParentIssueId: "AIC-970",
+      relatedIssueIds: ["AIC-970"],
+      recordedAt: "2026-03-23T04:06:00.000Z",
+    });
+    await saveLastManagerAgentTurn(threadPaths, {
+      recordedAt: "2026-03-23T04:06:30.000Z",
+      intent: "create_work",
+      pendingClarificationDecision: "continue_pending",
+      pendingClarificationPersistence: "keep",
+      pendingClarificationDecisionSummary: "前の create clarification への補足です。",
+      missingQuerySnapshot: false,
+    });
 
     const diagnostics = await buildManagerThreadDiagnostics({
       config: { ...config, workspaceDir },
@@ -122,6 +143,16 @@ describe("manager diagnostics", () => {
       shownIssueIds: ["AIC-970"],
       remainingIssueIds: [],
       totalItemCount: 1,
+    });
+    expect(diagnostics.pendingClarification).toMatchObject({
+      intent: "create_work",
+      threadParentIssueId: "AIC-970",
+    });
+    expect(diagnostics.lastAgentTurn).toMatchObject({
+      intent: "create_work",
+      pendingClarificationDecision: "continue_pending",
+      pendingClarificationPersistence: "keep",
+      missingQuerySnapshot: false,
     });
     expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
     expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(0);

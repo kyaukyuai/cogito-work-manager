@@ -48,6 +48,7 @@ import { composeSlackReply, formatSlackBullets, joinSlackSentences } from "../or
 import {
   commitManagerCommandProposals,
   type ManagerIntentReport,
+  type PendingClarificationDecisionReport,
 } from "./manager-command-commit.js";
 import {
   type LinearIssue,
@@ -61,21 +62,19 @@ import {
   getThreadPlanningContext,
 } from "../state/workgraph/queries.js";
 import { getSlackThreadContext } from "./slack-context.js";
+import { saveLastManagerAgentTurn } from "./last-manager-agent-turn.js";
 import type { SystemPaths } from "./system-workspace.js";
 import { buildThreadPaths, ensureThreadWorkspace, type ThreadPaths } from "./thread-workspace.js";
 import {
   clearThreadQueryContinuation,
-  extractIssueIdsFromText,
   loadThreadQueryContinuation,
   saveThreadQueryContinuation,
-  summarizeSlackReply,
   type ThreadQueryContinuation,
   type ThreadQueryKind,
   type ThreadQueryScope,
 } from "./query-continuation.js";
 import {
   clearPendingManagerClarification,
-  combinePendingManagerClarificationRequest,
   isPendingManagerClarificationContinuation,
   isPendingManagerClarificationStatusQuestion,
   loadPendingManagerClarification,
@@ -131,6 +130,10 @@ export interface ManagerHandleResult {
       invalidProposalCount?: number;
       committedCommands: string[];
       commitRejections: string[];
+      pendingClarificationDecision?: PendingClarificationDecisionReport["decision"];
+      pendingClarificationPersistence?: PendingClarificationDecisionReport["persistence"];
+      pendingClarificationDecisionSummary?: string;
+      missingQuerySnapshot?: boolean;
       technicalFailure?: string;
     };
     router?: {
@@ -164,6 +167,7 @@ const ACTIONABLE_RESEARCH_PATTERN = /(確認|修正|対応|実装|調査|整理|
 const LIST_MARKER_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const LIST_HEADING_PATTERN = /^(?:タスク|todo|issue|イシュー)?\s*一覧$/i;
 const GREETING_PATTERN = /^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/i;
+const REFERENCE_QUERY_PATTERN = /((?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ).*(?:確認|見て|検索|探して|調べ|読んで)|(?:確認|見て|検索|探して|調べ|読んで).*(?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ))/i;
 interface ParsedTaskSegment {
   raw: string;
   title: string;
@@ -232,6 +236,7 @@ export function classifyManagerSignal(text: string): ManagerMessageKind {
   if (BLOCKED_PATTERN.test(normalized)) return "blocked";
   if (COMPLETED_PATTERN.test(normalized)) return "completed";
   if (PROGRESS_PATTERN.test(normalized)) return "progress";
+  if (REFERENCE_QUERY_PATTERN.test(normalized)) return "query";
   if (RESEARCH_PATTERN.test(normalized)) return "request";
   if (REQUEST_PATTERN.test(normalized)) return "request";
   return "conversation";
@@ -266,6 +271,10 @@ function buildFallbackConversationReply(kind: "greeting" | "smalltalk" | "other"
   return "必要なことがあれば、そのまま続けて送ってください。状況確認でも task の相談でも対応します。";
 }
 
+function buildSafetyQueryReply(): string {
+  return "いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。";
+}
+
 function buildCommitRejectionReply(rejections: string[]): string | undefined {
   if (rejections.length === 0) return undefined;
   if (rejections.length === 1) {
@@ -288,19 +297,15 @@ function isMutableIntent(
     || intent === "followup_resolution";
 }
 
-function shouldKeepPendingManagerClarification(
+function originalMessageForPendingClarification(
   pendingClarification: PendingManagerClarification | undefined,
-  agentIntent: ManagerIntentReport["intent"] | undefined,
+  decision: PendingClarificationDecisionReport["decision"] | undefined,
   messageText: string,
-): boolean {
-  if (!pendingClarification) return false;
-  if (isMutableIntent(agentIntent)) return true;
-  return isPendingManagerClarificationContinuation(messageText)
-    || isPendingManagerClarificationStatusQuestion(messageText);
-}
-
-function looksLikeClarificationReply(text: string): boolean {
-  return /(教えてください|補足してください|補足して|言い換えて|確定できない|確認したい|もう少し具体的)/.test(text);
+): string {
+  if (decision === "continue_pending" && pendingClarification) {
+    return pendingClarification.originalUserMessage;
+  }
+  return messageText;
 }
 
 async function persistPendingManagerClarification(args: {
@@ -332,25 +337,13 @@ function formatCommitLogs(commitSummaries: string[]): string {
     .join("\n");
 }
 
-function inferQueryScopeFromText(
-  text: string,
-  queryKind: ThreadQueryKind,
-): ThreadQueryScope {
-  if (/(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/.test(text)) {
-    return "self";
-  }
-  if (/(?:この件|その件|他には|ほかに|他の|ほかの)/.test(text) || queryKind === "inspect-work" || queryKind === "recommend-next-step") {
-    return "thread-context";
-  }
-  return "team";
-}
-
 interface ThreadQueryContinuationSnapshotInput {
   issueIds?: string[];
   shownIssueIds?: string[];
   remainingIssueIds?: string[];
   totalItemCount?: number;
   replySummary?: string;
+  scope?: ThreadQueryScope;
 }
 
 function normalizeQuerySnapshotIssueIds(values: unknown): string[] {
@@ -379,50 +372,63 @@ function extractQuerySnapshot(toolCalls: Array<{ toolName: string; details?: unk
     const replySummary = typeof snapshot.replySummary === "string" && snapshot.replySummary.trim()
       ? snapshot.replySummary.trim()
       : undefined;
+    const scope = snapshot.scope === "self" || snapshot.scope === "team" || snapshot.scope === "thread-context"
+      ? snapshot.scope
+      : undefined;
     return {
       issueIds,
       shownIssueIds,
       remainingIssueIds,
       totalItemCount,
       replySummary,
+      scope,
     };
   }
   return undefined;
 }
 
+interface CompleteThreadQueryContinuationSnapshotInput {
+  issueIds: string[];
+  shownIssueIds: string[];
+  remainingIssueIds: string[];
+  totalItemCount: number;
+  replySummary: string;
+  scope: ThreadQueryScope;
+}
+
+function hasCompleteQuerySnapshot(
+  snapshot: ThreadQueryContinuationSnapshotInput | undefined,
+): snapshot is CompleteThreadQueryContinuationSnapshotInput {
+  return Array.isArray(snapshot?.issueIds)
+    && Array.isArray(snapshot?.shownIssueIds)
+    && Array.isArray(snapshot?.remainingIssueIds)
+    && typeof snapshot?.totalItemCount === "number"
+    && Number.isFinite(snapshot.totalItemCount)
+    && typeof snapshot?.replySummary === "string"
+    && snapshot.replySummary.trim().length > 0
+    && (snapshot?.scope === "self" || snapshot?.scope === "team" || snapshot?.scope === "thread-context");
+}
+
 function buildThreadQueryContinuation(args: {
   queryKind?: ThreadQueryKind;
-  queryScope?: ThreadQueryScope;
   messageText: string;
-  reply: string;
   recordedAt: Date;
-  snapshot?: ThreadQueryContinuationSnapshotInput;
+  snapshot: CompleteThreadQueryContinuationSnapshotInput;
 }): ThreadQueryContinuation | undefined {
   if (!args.queryKind) {
     return undefined;
   }
 
   const userMessage = args.messageText.trim();
-  const currentIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.issueIds);
-  const shownIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.shownIssueIds);
-  const remainingIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.remainingIssueIds);
-  const issueIds = currentIssueIds.length > 0 ? currentIssueIds : extractIssueIdsFromText(args.reply);
-  const normalizedShownIssueIds = shownIssueIds.length > 0 ? shownIssueIds : issueIds;
-  const totalItemCount = args.snapshot?.totalItemCount != null
-    ? Math.max(args.snapshot.totalItemCount, normalizedShownIssueIds.length + remainingIssueIds.length)
-    : Math.max(issueIds.length, normalizedShownIssueIds.length + remainingIssueIds.length);
-  const replySummary = args.snapshot?.replySummary?.trim()
-    ? args.snapshot.replySummary.trim()
-    : summarizeSlackReply(args.reply);
   return {
     kind: args.queryKind,
-    scope: args.queryScope ?? inferQueryScopeFromText(userMessage, args.queryKind),
+    scope: args.snapshot.scope,
     userMessage,
-    replySummary,
-    issueIds,
-    shownIssueIds: normalizedShownIssueIds,
-    remainingIssueIds,
-    totalItemCount,
+    replySummary: args.snapshot.replySummary,
+    issueIds: args.snapshot.issueIds,
+    shownIssueIds: args.snapshot.shownIssueIds,
+    remainingIssueIds: args.snapshot.remainingIssueIds,
+    totalItemCount: args.snapshot.totalItemCount,
     recordedAt: args.recordedAt.toISOString(),
   };
 }
@@ -431,18 +437,14 @@ async function persistQueryContinuationForAction(args: {
   paths: ReturnType<typeof buildThreadPaths>;
   action: "query" | "conversation" | "mutation";
   queryKind?: ThreadQueryKind;
-  queryScope?: ThreadQueryScope;
   messageText: string;
-  reply?: string;
   now: Date;
   snapshot?: ThreadQueryContinuationSnapshotInput;
 }): Promise<void> {
-  if (args.action === "query" && args.reply?.trim()) {
+  if (args.action === "query" && hasCompleteQuerySnapshot(args.snapshot)) {
     const continuation = buildThreadQueryContinuation({
       queryKind: args.queryKind,
-      queryScope: args.queryScope,
       messageText: args.messageText,
-      reply: args.reply,
       recordedAt: args.now,
       snapshot: args.snapshot,
     });
@@ -552,7 +554,7 @@ function buildSafetyOnlyManagerFallbackReply(
   if (action === "query") {
     return {
       action,
-      reply: "いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。",
+      reply: buildSafetyQueryReply(),
     };
   }
   if (action === "progress" || action === "completed" || action === "blocked") {
@@ -1002,9 +1004,6 @@ export async function handleManagerMessage(
     const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
     const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
     const threadPlanningContext = await getThreadPlanningContext(repositories.workgraph, threadKey).catch(() => undefined);
-    const combinedRequestText = pendingManagerClarification
-      ? combinePendingManagerClarificationRequest(pendingManagerClarification, message.text)
-      : message.text;
     const agentTurn = await runManagerAgentTurn(config, paths, {
       kind: "message",
       channelId: message.channelId,
@@ -1012,7 +1011,6 @@ export async function handleManagerMessage(
       messageTs: message.messageTs,
       userId: message.userId,
       text: message.text,
-      combinedRequestText,
       currentDate: currentDateInJst(now),
       lastQueryContext,
       pendingClarification: pendingManagerClarification,
@@ -1020,6 +1018,9 @@ export async function handleManagerMessage(
 
     if (agentTurn.invalidProposalCount > 0 && agentTurn.proposals.length === 0) {
       throw new Error(`manager agent returned ${agentTurn.invalidProposalCount} invalid proposals`);
+    }
+    if (pendingManagerClarification && !agentTurn.pendingClarificationDecision) {
+      throw new Error("manager agent missing pending clarification decision");
     }
 
     const commitResult = await commitManagerCommandProposals({
@@ -1032,29 +1033,37 @@ export async function handleManagerMessage(
       env,
     });
     const agentIntent = agentTurn.intentReport?.intent;
-    const mergedReply = mergeAgentReplyWithCommit({
-      agentReply: agentTurn.reply,
-      commitSummaries: commitResult.replySummaries,
-      commitRejections: commitResult.rejected.map((entry) => entry.reason),
-    });
+    const extractedQuerySnapshot = agentIntent === "query"
+      ? extractQuerySnapshot(agentTurn.toolCalls)
+      : undefined;
+    const completeQuerySnapshot = hasCompleteQuerySnapshot(extractedQuerySnapshot)
+      ? extractedQuerySnapshot
+      : undefined;
+    const missingQuerySnapshot = agentIntent === "query" && !completeQuerySnapshot;
+    const mergedReply = missingQuerySnapshot
+      ? buildSafetyQueryReply()
+      : mergeAgentReplyWithCommit({
+          agentReply: agentTurn.reply,
+          commitSummaries: commitResult.replySummaries,
+          commitRejections: commitResult.rejected.map((entry) => entry.reason),
+        });
+
     if (agentIntent === "query") {
       const queryKind = agentTurn.intentReport?.queryKind;
       if (!queryKind) {
         throw new Error("manager agent query missing queryKind");
       }
-      const querySnapshot = extractQuerySnapshot(agentTurn.toolCalls);
-      await persistQueryContinuationForAction({
-        paths,
-        action: "query",
-        queryKind,
-        queryScope: agentTurn.intentReport?.queryScope,
-        messageText: message.text,
-        reply: agentTurn.reply,
-        now,
-        snapshot: querySnapshot,
-      });
-      if (!shouldKeepPendingManagerClarification(pendingManagerClarification, agentIntent, message.text)) {
-        await clearPendingManagerClarification(paths);
+      if (completeQuerySnapshot) {
+        await persistQueryContinuationForAction({
+          paths,
+          action: "query",
+          queryKind,
+          messageText: message.text,
+          now,
+          snapshot: completeQuerySnapshot,
+        });
+      } else {
+        await clearThreadQueryContinuation(paths);
       }
     } else if (
       agentIntent === "create_work"
@@ -1072,34 +1081,49 @@ export async function handleManagerMessage(
         messageText: message.text,
         now,
       });
-      if (commitResult.committed.length > 0) {
-        await clearPendingManagerClarification(paths);
-      } else if (commitResult.rejected.length > 0 || looksLikeClarificationReply(mergedReply)) {
-        await persistPendingManagerClarification({
-          paths,
-          intent: agentIntent === "create_work"
-            || agentIntent === "update_progress"
-            || agentIntent === "update_completed"
-            || agentIntent === "update_blocked"
-            || agentIntent === "followup_resolution"
-            ? agentIntent
-            : "create_work",
-          originalUserMessage: pendingManagerClarification?.originalUserMessage ?? message.text,
-          lastUserMessage: message.text,
-          clarificationReply: mergedReply,
-          missingDecisionSummary: commitResult.rejected.map((entry) => entry.reason).join(" / ") || undefined,
-          threadParentIssueId: threadPlanningContext?.parentIssue?.issueId ?? threadPlanningContext?.thread.parentIssueId,
-          relatedIssueIds: unique([
-            ...(threadPlanningContext?.childIssues.map((issue) => issue.issueId) ?? []),
-            ...(threadPlanningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
-            threadPlanningContext?.latestResolvedIssue?.issueId ?? "",
-          ].filter(Boolean)),
-          now,
-        });
-      }
-    } else if (!shouldKeepPendingManagerClarification(pendingManagerClarification, agentIntent, message.text)) {
-      await clearPendingManagerClarification(paths);
     }
+
+    const pendingPersistence = agentTurn.pendingClarificationDecision?.persistence;
+    const commitSucceeded = commitResult.committed.length > 0;
+    if (commitSucceeded && pendingManagerClarification) {
+      await clearPendingManagerClarification(paths);
+    } else if (pendingPersistence === "clear") {
+      await clearPendingManagerClarification(paths);
+    } else if (pendingPersistence === "replace" && isMutableIntent(agentIntent)) {
+      await persistPendingManagerClarification({
+        paths,
+        intent: agentIntent,
+        originalUserMessage: originalMessageForPendingClarification(
+          pendingManagerClarification,
+          agentTurn.pendingClarificationDecision?.decision,
+          message.text,
+        ),
+        lastUserMessage: message.text,
+        clarificationReply: mergedReply,
+        missingDecisionSummary: commitResult.rejected.map((entry) => entry.reason).join(" / ")
+          || agentTurn.pendingClarificationDecision?.summary,
+        threadParentIssueId: threadPlanningContext?.parentIssue?.issueId ?? threadPlanningContext?.thread.parentIssueId,
+        relatedIssueIds: unique([
+          ...(threadPlanningContext?.childIssues.map((issue) => issue.issueId) ?? []),
+          ...(threadPlanningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
+          threadPlanningContext?.latestResolvedIssue?.issueId ?? "",
+        ].filter(Boolean)),
+        now,
+      });
+    }
+
+    await saveLastManagerAgentTurn(paths, {
+      recordedAt: now.toISOString(),
+      intent: agentTurn.intentReport?.intent,
+      queryKind: agentTurn.intentReport?.queryKind,
+      queryScope: agentTurn.intentReport?.queryScope,
+      confidence: agentTurn.intentReport?.confidence,
+      summary: agentTurn.intentReport?.summary,
+      pendingClarificationDecision: agentTurn.pendingClarificationDecision?.decision,
+      pendingClarificationPersistence: agentTurn.pendingClarificationDecision?.persistence,
+      pendingClarificationDecisionSummary: agentTurn.pendingClarificationDecision?.summary,
+      missingQuerySnapshot,
+    });
 
     return {
       handled: true,
@@ -1117,13 +1141,31 @@ export async function handleManagerMessage(
           invalidProposalCount: agentTurn.invalidProposalCount,
           committedCommands: commitResult.committed.map((entry) => entry.commandType),
           commitRejections: commitResult.rejected.map((entry) => entry.reason),
+          pendingClarificationDecision: agentTurn.pendingClarificationDecision?.decision,
+          pendingClarificationPersistence: agentTurn.pendingClarificationDecision?.persistence,
+          pendingClarificationDecisionSummary: agentTurn.pendingClarificationDecision?.summary,
+          missingQuerySnapshot,
         },
       },
     };
   } catch (error) {
     const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
     const threadPlanningContext = await getThreadPlanningContext(repositories.workgraph, threadKey).catch(() => undefined);
+    const fallbackPendingDecision = pendingManagerClarification
+      ? isPendingManagerClarificationStatusQuestion(message.text)
+        ? "status_question"
+        : isPendingManagerClarificationContinuation(message.text)
+          ? "continue_pending"
+          : undefined
+      : undefined;
     const safetyFallback = buildSafetyOnlyManagerFallbackReply(message, pendingManagerClarification);
+    await saveLastManagerAgentTurn(paths, {
+      recordedAt: now.toISOString(),
+      pendingClarificationDecision: fallbackPendingDecision,
+      pendingClarificationDecisionSummary: error instanceof Error ? error.message : String(error),
+      pendingClarificationPersistence: pendingManagerClarification ? "keep" : undefined,
+      missingQuerySnapshot: false,
+    });
     if (safetyFallback.action !== "conversation") {
       const fallbackIntent = safetyFallback.action === "request"
         ? "create_work"
@@ -1138,7 +1180,11 @@ export async function handleManagerMessage(
         await persistPendingManagerClarification({
           paths,
           intent: fallbackIntent,
-          originalUserMessage: pendingManagerClarification?.originalUserMessage ?? message.text,
+          originalUserMessage: originalMessageForPendingClarification(
+            pendingManagerClarification,
+            fallbackPendingDecision,
+            message.text,
+          ),
           lastUserMessage: message.text,
           clarificationReply: safetyFallback.reply,
           missingDecisionSummary: error instanceof Error ? error.message : String(error),
@@ -1162,6 +1208,10 @@ export async function handleManagerMessage(
           proposalCount: 0,
           committedCommands: [],
           commitRejections: [],
+          pendingClarificationDecision: fallbackPendingDecision,
+          pendingClarificationPersistence: pendingManagerClarification ? "keep" : undefined,
+          pendingClarificationDecisionSummary: error instanceof Error ? error.message : String(error),
+          missingQuerySnapshot: false,
           technicalFailure: error instanceof Error ? error.message : String(error),
         },
         router: {
@@ -1328,9 +1378,7 @@ async function handleManagerMessageLegacy(
         paths,
         action: "query",
         queryKind: routerResult.queryKind,
-        queryScope: routerResult.queryScope,
         messageText: message.text,
-        reply: result.reply,
         now,
         snapshot: result.continuation,
       });

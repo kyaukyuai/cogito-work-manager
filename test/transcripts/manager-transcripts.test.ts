@@ -134,9 +134,6 @@ function defaultMessageRouter(input: { messageText: string; threadContext?: { pe
       reasoningSummary: "query と判断しました。",
     };
   }
-  if (input.threadContext?.pendingClarification) {
-    return { action: "create_work", confidence: 0.9, reasoningSummary: "clarification への返答です。" };
-  }
   const signal = classifyManagerSignal(text);
   if (signal === "progress") return { action: "update_progress", confidence: 0.9, reasoningSummary: "進捗更新です。" };
   if (signal === "completed") return { action: "update_completed", confidence: 0.9, reasoningSummary: "完了更新です。" };
@@ -361,6 +358,19 @@ describe("manager transcript fixtures", () => {
                   },
                 },
               },
+              {
+                toolName: "report_query_snapshot",
+                details: {
+                  querySnapshot: {
+                    issueIds: ["AIC-38"],
+                    shownIssueIds: ["AIC-38"],
+                    remainingIssueIds: [],
+                    totalItemCount: 1,
+                    replySummary: "今日まず見るなら AIC-38 の対応状況を確認するのがよさそうです。ほかに動いている task は今のところ見当たりません。",
+                    scope: "team",
+                  },
+                },
+              },
             ],
             proposals: [],
             invalidProposalCount: 0,
@@ -386,6 +396,19 @@ describe("manager transcript fixtures", () => {
                     queryScope: "thread-context",
                     confidence: 0.92,
                     summary: "直前の一覧の続きです。",
+                  },
+                },
+              },
+              {
+                toolName: "report_query_snapshot",
+                details: {
+                  querySnapshot: {
+                    issueIds: ["AIC-38"],
+                    shownIssueIds: ["AIC-38"],
+                    remainingIssueIds: [],
+                    totalItemCount: 1,
+                    replySummary: "他に動いている task は今のところありません。見ておくべきものは AIC-38 だけです。",
+                    scope: "thread-context",
                   },
                 },
               },
