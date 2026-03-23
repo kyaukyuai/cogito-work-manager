@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildGetNotionPageArgs, buildSearchNotionArgs } from "../src/lib/notion.js";
+import { buildGetNotionPageArgs, buildNotionShellCommand, buildSearchNotionArgs } from "../src/lib/notion.js";
 
 describe("notion command builders", () => {
   it("builds search args for page-only Notion queries", () => {
@@ -23,6 +23,16 @@ describe("notion command builders", () => {
 
   it("builds page facts args for one page id", () => {
     expect(buildGetNotionPageArgs("abcd-1234")).toEqual(["api", "/v1/pages/abcd-1234"]);
+  });
+
+  it("builds a shell-safe ntn command", () => {
+    const command = buildNotionShellCommand(buildSearchNotionArgs({
+      query: "AIC 仕様",
+      pageSize: 3,
+    }));
+
+    expect(command).toContain("ntn api /v1/search --data");
+    expect(command).toContain("'{\"query\":\"AIC 仕様\",\"page_size\":3,\"filter\":{\"property\":\"object\",\"value\":\"page\"}}'");
   });
 
   it("rejects empty search query or page id", () => {

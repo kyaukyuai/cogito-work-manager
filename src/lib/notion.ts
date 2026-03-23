@@ -41,6 +41,17 @@ function ensureNotionAuthConfigured(env: NotionCommandEnv = process.env): void {
   }
 }
 
+function shellEscape(value: string): string {
+  if (/^[A-Za-z0-9_./:-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+export function buildNotionShellCommand(args: string[]): string {
+  return ["ntn", ...args].map((part) => shellEscape(part)).join(" ");
+}
+
 async function execNotionJson<T>(
   args: string[],
   env: NotionCommandEnv = process.env,
@@ -48,7 +59,7 @@ async function execNotionJson<T>(
 ): Promise<T> {
   ensureNotionAuthConfigured(env);
   try {
-    const result = await execFileAsync("ntn", args, { env, signal });
+    const result = await execFileAsync("sh", ["-lc", buildNotionShellCommand(args)], { env, signal });
     const raw = String(result.stdout ?? result.stderr ?? "").trim();
     if (!raw) {
       throw new Error("ntn returned empty output");
