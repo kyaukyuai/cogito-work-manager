@@ -62,7 +62,7 @@ import {
 } from "../state/workgraph/queries.js";
 import { getSlackThreadContext } from "./slack-context.js";
 import type { SystemPaths } from "./system-workspace.js";
-import { buildThreadPaths, ensureThreadWorkspace } from "./thread-workspace.js";
+import { buildThreadPaths, ensureThreadWorkspace, type ThreadPaths } from "./thread-workspace.js";
 import {
   clearThreadQueryContinuation,
   extractIssueIdsFromText,
@@ -73,6 +73,15 @@ import {
   type ThreadQueryKind,
   type ThreadQueryScope,
 } from "./query-continuation.js";
+import {
+  clearPendingManagerClarification,
+  combinePendingManagerClarificationRequest,
+  isPendingManagerClarificationContinuation,
+  isPendingManagerClarificationStatusQuestion,
+  loadPendingManagerClarification,
+  savePendingManagerClarification,
+  type PendingManagerClarification,
+} from "./pending-manager-clarification.js";
 
 export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation";
 export type ClarificationNeed = "scope" | "due_date" | "execution_plan";
@@ -269,29 +278,58 @@ function buildCommitRejectionReply(rejections: string[]): string | undefined {
   ]);
 }
 
-function isShortMutationAcknowledgement(text: string): boolean {
-  const normalized = text.trim();
-  if (!normalized) return false;
-  return normalized.length <= 80
-    && /(反映|設定|更新|追加|作成|記録|紐づけ|子\s*task|子タスク|親タスク|期限)/i.test(normalized);
+function isMutableIntent(
+  intent: ManagerIntentReport["intent"] | undefined,
+): intent is "create_work" | "update_progress" | "update_completed" | "update_blocked" | "followup_resolution" {
+  return intent === "create_work"
+    || intent === "update_progress"
+    || intent === "update_completed"
+    || intent === "update_blocked"
+    || intent === "followup_resolution";
 }
 
-function shouldSuppressAgentReply(
-  agentReply: string,
-  commitSummaries: string[],
+function shouldKeepPendingManagerClarification(
+  pendingClarification: PendingManagerClarification | undefined,
+  agentIntent: ManagerIntentReport["intent"] | undefined,
+  messageText: string,
 ): boolean {
-  const normalizedReply = agentReply.trim();
-  if (!normalizedReply || commitSummaries.length === 0) return false;
-  if (!isShortMutationAcknowledgement(normalizedReply)) return false;
+  if (!pendingClarification) return false;
+  if (isMutableIntent(agentIntent)) return true;
+  return isPendingManagerClarificationContinuation(messageText)
+    || isPendingManagerClarificationStatusQuestion(messageText);
+}
 
-  const commitText = commitSummaries.join(" ");
-  const agentIssueIds = extractIssueIdsFromText(normalizedReply);
-  const commitIssueIds = extractIssueIdsFromText(commitText);
-  const issueIdsCovered = agentIssueIds.length === 0
-    || agentIssueIds.every((issueId) => commitIssueIds.includes(issueId));
-  if (!issueIdsCovered) return false;
+function looksLikeClarificationReply(text: string): boolean {
+  return /(教えてください|補足してください|補足して|言い換えて|確定できない|確認したい|もう少し具体的)/.test(text);
+}
 
-  return /(反映|設定|更新|追加|作成|記録|紐づけ|子\s*task|子タスク|親タスク|期限)/i.test(commitText);
+async function persistPendingManagerClarification(args: {
+  paths: ThreadPaths;
+  intent: "create_work" | "update_progress" | "update_completed" | "update_blocked" | "followup_resolution";
+  originalUserMessage: string;
+  lastUserMessage: string;
+  clarificationReply: string;
+  missingDecisionSummary?: string;
+  threadParentIssueId?: string;
+  relatedIssueIds?: string[];
+  now: Date;
+}): Promise<void> {
+  await savePendingManagerClarification(args.paths, {
+    intent: args.intent,
+    originalUserMessage: args.originalUserMessage,
+    lastUserMessage: args.lastUserMessage,
+    clarificationReply: args.clarificationReply,
+    missingDecisionSummary: args.missingDecisionSummary,
+    threadParentIssueId: args.threadParentIssueId,
+    relatedIssueIds: unique(args.relatedIssueIds ?? []),
+    recordedAt: args.now.toISOString(),
+  });
+}
+
+function formatCommitLogs(commitSummaries: string[]): string {
+  return commitSummaries
+    .map((summary) => `> system log: ${summary}`)
+    .join("\n");
 }
 
 function inferQueryScopeFromText(
@@ -425,11 +463,16 @@ function mergeAgentReplyWithCommit(args: {
   commitRejections: string[];
 }): string {
   const paragraphs: string[] = [];
-  if (args.agentReply.trim() && !shouldSuppressAgentReply(args.agentReply, args.commitSummaries)) {
-    paragraphs.push(args.agentReply.trim());
+  const normalizedAgentReply = args.agentReply.trim();
+  if (normalizedAgentReply) {
+    paragraphs.push(normalizedAgentReply);
   }
   if (args.commitSummaries.length > 0) {
-    paragraphs.push(...args.commitSummaries);
+    if (normalizedAgentReply) {
+      paragraphs.push(formatCommitLogs(args.commitSummaries));
+    } else {
+      paragraphs.push(...args.commitSummaries);
+    }
   }
   const rejectionReply = buildCommitRejectionReply(args.commitRejections);
   if (rejectionReply) {
@@ -465,10 +508,40 @@ async function buildConversationReply(
   }
 }
 
-function buildSafetyOnlyManagerFallbackReply(message: ManagerSlackMessage): {
+function buildSafetyOnlyManagerFallbackReply(
+  message: ManagerSlackMessage,
+  pendingClarification?: PendingManagerClarification,
+): {
   action: ManagerMessageKind;
   reply: string;
 } {
+  if (pendingClarification && isPendingManagerClarificationStatusQuestion(message.text)) {
+    return {
+      action: "conversation",
+      reply: joinSlackSentences([
+        "この thread では、前の依頼を task として確定するための補足待ちです。",
+        pendingClarification.missingDecisionSummary ?? "何を task にしたいかをもう一度短く言い換えてもらえれば、その続きとして扱います。",
+      ]) ?? "この thread では前の依頼の補足待ちです。",
+    };
+  }
+  if (pendingClarification && isPendingManagerClarificationContinuation(message.text)) {
+    return {
+      action: pendingClarification.intent === "create_work"
+        ? "request"
+        : pendingClarification.intent === "update_progress"
+          ? "progress"
+          : pendingClarification.intent === "update_completed"
+            ? "completed"
+            : pendingClarification.intent === "update_blocked"
+              ? "blocked"
+              : "request",
+      reply: joinSlackSentences([
+        "補足として受け取りました。",
+        "この thread の続きとして扱うので、直したい点や更新したい issue を 1 文で言い換えてもらえれば再試行できます。",
+      ]) ?? "補足として受け取りました。",
+    };
+  }
+
   const action = classifyManagerSignal(message.text);
   if (action === "conversation") {
     return {
@@ -490,7 +563,7 @@ function buildSafetyOnlyManagerFallbackReply(message: ManagerSlackMessage): {
   }
   return {
     action,
-    reply: "いまは起票内容を安全に確定できないため、作りたい task のタイトルや親 issue の有無をもう少し具体的に教えてください。",
+    reply: "いまは起票内容を安全に確定できないため、直したい点を 1 文で言い換えるか、親 issue の有無を補足してください。次の返信はこの thread の続きとして扱います。",
   };
 }
 
@@ -917,6 +990,7 @@ export async function handleManagerMessage(
   const policy = await repositories.policy.load();
   const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   await ensureThreadWorkspace(paths);
+  const threadKey = buildWorkgraphThreadKey(message.channelId, message.rootThreadTs);
   const env = {
     ...process.env,
     LINEAR_API_KEY: config.linearApiKey,
@@ -926,6 +1000,11 @@ export async function handleManagerMessage(
 
   try {
     const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
+    const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
+    const threadPlanningContext = await getThreadPlanningContext(repositories.workgraph, threadKey).catch(() => undefined);
+    const combinedRequestText = pendingManagerClarification
+      ? combinePendingManagerClarificationRequest(pendingManagerClarification, message.text)
+      : message.text;
     const agentTurn = await runManagerAgentTurn(config, paths, {
       kind: "message",
       channelId: message.channelId,
@@ -933,8 +1012,10 @@ export async function handleManagerMessage(
       messageTs: message.messageTs,
       userId: message.userId,
       text: message.text,
+      combinedRequestText,
       currentDate: currentDateInJst(now),
       lastQueryContext,
+      pendingClarification: pendingManagerClarification,
     });
 
     if (agentTurn.invalidProposalCount > 0 && agentTurn.proposals.length === 0) {
@@ -951,6 +1032,11 @@ export async function handleManagerMessage(
       env,
     });
     const agentIntent = agentTurn.intentReport?.intent;
+    const mergedReply = mergeAgentReplyWithCommit({
+      agentReply: agentTurn.reply,
+      commitSummaries: commitResult.replySummaries,
+      commitRejections: commitResult.rejected.map((entry) => entry.reason),
+    });
     if (agentIntent === "query") {
       const queryKind = agentTurn.intentReport?.queryKind;
       if (!queryKind) {
@@ -967,6 +1053,9 @@ export async function handleManagerMessage(
         now,
         snapshot: querySnapshot,
       });
+      if (!shouldKeepPendingManagerClarification(pendingManagerClarification, agentIntent, message.text)) {
+        await clearPendingManagerClarification(paths);
+      }
     } else if (
       agentIntent === "create_work"
       || agentIntent === "update_progress"
@@ -983,15 +1072,38 @@ export async function handleManagerMessage(
         messageText: message.text,
         now,
       });
+      if (commitResult.committed.length > 0) {
+        await clearPendingManagerClarification(paths);
+      } else if (commitResult.rejected.length > 0 || looksLikeClarificationReply(mergedReply)) {
+        await persistPendingManagerClarification({
+          paths,
+          intent: agentIntent === "create_work"
+            || agentIntent === "update_progress"
+            || agentIntent === "update_completed"
+            || agentIntent === "update_blocked"
+            || agentIntent === "followup_resolution"
+            ? agentIntent
+            : "create_work",
+          originalUserMessage: pendingManagerClarification?.originalUserMessage ?? message.text,
+          lastUserMessage: message.text,
+          clarificationReply: mergedReply,
+          missingDecisionSummary: commitResult.rejected.map((entry) => entry.reason).join(" / ") || undefined,
+          threadParentIssueId: threadPlanningContext?.parentIssue?.issueId ?? threadPlanningContext?.thread.parentIssueId,
+          relatedIssueIds: unique([
+            ...(threadPlanningContext?.childIssues.map((issue) => issue.issueId) ?? []),
+            ...(threadPlanningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
+            threadPlanningContext?.latestResolvedIssue?.issueId ?? "",
+          ].filter(Boolean)),
+          now,
+        });
+      }
+    } else if (!shouldKeepPendingManagerClarification(pendingManagerClarification, agentIntent, message.text)) {
+      await clearPendingManagerClarification(paths);
     }
 
     return {
       handled: true,
-      reply: mergeAgentReplyWithCommit({
-        agentReply: agentTurn.reply,
-        commitSummaries: commitResult.replySummaries,
-        commitRejections: commitResult.rejected.map((entry) => entry.reason),
-      }),
+      reply: mergedReply,
       diagnostics: {
         agent: {
           source: "agent",
@@ -1009,7 +1121,37 @@ export async function handleManagerMessage(
       },
     };
   } catch (error) {
-    const safetyFallback = buildSafetyOnlyManagerFallbackReply(message);
+    const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
+    const threadPlanningContext = await getThreadPlanningContext(repositories.workgraph, threadKey).catch(() => undefined);
+    const safetyFallback = buildSafetyOnlyManagerFallbackReply(message, pendingManagerClarification);
+    if (safetyFallback.action !== "conversation") {
+      const fallbackIntent = safetyFallback.action === "request"
+        ? "create_work"
+        : safetyFallback.action === "progress"
+          ? "update_progress"
+          : safetyFallback.action === "completed"
+            ? "update_completed"
+            : safetyFallback.action === "blocked"
+              ? "update_blocked"
+              : undefined;
+      if (fallbackIntent) {
+        await persistPendingManagerClarification({
+          paths,
+          intent: fallbackIntent,
+          originalUserMessage: pendingManagerClarification?.originalUserMessage ?? message.text,
+          lastUserMessage: message.text,
+          clarificationReply: safetyFallback.reply,
+          missingDecisionSummary: error instanceof Error ? error.message : String(error),
+          threadParentIssueId: threadPlanningContext?.parentIssue?.issueId ?? threadPlanningContext?.thread.parentIssueId,
+          relatedIssueIds: unique([
+            ...(threadPlanningContext?.childIssues.map((issue) => issue.issueId) ?? []),
+            ...(threadPlanningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
+            threadPlanningContext?.latestResolvedIssue?.issueId ?? "",
+          ].filter(Boolean)),
+          now,
+        });
+      }
+    }
     return {
       handled: true,
       reply: safetyFallback.reply,

@@ -142,6 +142,35 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Continue from the stored last query context (what-should-i-do / team)");
   });
 
+  it("includes pending manager clarification context for create continuations", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "という意図です",
+      combinedRequestText: "箇条書きや太文字が Slack にそのまま表示されているので、それを修正するタスクを作成してください。\n\n補足:\nという意図です",
+      currentDate: "2026-03-23",
+      pendingClarification: {
+        intent: "create_work",
+        originalUserMessage: "箇条書きや太文字が Slack にそのまま表示されているので、それを修正するタスクを作成してください。",
+        lastUserMessage: "箇条書きや太文字が Slack にそのまま表示されているので、それを修正するタスクを作成してください。",
+        clarificationReply: "いまは起票内容を安全に確定できないため、直したい点を 1 文で言い換えるか、親 issue の有無を補足してください。次の返信はこの thread の続きとして扱います。",
+        missingDecisionSummary: "判断に必要な項目が不足しているため確定できませんでした。",
+        threadParentIssueId: "AIC-39",
+        relatedIssueIds: ["AIC-39"],
+        recordedAt: "2026-03-23T03:00:00.000Z",
+      },
+    });
+
+    expect(prompt).toContain("Combined request candidate:");
+    expect(prompt).toContain("Pending manager clarification context:");
+    expect(prompt).toContain("- intent: create_work");
+    expect(prompt).toContain("- threadParentIssueId: AIC-39");
+    expect(prompt).toContain("If the latest message looks like a clarification or intent correction");
+  });
+
   it("defines an issue-centric heartbeat prompt", () => {
     expect(DEFAULT_HEARTBEAT_PROMPT).toContain("Return at most one issue-centric update.");
     expect(DEFAULT_HEARTBEAT_PROMPT).toContain("what the team should reply with in the control room");

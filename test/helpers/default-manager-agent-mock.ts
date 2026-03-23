@@ -465,13 +465,14 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
     const policy = await repositories.policy.load();
     const followups = await repositories.followups.load();
     const turnNow = new Date(`${input.currentDate}T00:00:00.000Z`);
+    const effectiveText = input.combinedRequestText ?? input.text;
     const pendingClarification = await getPendingClarificationForThread(
       repositories.workgraph,
       buildWorkgraphThreadKey(input.channelId, input.rootThreadTs),
     ).catch(() => undefined);
 
     let router = args.route({
-      messageText: input.text,
+      messageText: effectiveText,
       threadContext: {
         pendingClarification: pendingClarification?.pendingClarification,
       },
@@ -526,14 +527,14 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         rootThreadTs: input.rootThreadTs,
         messageTs: input.messageTs,
         userId: input.userId,
-        text: input.text,
+        text: effectiveText,
       };
       const originalRequestText = pendingClarification?.originalText ?? input.text;
       const requestMessage: ManagerSlackMessage = pendingClarification
         ? {
             ...message,
             messageTs: pendingClarification.sourceMessageTs ?? input.messageTs,
-            text: `${originalRequestText}\n${input.text}`.trim(),
+            text: `${originalRequestText}\n${effectiveText}`.trim(),
           }
         : message;
       const result = await handleIntakeRequest({

@@ -13,7 +13,7 @@ import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runManagerSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
-import { formatSlackMessageText } from "./lib/slack-format.js";
+import { buildSlackMessagePayload } from "./lib/slack-format.js";
 import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "./lib/slack.js";
 import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace } from "./lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "./state/repositories/file-backed-manager-repositories.js";
@@ -54,6 +54,24 @@ function mergeSystemReply(agentReply: string, commitSummaries: string[], commitR
     ].join("\n"));
   }
   return parts.filter(Boolean).join("\n\n");
+}
+
+async function postSlackReply(
+  webClient: WebClient,
+  args: {
+    channel: string;
+    reply: string;
+    threadTs?: string;
+  },
+): Promise<string> {
+  const payload = buildSlackMessagePayload(args.reply);
+  await webClient.chat.postMessage({
+    channel: args.channel,
+    thread_ts: args.threadTs,
+    text: payload.text,
+    blocks: payload.blocks,
+  });
+  return payload.text;
 }
 
 async function downloadAttachments(
@@ -369,11 +387,10 @@ async function main(): Promise<void> {
 
         const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
 
-        const formattedReply = formatSlackMessageText(reply);
-        await webClient.chat.postMessage({
+        const formattedReply = await postSlackReply(webClient, {
           channel: message.channelId,
-          thread_ts: message.rootThreadTs,
-          text: formattedReply,
+          threadTs: message.rootThreadTs,
+          reply,
         });
 
         await appendThreadLog(paths, {
@@ -390,11 +407,10 @@ async function main(): Promise<void> {
           error: errorMessage,
         });
 
-        const reply = formatSlackMessageText(`処理に失敗しました。設定や Linear 連携を確認してください。\n\n${errorMessage}`);
-        await webClient.chat.postMessage({
+        const reply = await postSlackReply(webClient, {
           channel: message.channelId,
-          thread_ts: message.rootThreadTs,
-          text: reply,
+          threadTs: message.rootThreadTs,
+          reply: `処理に失敗しました。設定や Linear 連携を確認してください。\n\n${errorMessage}`,
         });
 
         await appendThreadLog(paths, {
@@ -427,7 +443,7 @@ async function main(): Promise<void> {
         text: prompt,
       });
 
-      const reply = formatSlackMessageText(await executeManagerSystemTask({
+      const reply = await executeManagerSystemTask({
         paths,
         input: {
           kind: "heartbeat",
@@ -440,7 +456,7 @@ async function main(): Promise<void> {
         fallback: async () => {
           return "heartbeat noop: agent-fallback";
         },
-      }));
+      });
       if (reply.startsWith("heartbeat noop:")) {
         const rawReason = reply.replace("heartbeat noop:", "").trim();
         const reason = (
@@ -456,19 +472,19 @@ async function main(): Promise<void> {
         });
         return { reply, status: "noop", reason };
       }
-      await webClient.chat.postMessage({
+      const postedReply = await postSlackReply(webClient, {
         channel: channelId,
-        text: reply,
+        reply,
       });
 
       await appendThreadLog(paths, {
         type: "assistant",
         ts: `${Date.now() / 1000}`,
         threadTs: "heartbeat",
-        text: reply,
+        text: postedReply,
       });
 
-      return { reply, status: "posted" as const };
+      return { reply: postedReply, status: "posted" as const };
     },
   });
   await heartbeatService.start();
@@ -486,7 +502,7 @@ async function main(): Promise<void> {
         const mappedKind = job.action;
         const paths = buildSchedulerPaths(config.workspaceDir, job.id);
         await ensureThreadWorkspace(paths);
-        const reply = formatSlackMessageText(await executeManagerSystemTask({
+        const reply = await executeManagerSystemTask({
           paths,
         input: {
           kind: mappedKind,
@@ -504,7 +520,7 @@ async function main(): Promise<void> {
           fallback: async () => {
             return "Manager review is temporarily unavailable. Please retry this review from the control room if needed.";
           },
-        }));
+        });
         if (reply === "Manager review is temporarily unavailable. Please retry this review from the control room if needed.") {
           return {
             delivered: false,
@@ -512,14 +528,14 @@ async function main(): Promise<void> {
           };
         }
 
-        await webClient.chat.postMessage({
+        const postedReply = await postSlackReply(webClient, {
           channel: job.channelId,
-          text: reply,
+          reply,
         });
 
         return {
           delivered: true,
-          summary: reply,
+          summary: postedReply,
         };
       }
 
@@ -532,7 +548,7 @@ async function main(): Promise<void> {
         text: job.prompt,
       });
 
-      const reply = formatSlackMessageText(await executeManagerSystemTask({
+      const reply = await executeManagerSystemTask({
         paths,
         input: {
           kind: "scheduler",
@@ -547,23 +563,23 @@ async function main(): Promise<void> {
           },
         },
         fallback: async () => "処理に失敗しました。設定や連携を確認してください。",
-      }));
+      });
 
-      await webClient.chat.postMessage({
+      const postedReply = await postSlackReply(webClient, {
         channel: job.channelId,
-        text: reply,
+        reply,
       });
 
       await appendThreadLog(paths, {
         type: "assistant",
         ts: `${Date.now() / 1000}`,
         threadTs: job.id,
-        text: reply,
+        text: postedReply,
       });
 
       return {
         delivered: true,
-        summary: reply,
+        summary: postedReply,
       };
     },
   });

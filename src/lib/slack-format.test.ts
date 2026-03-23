@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatSlackMessageText } from "./slack-format.js";
+import { buildSlackMessagePayload, formatSlackMessageText } from "./slack-format.js";
 
 describe("formatSlackMessageText", () => {
   it("converts standard markdown emphasis to Slack mrkdwn", () => {
     const result = formatSlackMessageText("**bold** *italic* ~~strike~~");
 
     expect(result).toContain("*bold*");
-    expect(result).toContain("_italic_");
+    expect(result).toContain("*italic*");
     expect(result).toContain("~strike~");
   });
 
@@ -29,5 +29,17 @@ describe("formatSlackMessageText", () => {
     expect(result).toContain(":clipboard:");
     expect(result).toContain("*次のいずれかをお知らせいただけますか？*");
     expect(result).not.toContain("**次のいずれかをお知らせいただけますか？**");
+  });
+
+  it("builds mrkdwn blocks and plain-text fallback for public posts", () => {
+    const payload = buildSlackMessagePayload([
+      "週次レビューの結果、注意が必要なissueが3件あります。- *AIC-38*「OPT社の社内チャネルへの招待依頼」— 3/19期限で*期限超過*。",
+      "",
+      "- *AIC-39*「AIマネージャーを実用レベルへ引き上げる」— 3/26期限。",
+    ].join("\n"));
+
+    expect(payload.text).not.toContain("*AIC-38*");
+    expect(payload.blocks[0]?.text.text).toContain("あります。\n- *AIC-38*");
+    expect(payload.blocks[0]?.text.text).toContain("- *AIC-39*");
   });
 });

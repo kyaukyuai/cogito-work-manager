@@ -10,8 +10,10 @@ import {
   formatIssueSelectionReply,
   handleManagerMessage,
 } from "../src/lib/manager.js";
+import { loadPendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
 import { ensureManagerStateFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildThreadPaths } from "../src/lib/thread-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 import { recordPlanningOutcome } from "../src/state/workgraph/recorder.js";
 import { createDefaultTestManagerAgentTurn } from "./helpers/default-manager-agent-mock.js";
@@ -1238,6 +1240,138 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("issue ID か条件をもう少し具体的に教えてください");
+  });
+
+  it("continues a create request after a safety-only clarification turn", async () => {
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-880",
+      identifier: "AIC-880",
+      title: "Slack の mrkdwn 表示崩れを修正する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-880",
+      relations: [],
+      inverseRelations: [],
+    });
+
+    piSessionMocks.runManagerAgentTurn
+      .mockRejectedValueOnce(new Error("agent failure"))
+      .mockImplementationOnce(async (_config, _paths, input) => {
+        expect(input.pendingClarification).toMatchObject({
+          intent: "create_work",
+        });
+        expect(input.combinedRequestText).toContain("箇条書きや太文字が slack に反映されず");
+        expect(input.combinedRequestText).toContain("という意図です");
+        return {
+          reply: "Slack の表示崩れを直す task として起票します。",
+          toolCalls: [{
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "create_work",
+                confidence: 0.95,
+                summary: "表示不具合の修正 task 起票です。",
+              },
+            },
+          }],
+          proposals: [{
+            commandType: "create_issue",
+            planningReason: "single-issue",
+            issue: {
+              title: "Slack の mrkdwn 表示崩れを修正する",
+              description: "箇条書きや太文字が Slack でそのまま表示される問題を修正する。",
+              assigneeMode: "leave-unassigned",
+            },
+            threadParentHandling: "ignore",
+            duplicateHandling: "create-new",
+            reasonSummary: "表示崩れの修正 task が必要です。",
+          }],
+          invalidProposalCount: 0,
+          intentReport: {
+            intent: "create_work",
+            confidence: 0.95,
+            summary: "表示不具合の修正 task 起票です。",
+          },
+        };
+      });
+
+    const first = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-create-clarification",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "箇条書きや太文字が slack に反映されず、そのまま表示されているので、それを修正するタスクを作成してください。",
+      },
+      new Date("2026-03-23T03:24:00.000Z"),
+    );
+
+    expect(first.reply).toContain("次の返信はこの thread の続きとして扱います");
+
+    const pending = await loadPendingManagerClarification(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-create-clarification"),
+      new Date("2026-03-23T03:25:00.000Z"),
+    );
+    expect(pending).toMatchObject({
+      intent: "create_work",
+    });
+
+    const second = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-create-clarification",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "という意図です",
+      },
+      new Date("2026-03-23T03:25:00.000Z"),
+    );
+
+    expect(second.handled).toBe(true);
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Slack の mrkdwn 表示崩れを修正する",
+      }),
+      expect.any(Object),
+    );
+    expect(second.reply).toContain("task として起票します。");
+  });
+
+  it("explains the pending clarification state when the user asks what is happening", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-create-status-question",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "箇条書きや太文字が slack に反映されず、そのまま表示されているので、それを修正するタスクを作成してください。",
+      },
+      new Date("2026-03-23T03:24:00.000Z"),
+    );
+
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-create-status-question",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "どういう状況ですか？",
+      },
+      new Date("2026-03-23T03:25:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("前の依頼を task として確定するための補足待ちです");
   });
 
   it("searches for existing issues before new creation when asked conversationally", async () => {
@@ -3637,9 +3771,8 @@ describe("handleManagerMessage clarification flow", () => {
       }),
       expect.any(Object),
     );
-    expect(result.reply).toContain("AIC-40 を AIC-39 の子 task として反映しました。");
-    expect(result.reply).not.toContain("AIC-40 を AIC-39 の子 task として反映します。");
-    expect(result.reply).not.toContain("設定しました");
+    expect(result.reply).toContain("AIC-40 を AIC-39 の子 task");
+    expect(result.reply).toContain("> system log: AIC-40 を AIC-39 の子 task として反映しました。");
 
     const thread = await loadThreadProjection("C0ALAMDRB9V:thread-parent-update");
     expect(thread).toMatchObject({

@@ -44,6 +44,7 @@ import { getThreadPlanningContext } from "../state/workgraph/queries.js";
 import type { AppConfig } from "./config.js";
 import { getLinearIssue } from "./linear.js";
 import { createLinearCustomTools } from "./linear-tools.js";
+import type { PendingManagerClarification } from "./pending-manager-clarification.js";
 import type { ThreadQueryContinuation } from "./query-continuation.js";
 import {
   extractIntentReport,
@@ -81,6 +82,8 @@ export interface ManagerAgentInput {
   text: string;
   currentDate: string;
   lastQueryContext?: ThreadQueryContinuation;
+  combinedRequestText?: string;
+  pendingClarification?: PendingManagerClarification;
 }
 
 export interface ManagerSystemInput {
@@ -273,6 +276,9 @@ export function buildSystemPrompt(config: AppConfig): string {
     "When the user explicitly asks to make one existing issue a child task of another existing issue, use propose_set_issue_parent instead of proposing a comment or deferring for confirmation.",
     "For every create proposal, decide explicitly whether to assign an owner now or leave the issue unassigned.",
     "Express that owner decision with assigneeMode=assign or leave-unassigned. When assigneeMode=assign, always include assignee.",
+    "When a message describes a bug, UX issue, or rendering problem and ends by asking to create a task, classify it as create_work and propose a task instead of drifting into query mode.",
+    "If the latest message is an intent correction like という意図です, そういう意味です, つまり, or そうではなく and a pending manager clarification context exists, treat it as a continuation of that pending request.",
+    "When quoted transcript or previous bot output appears inside a create request, summarize the actual problem in the title and use the transcript as supporting description only.",
     "Search before proposing new tracked work, and inspect the issue hierarchy before proposing updates.",
     "If a thread already maps to an issue, prefer that issue for progress, completion, blocked, inspect, and next-step requests.",
     "For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.",
@@ -617,6 +623,7 @@ export async function runSystemTurn(config: AppConfig, paths: ThreadPaths, input
 function buildManagerReplyStyleHints(
   messageText: string,
   lastQueryContext?: ThreadQueryContinuation,
+  pendingClarification?: PendingManagerClarification,
 ): string[] {
   const normalized = messageText.trim();
   const hints = [
@@ -642,11 +649,15 @@ function buildManagerReplyStyleHints(
     hints.push("For task-list replies, prefer a plain conversational sentence before any bullets.");
   }
 
+  if (pendingClarification?.intent === "create_work") {
+    hints.push("If the latest message looks like a clarification or intent correction, treat it as a continuation of the pending create request, not as a new topic.");
+  }
+
   return hints;
 }
 
 export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
-  const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext)
+  const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext, input.pendingClarification)
     .map((hint) => `- ${hint}`);
   const lastQueryContextLines = input.lastQueryContext
     ? [
@@ -661,6 +672,18 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- recordedAt: ${input.lastQueryContext.recordedAt}`,
       ]
     : ["- (none)"];
+  const pendingClarificationLines = input.pendingClarification
+    ? [
+        `- intent: ${input.pendingClarification.intent}`,
+        `- originalUserMessage: ${input.pendingClarification.originalUserMessage}`,
+        `- lastUserMessage: ${input.pendingClarification.lastUserMessage}`,
+        `- clarificationReply: ${input.pendingClarification.clarificationReply}`,
+        `- missingDecisionSummary: ${input.pendingClarification.missingDecisionSummary ?? "(none)"}`,
+        `- threadParentIssueId: ${input.pendingClarification.threadParentIssueId ?? "(none)"}`,
+        `- relatedIssueIds: ${input.pendingClarification.relatedIssueIds.join(", ") || "(none)"}`,
+        `- recordedAt: ${input.pendingClarification.recordedAt}`,
+      ]
+    : ["- (none)"];
   return [
     "Manager message context:",
     `- channelId: ${input.channelId}`,
@@ -672,8 +695,14 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "User message:",
     input.text || "(empty)",
     "",
+    "Combined request candidate:",
+    input.combinedRequestText ?? input.text,
+    "",
     "Last query continuation context:",
     ...lastQueryContextLines,
+    "",
+    "Pending manager clarification context:",
+    ...pendingClarificationLines,
     "",
     "Public reply style hints:",
     ...styleHints,
