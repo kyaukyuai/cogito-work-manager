@@ -21,6 +21,7 @@ const linearMocks = vi.hoisted(() => ({
   getLinearIssue: vi.fn(),
   markLinearIssueBlocked: vi.fn(),
   updateLinearIssueState: vi.fn(),
+  updateLinearIssueStateWithComment: vi.fn(),
   listRiskyLinearIssues: vi.fn(),
 }));
 
@@ -56,6 +57,7 @@ vi.mock("../../src/lib/linear.js", () => ({
   getLinearIssue: linearMocks.getLinearIssue,
   markLinearIssueBlocked: linearMocks.markLinearIssueBlocked,
   updateLinearIssueState: linearMocks.updateLinearIssueState,
+  updateLinearIssueStateWithComment: linearMocks.updateLinearIssueStateWithComment,
   listRiskyLinearIssues: linearMocks.listRiskyLinearIssues,
 }));
 
@@ -240,6 +242,11 @@ describe("manager transcript fixtures", () => {
       blockedStateApplied: true,
     });
     linearMocks.updateLinearIssueState.mockReset().mockResolvedValue({
+      id: "issue-1",
+      identifier: "AIC-100",
+      title: "done",
+    });
+    linearMocks.updateLinearIssueStateWithComment.mockReset().mockResolvedValue({
       id: "issue-1",
       identifier: "AIC-100",
       title: "done",

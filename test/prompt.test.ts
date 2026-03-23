@@ -114,6 +114,9 @@ describe("prompt helpers", () => {
         userMessage: "今日やるべきタスクある？",
         replySummary: "今日まず見るなら AIC-38 です。",
         issueIds: ["AIC-38"],
+        shownIssueIds: ["AIC-38"],
+        remainingIssueIds: ["AIC-39"],
+        totalItemCount: 2,
         recordedAt: "2026-03-23T07:54:00.000Z",
       },
     });
@@ -121,6 +124,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Last query continuation context:");
     expect(prompt).toContain("- kind: what-should-i-do");
     expect(prompt).toContain("- issueIds: AIC-38");
+    expect(prompt).toContain("- shownIssueIds: AIC-38");
+    expect(prompt).toContain("- remainingIssueIds: AIC-39");
+    expect(prompt).toContain("- totalItemCount: 2");
     expect(prompt).toContain("Public reply style hints:");
     expect(prompt).toContain("Do not use markdown headings, separator lines, warning icons, or emojis.");
     expect(prompt).toContain("Treat this as a continuation of the previous list or prioritization reply in the same thread");
@@ -256,6 +262,9 @@ describe("prompt helpers", () => {
         userMessage: "今日やるべきタスクある？",
         replySummary: "今日まず手を付けるなら AIC-930 です。",
         issueIds: ["AIC-930"],
+        shownIssueIds: ["AIC-930"],
+        remainingIssueIds: ["AIC-931"],
+        totalItemCount: 2,
         recordedAt: "2026-03-19T01:00:00.000Z",
       },
       taskKey: "router-test",

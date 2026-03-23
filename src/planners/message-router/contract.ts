@@ -85,6 +85,9 @@ export interface MessageRouterLastQueryContext {
   userMessage: string;
   replySummary: string;
   issueIds: string[];
+  shownIssueIds: string[];
+  remainingIssueIds: string[];
+  totalItemCount: number;
   recordedAt: string;
 }
 

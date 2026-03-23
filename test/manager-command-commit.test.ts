@@ -20,6 +20,7 @@ const linearMocks = vi.hoisted(() => ({
   searchLinearIssues: vi.fn(),
   updateManagedLinearIssue: vi.fn(),
   updateLinearIssueState: vi.fn(),
+  updateLinearIssueStateWithComment: vi.fn(),
 }));
 
 const slackContextMocks = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ vi.mock("../src/lib/linear.js", () => ({
   searchLinearIssues: linearMocks.searchLinearIssues,
   updateManagedLinearIssue: linearMocks.updateManagedLinearIssue,
   updateLinearIssueState: linearMocks.updateLinearIssueState,
+  updateLinearIssueStateWithComment: linearMocks.updateLinearIssueStateWithComment,
 }));
 
 vi.mock("../src/lib/slack-context.js", () => ({
@@ -83,6 +85,7 @@ describe("manager command commit", () => {
     linearMocks.searchLinearIssues.mockReset().mockResolvedValue([]);
     linearMocks.updateManagedLinearIssue.mockReset();
     linearMocks.updateLinearIssueState.mockReset();
+    linearMocks.updateLinearIssueStateWithComment.mockReset();
     slackContextMocks.getSlackThreadContext.mockReset().mockResolvedValue({
       channelId: "C0ALAMDRB9V",
       rootThreadTs: "thread-default",
@@ -195,5 +198,53 @@ describe("manager command commit", () => {
     expect(result.rejected).toHaveLength(1);
     expect(result.rejected[0]?.reason).toContain("担当者名");
     expect(linearMocks.getLinearIssue).not.toHaveBeenCalled();
+  });
+
+  it("commits completed status updates with a single update-and-comment call", async () => {
+    linearMocks.updateLinearIssueStateWithComment.mockResolvedValueOnce({
+      id: "issue-1",
+      identifier: "AIC-501",
+      title: "完了済み task",
+      state: { id: "state-done", name: "Done", type: "completed" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-501",
+          signal: "completed",
+          reasonSummary: "完了報告です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-completed",
+        messageTs: "msg-completed-1",
+        userId: "U1",
+        text: "AIC-501 は終わりました",
+      },
+      now: new Date("2026-03-23T01:00:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.updateLinearIssueStateWithComment).toHaveBeenCalledWith(
+      "AIC-501",
+      "completed",
+      expect.stringContaining("## Completion source"),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
   });
 });

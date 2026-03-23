@@ -101,6 +101,9 @@ describe("manager diagnostics", () => {
       userMessage: "今日やるべきタスクある？",
       replySummary: "今日まず見るなら AIC-970 です。",
       issueIds: ["AIC-970"],
+      shownIssueIds: ["AIC-970"],
+      remainingIssueIds: [],
+      totalItemCount: 1,
       recordedAt: "2026-03-19T04:05:00.000Z",
     });
 
@@ -116,6 +119,9 @@ describe("manager diagnostics", () => {
     expect(diagnostics.lastQueryContext).toMatchObject({
       kind: "what-should-i-do",
       issueIds: ["AIC-970"],
+      shownIssueIds: ["AIC-970"],
+      remainingIssueIds: [],
+      totalItemCount: 1,
     });
     expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
     expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(0);

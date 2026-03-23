@@ -26,6 +26,7 @@ const linearMocks = vi.hoisted(() => ({
   getLinearIssue: vi.fn(),
   markLinearIssueBlocked: vi.fn(),
   updateLinearIssueState: vi.fn(),
+  updateLinearIssueStateWithComment: vi.fn(),
   listRiskyLinearIssues: vi.fn(),
 }));
 
@@ -61,6 +62,7 @@ vi.mock("../src/lib/linear.js", () => ({
   getLinearIssue: linearMocks.getLinearIssue,
   markLinearIssueBlocked: linearMocks.markLinearIssueBlocked,
   updateLinearIssueState: linearMocks.updateLinearIssueState,
+  updateLinearIssueStateWithComment: linearMocks.updateLinearIssueStateWithComment,
   listRiskyLinearIssues: linearMocks.listRiskyLinearIssues,
 }));
 
@@ -458,6 +460,13 @@ describe("handleManagerMessage clarification flow", () => {
       id: "issue-1",
       identifier: "AIC-100",
       title: "done",
+    });
+    linearMocks.updateLinearIssueStateWithComment.mockReset().mockResolvedValue({
+      id: "issue-1",
+      identifier: "AIC-100",
+      title: "done",
+      relations: [],
+      inverseRelations: [],
     });
     linearMocks.listRiskyLinearIssues.mockReset().mockResolvedValue([]);
     slackContextMocks.getSlackThreadContext.mockReset().mockResolvedValue({
@@ -1623,9 +1632,10 @@ describe("handleManagerMessage clarification flow", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("完了として反映しました。");
-    expect(linearMocks.updateLinearIssueState).toHaveBeenCalledWith(
+    expect(linearMocks.updateLinearIssueStateWithComment).toHaveBeenCalledWith(
       "AIC-122",
       "completed",
+      expect.stringContaining("## Completion source"),
       expect.any(Object),
     );
   });
@@ -1670,7 +1680,7 @@ describe("handleManagerMessage clarification flow", () => {
       relations: [],
       inverseRelations: [],
     }));
-    linearMocks.updateLinearIssueState.mockResolvedValueOnce({
+    linearMocks.updateLinearIssueStateWithComment.mockResolvedValueOnce({
       id: "child-1",
       identifier: "AIC-221",
       title: "設計",
@@ -1708,7 +1718,12 @@ describe("handleManagerMessage clarification flow", () => {
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("完了として反映しました。");
     expect(result.reply).toContain("AIC-221");
-    expect(linearMocks.updateLinearIssueState).toHaveBeenCalledWith("AIC-221", "completed", expect.any(Object));
+    expect(linearMocks.updateLinearIssueStateWithComment).toHaveBeenCalledWith(
+      "AIC-221",
+      "completed",
+      expect.stringContaining("## Completion source"),
+      expect.any(Object),
+    );
   });
 
   it("uses recent thread context to resolve generic progress updates to the right child issue", async () => {
@@ -3116,6 +3131,18 @@ describe("handleManagerMessage clarification flow", () => {
               },
             },
           },
+          {
+            toolName: "report_query_snapshot",
+            details: {
+              querySnapshot: {
+                issueIds: ["AIC-38"],
+                shownIssueIds: ["AIC-38"],
+                remainingIssueIds: ["AIC-39"],
+                totalItemCount: 2,
+                replySummary: "今日まず見るなら AIC-38 の状況を確認するのがよさそうです。",
+              },
+            },
+          },
         ],
         proposals: [],
         invalidProposalCount: 0,
@@ -3127,11 +3154,24 @@ describe("handleManagerMessage clarification flow", () => {
           summary: "優先順位の確認です。",
         },
       })
-      .mockImplementationOnce(async (_config: unknown, _paths: unknown, input: { lastQueryContext?: { kind: string; scope: string; issueIds: string[]; userMessage: string } }) => {
+      .mockImplementationOnce(async (_config: unknown, _paths: unknown, input: {
+        lastQueryContext?: {
+          kind: string;
+          scope: string;
+          issueIds: string[];
+          shownIssueIds: string[];
+          remainingIssueIds: string[];
+          totalItemCount: number;
+          userMessage: string;
+        };
+      }) => {
         expect(input.lastQueryContext).toMatchObject({
           kind: "what-should-i-do",
           scope: "team",
           issueIds: ["AIC-38"],
+          shownIssueIds: ["AIC-38"],
+          remainingIssueIds: ["AIC-39"],
+          totalItemCount: 2,
           userMessage: "今日やるべきタスクある？",
         });
         return {

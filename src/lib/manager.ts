@@ -282,25 +282,84 @@ function inferQueryScopeFromText(
   return "team";
 }
 
+interface ThreadQueryContinuationSnapshotInput {
+  issueIds?: string[];
+  shownIssueIds?: string[];
+  remainingIssueIds?: string[];
+  totalItemCount?: number;
+  replySummary?: string;
+}
+
+function normalizeQuerySnapshotIssueIds(values: unknown): string[] {
+  return Array.isArray(values)
+    ? Array.from(new Set(values.filter((value): value is string => typeof value === "string")))
+    : [];
+}
+
+function extractQuerySnapshot(toolCalls: Array<{ toolName: string; details?: unknown }>): ThreadQueryContinuationSnapshotInput | undefined {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall?.toolName !== "report_query_snapshot") {
+      continue;
+    }
+    const details = toolCall.details as { querySnapshot?: Record<string, unknown> } | undefined;
+    const snapshot = details?.querySnapshot;
+    if (!snapshot) {
+      continue;
+    }
+    const issueIds = normalizeQuerySnapshotIssueIds(snapshot.issueIds);
+    const shownIssueIds = normalizeQuerySnapshotIssueIds(snapshot.shownIssueIds);
+    const remainingIssueIds = normalizeQuerySnapshotIssueIds(snapshot.remainingIssueIds);
+    const totalItemCount = typeof snapshot.totalItemCount === "number" && Number.isFinite(snapshot.totalItemCount) && snapshot.totalItemCount >= 0
+      ? Math.trunc(snapshot.totalItemCount)
+      : undefined;
+    const replySummary = typeof snapshot.replySummary === "string" && snapshot.replySummary.trim()
+      ? snapshot.replySummary.trim()
+      : undefined;
+    return {
+      issueIds,
+      shownIssueIds,
+      remainingIssueIds,
+      totalItemCount,
+      replySummary,
+    };
+  }
+  return undefined;
+}
+
 function buildThreadQueryContinuation(args: {
   queryKind?: ThreadQueryKind;
   queryScope?: ThreadQueryScope;
   messageText: string;
   reply: string;
   recordedAt: Date;
+  snapshot?: ThreadQueryContinuationSnapshotInput;
 }): ThreadQueryContinuation | undefined {
   if (!args.queryKind) {
     return undefined;
   }
 
   const userMessage = args.messageText.trim();
-  const replySummary = summarizeSlackReply(args.reply);
+  const currentIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.issueIds);
+  const shownIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.shownIssueIds);
+  const remainingIssueIds = normalizeQuerySnapshotIssueIds(args.snapshot?.remainingIssueIds);
+  const issueIds = currentIssueIds.length > 0 ? currentIssueIds : extractIssueIdsFromText(args.reply);
+  const normalizedShownIssueIds = shownIssueIds.length > 0 ? shownIssueIds : issueIds;
+  const totalItemCount = args.snapshot?.totalItemCount != null
+    ? Math.max(args.snapshot.totalItemCount, normalizedShownIssueIds.length + remainingIssueIds.length)
+    : Math.max(issueIds.length, normalizedShownIssueIds.length + remainingIssueIds.length);
+  const replySummary = args.snapshot?.replySummary?.trim()
+    ? args.snapshot.replySummary.trim()
+    : summarizeSlackReply(args.reply);
   return {
     kind: args.queryKind,
     scope: args.queryScope ?? inferQueryScopeFromText(userMessage, args.queryKind),
     userMessage,
     replySummary,
-    issueIds: extractIssueIdsFromText(args.reply),
+    issueIds,
+    shownIssueIds: normalizedShownIssueIds,
+    remainingIssueIds,
+    totalItemCount,
     recordedAt: args.recordedAt.toISOString(),
   };
 }
@@ -313,6 +372,7 @@ async function persistQueryContinuationForAction(args: {
   messageText: string;
   reply?: string;
   now: Date;
+  snapshot?: ThreadQueryContinuationSnapshotInput;
 }): Promise<void> {
   if (args.action === "query" && args.reply?.trim()) {
     const continuation = buildThreadQueryContinuation({
@@ -321,6 +381,7 @@ async function persistQueryContinuationForAction(args: {
       messageText: args.messageText,
       reply: args.reply,
       recordedAt: args.now,
+      snapshot: args.snapshot,
     });
     if (continuation) {
       await saveThreadQueryContinuation(args.paths, continuation);
@@ -838,6 +899,7 @@ export async function handleManagerMessage(
     const agentIntent = agentTurn.intentReport?.intent;
     if (agentIntent === "query") {
       const queryKind = agentTurn.intentReport?.queryKind ?? classifyManagerQuery(message.text) ?? undefined;
+      const querySnapshot = extractQuerySnapshot(agentTurn.toolCalls);
       await persistQueryContinuationForAction({
         paths,
         action: "query",
@@ -846,6 +908,7 @@ export async function handleManagerMessage(
         messageText: message.text,
         reply: agentTurn.reply,
         now,
+        snapshot: querySnapshot,
       });
     } else if (
       agentIntent === "create_work"
@@ -946,12 +1009,13 @@ async function handleManagerMessageLegacy(
     : message;
   let routerResult: MessageRouterResult | undefined;
   let routerDiagnostics: ManagerHandleResult["diagnostics"] = undefined;
+  const routerInput = await loadMessageRouterInput(config, repositories, message, now, pendingClarification);
 
   try {
     routerResult = await runMessageRouterTurn(
       config,
       paths,
-      await loadMessageRouterInput(config, repositories, message, now, pendingClarification),
+      routerInput,
     );
     routerDiagnostics = {
       router: {
@@ -1059,6 +1123,7 @@ async function handleManagerMessageLegacy(
       now,
       workspaceDir: config.workspaceDir,
       env,
+      lastQueryContext: routerInput.lastQueryContext,
     });
     if (result.handled && result.reply) {
       await persistQueryContinuationForAction({
@@ -1069,6 +1134,7 @@ async function handleManagerMessageLegacy(
         messageText: message.text,
         reply: result.reply,
         now,
+        snapshot: result.continuation,
       });
     }
     return {

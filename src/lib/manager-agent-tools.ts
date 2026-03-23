@@ -59,6 +59,28 @@ function createIntentReportTool(): ToolDefinition {
   };
 }
 
+function createQuerySnapshotTool(): ToolDefinition {
+  return {
+    name: "report_query_snapshot",
+    label: "Report Query Snapshot",
+    description: "Record which issue IDs were shown in a query reply and which relevant issue IDs remain for continuation.",
+    promptSnippet: "Use this once for list/prioritize/search/inspect/next-step query replies when issue IDs are available.",
+    parameters: Type.Object({
+      issueIds: Type.Optional(Type.Array(Type.String({ description: "Issue IDs explicitly shown in this reply." }))),
+      shownIssueIds: Type.Optional(Type.Array(Type.String({ description: "All issue IDs already shown in this query chain, including this reply." }))),
+      remainingIssueIds: Type.Optional(Type.Array(Type.String({ description: "Relevant issue IDs not yet shown but still candidates for a follow-up like 他には?" }))),
+      totalItemCount: Type.Optional(Type.Number({ description: "Total number of relevant issues in this query result set." })),
+      replySummary: Type.Optional(Type.String({ description: "One short sentence summarizing the reply." })),
+    }),
+    async execute(_toolCallId, params) {
+      return {
+        content: [{ type: "text", text: "Query snapshot recorded." }],
+        details: { querySnapshot: params as Record<string, unknown> },
+      };
+    },
+  };
+}
+
 function createProposalTool(args: {
   name: string;
   label: string;
@@ -432,6 +454,7 @@ export function createManagerAgentTools(
 ): ToolDefinition[] {
   return [
     createIntentReportTool(),
+    createQuerySnapshotTool(),
     ...createLinearReadTools(config, repositories),
     ...createSlackContextTools(config),
     ...createWorkgraphReadTools(repositories),

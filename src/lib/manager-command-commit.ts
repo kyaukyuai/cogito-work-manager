@@ -11,7 +11,7 @@ import {
   markLinearIssueBlocked,
   searchLinearIssues,
   updateManagedLinearIssue,
-  updateLinearIssueState,
+  updateLinearIssueStateWithComment,
   type LinearCommandEnv,
   type LinearIssue,
 } from "./linear.js";
@@ -729,12 +729,12 @@ async function commitUpdateIssueStatusProposal(
     );
     updatedIssues.push(await getLinearIssue(proposal.issueId, args.env));
   } else if (proposal.signal === "completed") {
-    updatedIssues.push(await updateLinearIssueState(proposal.issueId, proposal.state ?? "completed", args.env));
-    await addLinearComment(
+    updatedIssues.push(await updateLinearIssueStateWithComment(
       proposal.issueId,
+      proposal.state ?? "completed",
       proposal.commentBody ?? buildStatusSourceComment(message, "## Completion source"),
       args.env,
-    );
+    ));
   } else {
     const blocked = await markLinearIssueBlocked(
       proposal.issueId,

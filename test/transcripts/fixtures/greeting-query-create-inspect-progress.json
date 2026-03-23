@@ -52,7 +52,8 @@
       "beforeScenario": "list-active-followup",
       "expect": {
         "handled": true,
-        "replyIncludes": ["タスク一覧を確認しました。", "AIC-930", "AIC-931"]
+        "replyIncludes": ["AIC-931"],
+        "replyExcludes": ["AIC-930"]
       }
     },
     {

@@ -4,7 +4,7 @@ import {
   addLinearProgressComment,
   getLinearIssue,
   markLinearIssueBlocked,
-  updateLinearIssueState,
+  updateLinearIssueStateWithComment,
   type LinearCommandEnv,
   type LinearIssue,
 } from "../../lib/linear.js";
@@ -245,8 +245,12 @@ export async function handleManagerUpdates({
     }
   } else if (signal === "completed") {
     for (const issueId of targetIssueIds) {
-      updatedIssues.push(await updateLinearIssueState(issueId, "completed", env));
-      await addLinearComment(issueId, formatStatusSourceComment(message, "## Completion source"), env);
+      updatedIssues.push(await updateLinearIssueStateWithComment(
+        issueId,
+        "completed",
+        formatStatusSourceComment(message, "## Completion source"),
+        env,
+      ));
     }
   } else {
     for (const issueId of targetIssueIds) {

@@ -7,6 +7,7 @@ import {
 } from "../../lib/linear.js";
 import type { AppConfig } from "../../lib/config.js";
 import { runManagerReplyTurn } from "../../lib/pi-session.js";
+import type { ThreadQueryContinuation } from "../../lib/query-continuation.js";
 import { getSlackThreadContext } from "../../lib/slack-context.js";
 import { buildThreadPaths, ensureThreadWorkspace } from "../../lib/thread-workspace.js";
 import { buildWorkgraphThreadKey } from "../../state/workgraph/events.js";
@@ -36,9 +37,18 @@ export type ManagerQueryKind =
   | "search-existing"
   | "recommend-next-step";
 
+export interface QueryContinuationSnapshot {
+  issueIds: string[];
+  shownIssueIds: string[];
+  remainingIssueIds: string[];
+  totalItemCount: number;
+  replySummary?: string;
+}
+
 export interface QueryHandleResult {
   handled: boolean;
   reply?: string;
+  continuation?: QueryContinuationSnapshot;
 }
 
 export interface QueryMessage {
@@ -57,6 +67,7 @@ export interface HandleManagerQueryArgs {
   now: Date;
   workspaceDir: string;
   env: LinearCommandEnv;
+  lastQueryContext?: ThreadQueryContinuation;
 }
 
 const WHAT_SHOULD_I_DO_PATTERN =
@@ -73,6 +84,7 @@ const SEARCH_EXISTING_PATTERN =
   /(?:(?:既存|同じ|似た|重複).*(?:issue|イシュー|task|タスク|チケット).*(?:ある|あります|あったっけ|探して|検索|確認)|(?:issue|イシュー|task|タスク|チケット).*(?:既存|同じ|似た|重複).*(?:ある|あります|あったっけ|探して|検索|確認)|(?:既に|すでに).*(?:登録|起票).*(?:されてる|されている|ある|あります))/i;
 const TASK_BREAKDOWN_LINE_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const SELF_WORK_PATTERN = /(?:自分|自分の|私|私の|僕|僕の|わたし|わたしの)/i;
+const QUERY_CONTINUATION_PATTERN = /(?:他には|ほかには|残りは|残りの|次の候補|ほかの候補|他の候補|続きは)/i;
 
 const RISK_LABELS: Record<string, string> = {
   overdue: "期限超過",
@@ -262,6 +274,63 @@ function formatQueryIssueLine(item: RankedQueryItem): string {
     cycle ? `Cycle は ${cycle} です。` : undefined,
     reason ? `今見ておきたい理由は ${reason} です。` : "現時点では大きなリスクは強く出ていません。",
   ]) ?? buildSlackTargetLabel(item.issue);
+}
+
+function buildQueryContinuationSnapshot(
+  visibleItems: RankedQueryItem[],
+  options: {
+    shownIssueIds?: string[];
+    remainingIssueIds?: string[];
+    totalItemCount?: number;
+  } = {},
+): QueryContinuationSnapshot {
+  const issueIds = visibleItems.map((item) => item.issue.identifier);
+  const shownIssueIds = unique(options.shownIssueIds ?? issueIds);
+  const remainingIssueIds = unique(options.remainingIssueIds ?? []);
+  const totalItemCount = options.totalItemCount ?? Math.max(issueIds.length, shownIssueIds.length + remainingIssueIds.length);
+  return {
+    issueIds,
+    shownIssueIds,
+    remainingIssueIds,
+    totalItemCount,
+  };
+}
+
+function buildContinuationItemLine(item: RankedQueryItem): string {
+  const reason = formatRiskReasons(item.assessment.riskCategories);
+  return joinSlackSentences([
+    `${buildSlackTargetLabel(item.issue)}。`,
+    reason ? `気になっている点は ${reason} です。` : undefined,
+  ]) ?? buildSlackTargetLabel(item.issue);
+}
+
+function buildListContinuationReply(
+  visibleItems: RankedQueryItem[],
+  snapshot: QueryContinuationSnapshot,
+): string {
+  if (visibleItems.length === 0) {
+    if (snapshot.shownIssueIds.length === 0) {
+      return "ほかに動いている task は今のところありません。";
+    }
+    if (snapshot.shownIssueIds.length === 1) {
+      return `ほかに動いている task は今のところありません。見ておくべきものは ${snapshot.shownIssueIds[0]} だけです。`;
+    }
+    return `ほかに動いている task は今のところありません。いま見えているのは ${snapshot.shownIssueIds.join("、")} です。`;
+  }
+
+  if (visibleItems.length === 1) {
+    return composeSlackReply([
+      `ほかに見ておくなら ${buildSlackTargetLabel(visibleItems[0].issue)} があります。`,
+      buildContinuationItemLine(visibleItems[0]),
+      snapshot.remainingIssueIds.length > 0 ? `このあとにまだ ${snapshot.remainingIssueIds.length} 件あります。` : undefined,
+    ]);
+  }
+
+  return composeSlackReply([
+    `ほかに見ておく task は次の ${visibleItems.length} 件です。`,
+    formatSlackBullets(visibleItems.map((item) => buildContinuationItemLine(item))),
+    snapshot.remainingIssueIds.length > 0 ? `このあとにまだ ${snapshot.remainingIssueIds.length} 件あります。` : undefined,
+  ]);
 }
 
 function extractIssueIdentifiers(text: string): string[] {
@@ -689,6 +758,32 @@ function buildListActiveReply(items: RankedQueryItem[]): string {
   ]);
 }
 
+function selectVisibleItemsByIssueIds(
+  items: RankedQueryItem[],
+  orderedIssueIds: string[],
+  limit: number,
+): RankedQueryItem[] {
+  const issueMap = new Map(items.map((item) => [item.issue.identifier, item] as const));
+  return orderedIssueIds
+    .map((issueId) => issueMap.get(issueId))
+    .filter((item): item is RankedQueryItem => item !== undefined)
+    .slice(0, limit);
+}
+
+function isListContinuationRequest(
+  kind: ManagerQueryKind,
+  queryScope: "self" | "team" | "thread-context",
+  text: string,
+  lastQueryContext: ThreadQueryContinuation | undefined,
+): boolean {
+  if (kind !== "list-active" || queryScope !== "thread-context") return false;
+  if (!lastQueryContext) return false;
+  if (!QUERY_CONTINUATION_PATTERN.test(text)) return false;
+  return lastQueryContext.kind === "list-active"
+    || lastQueryContext.kind === "list-today"
+    || lastQueryContext.kind === "what-should-i-do";
+}
+
 function buildListTodayReply(
   items: RankedQueryItem[],
   policy: ManagerPolicy,
@@ -841,6 +936,7 @@ export async function handleManagerQuery({
   now,
   workspaceDir,
   env,
+  lastQueryContext,
 }: HandleManagerQueryArgs): Promise<QueryHandleResult> {
   const policy = await repositories.policy.load();
   const ownerMap = await repositories.ownerMap.load();
@@ -903,6 +999,12 @@ export async function handleManagerQuery({
         },
         fallbackReply,
       }),
+      continuation: {
+        issueIds: [issue.identifier],
+        shownIssueIds: [issue.identifier],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+      },
     };
   }
 
@@ -962,6 +1064,12 @@ export async function handleManagerQuery({
         },
         fallbackReply,
       }),
+      continuation: {
+        issueIds: [issue.identifier],
+        shownIssueIds: [issue.identifier],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+      },
     };
   }
 
@@ -1004,6 +1112,12 @@ export async function handleManagerQuery({
         },
         fallbackReply,
       }),
+      continuation: {
+        issueIds: issues.slice(0, 5).map((issue) => issue.identifier),
+        shownIssueIds: issues.slice(0, 5).map((issue) => issue.identifier),
+        remainingIssueIds: [],
+        totalItemCount: issues.length,
+      },
     };
   }
 
@@ -1025,23 +1139,60 @@ export async function handleManagerQuery({
       };
     }),
   );
+  const scopedItems = preferViewerOwned ? preferViewerOwnedItems(rankedItems, viewerAssignee) : rankedItems;
+  const todayCandidateItems = scopedItems.filter((item) => isTodayCandidate(item, policy));
+  const orderedItems = kind === "list-active"
+    ? rankedItems
+    : todayCandidateItems.length > 0
+      ? todayCandidateItems
+      : scopedItems;
+  const continuationUniverseItems = kind === "list-active" || queryScope === "self"
+    ? orderedItems
+    : rankedItems;
+  const selectionLimit = kind === "list-active" ? 6 : kind === "list-today" ? 5 : 3;
+  const continuationRequested = isListContinuationRequest(kind, queryScope, message.text, lastQueryContext);
+  const baseShownIssueIds = lastQueryContext?.shownIssueIds ?? lastQueryContext?.issueIds ?? [];
+  const availableIssueIds = new Set(orderedItems.map((item) => item.issue.identifier));
+  const continuationPoolIssueIds = continuationRequested
+    ? (lastQueryContext?.remainingIssueIds ?? []).filter((issueId) => availableIssueIds.has(issueId))
+    : [];
+  const visibleItems = continuationRequested
+    ? selectVisibleItemsByIssueIds(orderedItems, continuationPoolIssueIds, selectionLimit)
+    : orderedItems.slice(0, selectionLimit);
+  const visibleIssueIds = visibleItems.map((item) => item.issue.identifier);
+  const remainingIssueIds = continuationRequested
+    ? continuationPoolIssueIds.filter((issueId) => !visibleIssueIds.includes(issueId))
+    : continuationUniverseItems
+        .map((item) => item.issue.identifier)
+        .filter((issueId) => !visibleIssueIds.includes(issueId));
+  const shownIssueIds = continuationRequested
+    ? unique([...baseShownIssueIds, ...visibleIssueIds])
+    : visibleIssueIds;
+  const continuation = buildQueryContinuationSnapshot(visibleItems, {
+    shownIssueIds,
+    remainingIssueIds,
+    totalItemCount: continuationRequested
+      ? Math.max(lastQueryContext?.totalItemCount ?? 0, shownIssueIds.length + remainingIssueIds.length)
+      : continuationUniverseItems.length,
+  });
 
   const replyFacts = {
     queryScope,
     viewerAssignee: viewerAssignee ?? undefined,
     viewerDisplayLabel: viewerDisplayLabel ?? undefined,
     viewerMappingMissing,
-    itemCount: rankedItems.length,
-    selectedItems: (
-      kind === "list-active"
-        ? rankedItems.slice(0, 6)
-        : (preferViewerOwned ? preferViewerOwnedItems(rankedItems, viewerAssignee) : rankedItems)
-            .filter((item) => kind === "list-today" ? isTodayCandidate(item, policy) : true)
-            .slice(0, kind === "list-today" ? 5 : 3)
-    ).map(mapRankedItemFacts),
+    itemCount: orderedItems.length,
+    continuationRequested,
+    selectedItems: visibleItems.map(mapRankedItemFacts),
+    shownIssueIds: continuation.shownIssueIds,
+    remainingIssueIds: continuation.remainingIssueIds,
+    remainingItemCount: continuation.remainingIssueIds.length,
+    totalItemCount: continuation.totalItemCount,
   };
   const fallbackReply = kind === "list-active"
-    ? buildListActiveReply(rankedItems)
+    ? continuationRequested
+      ? buildListContinuationReply(visibleItems, continuation)
+      : buildListActiveReply(rankedItems)
     : kind === "list-today"
       ? buildListTodayReply(rankedItems, policy, { viewerAssignee, viewerDisplayLabel, preferViewerOwned, viewerMappingMissing })
       : buildWhatShouldIDoReply(rankedItems, policy, now, { viewerAssignee, viewerDisplayLabel, preferViewerOwned, viewerMappingMissing });
@@ -1057,5 +1208,6 @@ export async function handleManagerQuery({
       facts: replyFacts,
       fallbackReply,
     }),
+    continuation,
   };
 }

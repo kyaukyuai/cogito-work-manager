@@ -118,6 +118,7 @@ export interface ManagedUpdateIssueInput extends UpdateIssueInput {
   assignee?: string;
   priority?: number;
   parent?: string | null;
+  comment?: string;
 }
 
 export interface ManagedCreateIssueBatchInput {
@@ -673,6 +674,7 @@ function buildManagedUpdateIssueArgs(
   if (input.priority != null) args.push("--priority", String(input.priority));
   if (assignee?.trim()) args.push("--assignee", assignee.trim());
   if (input.parent?.trim()) args.push("--parent", input.parent.trim());
+  if (input.comment?.trim()) args.push("--comment", input.comment.trim());
   if (input.parent === null) {
     throw new Error("Clearing parent relationships is not supported by linear-cli v2.4.0");
   }
@@ -1117,6 +1119,16 @@ export async function updateLinearIssueState(
   signal?: AbortSignal,
 ): Promise<LinearIssue> {
   return updateManagedLinearIssue({ issueId, state }, env, signal);
+}
+
+export async function updateLinearIssueStateWithComment(
+  issueId: string,
+  state: string,
+  comment: string,
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<LinearIssue> {
+  return updateManagedLinearIssue({ issueId, state, comment }, env, signal);
 }
 
 export async function addLinearComment(

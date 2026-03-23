@@ -31,6 +31,9 @@ describe("thread query continuation", () => {
       userMessage: "今日やるべきタスクある？",
       replySummary: "今日まず見るなら AIC-38 です。",
       issueIds: ["AIC-38"],
+      shownIssueIds: ["AIC-38"],
+      remainingIssueIds: ["AIC-39"],
+      totalItemCount: 2,
       recordedAt: "2026-03-23T00:00:00.000Z",
     });
 
@@ -40,6 +43,9 @@ describe("thread query continuation", () => {
       userMessage: "今日やるべきタスクある？",
       replySummary: "今日まず見るなら AIC-38 です。",
       issueIds: ["AIC-38"],
+      shownIssueIds: ["AIC-38"],
+      remainingIssueIds: ["AIC-39"],
+      totalItemCount: 2,
       recordedAt: "2026-03-23T00:00:00.000Z",
     });
 

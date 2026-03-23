@@ -18,6 +18,9 @@ export interface ThreadQueryContinuation {
   userMessage: string;
   replySummary: string;
   issueIds: string[];
+  shownIssueIds: string[];
+  remainingIssueIds: string[];
+  totalItemCount: number;
   recordedAt: string;
 }
 
@@ -46,6 +49,12 @@ export function extractIssueIdsFromText(text: string): string[] {
   );
 }
 
+function normalizeIssueIdList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
 export function summarizeSlackReply(text: string, maxLength = 220): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
@@ -66,9 +75,12 @@ export async function loadThreadQueryContinuation(
     if (typeof parsed.userMessage !== "string" || typeof parsed.replySummary !== "string" || typeof parsed.recordedAt !== "string") {
       return undefined;
     }
-    const issueIds = Array.isArray(parsed.issueIds)
-      ? parsed.issueIds.filter((value): value is string => typeof value === "string")
-      : [];
+    const issueIds = normalizeIssueIdList(parsed.issueIds);
+    const shownIssueIds = normalizeIssueIdList(parsed.shownIssueIds);
+    const remainingIssueIds = normalizeIssueIdList(parsed.remainingIssueIds);
+    const totalItemCount = typeof parsed.totalItemCount === "number" && Number.isFinite(parsed.totalItemCount) && parsed.totalItemCount >= 0
+      ? Math.trunc(parsed.totalItemCount)
+      : Math.max(issueIds.length, shownIssueIds.length + remainingIssueIds.length);
 
     return {
       kind: parsed.kind,
@@ -76,6 +88,9 @@ export async function loadThreadQueryContinuation(
       userMessage: parsed.userMessage,
       replySummary: parsed.replySummary,
       issueIds,
+      shownIssueIds: shownIssueIds.length > 0 ? shownIssueIds : issueIds,
+      remainingIssueIds,
+      totalItemCount,
       recordedAt: parsed.recordedAt,
     };
   } catch (error) {
