@@ -281,6 +281,7 @@ async function main(): Promise<void> {
   };
 
   logger.info("Slack bot starting", {
+    assistantName: managerPolicy.assistantName,
     channels: Array.from(config.slackAllowedChannelIds),
     model: config.botModel,
     linearWorkspace: config.linearWorkspace,

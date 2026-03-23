@@ -43,6 +43,7 @@ describe("system workspace helpers", () => {
     const jobs = JSON.parse(await readFile(paths.jobsFile, "utf8")) as Array<{ id: string }>;
 
     expect(policy.controlRoomChannelId).toBe("C0ALAMDRB9V");
+    expect(policy.assistantName).toBe("コギト");
     expect(ownerMap.defaultOwner).toBe("kyaukyuai");
     expect(jobs.map((job) => job.id)).toEqual(
       expect.arrayContaining([

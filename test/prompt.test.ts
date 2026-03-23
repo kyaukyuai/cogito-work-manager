@@ -49,8 +49,10 @@ const threadPaths: ThreadPaths = {
 
 describe("prompt helpers", () => {
   it("states Slack-first execution rules in the system prompt", () => {
-    const prompt = buildSystemPrompt(config);
+    const prompt = buildSystemPrompt(config, "コギト");
 
+    expect(prompt).toContain("Your working name in this workspace is コギト.");
+    expect(prompt).toContain("If the user asks your name or how to call you, answer コギト.");
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
     expect(prompt).toContain("Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.");

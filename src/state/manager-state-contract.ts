@@ -5,6 +5,7 @@ const weekdaySchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
 export const managerPolicySchema = z.object({
   controlRoomChannelId: z.string().min(1),
+  assistantName: z.string().min(1).default("コギト"),
   businessHours: z.object({
     timezone: z.literal("Asia/Tokyo").default("Asia/Tokyo"),
     weekdays: z.array(z.number().int().min(1).max(7)).default([1, 2, 3, 4, 5]),
@@ -95,6 +96,7 @@ export type PlanningLedgerEntry = z.infer<typeof planningLedgerEntrySchema>;
 
 export const DEFAULT_POLICY: ManagerPolicy = {
   controlRoomChannelId: "C0ALAMDRB9V",
+  assistantName: "コギト",
   businessHours: {
     timezone: "Asia/Tokyo",
     weekdays: [1, 2, 3, 4, 5],

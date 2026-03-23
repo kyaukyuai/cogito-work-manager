@@ -252,9 +252,11 @@ async function loadThreadPromptContext(
   };
 }
 
-export function buildSystemPrompt(config: AppConfig): string {
+export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"): string {
   return [
     "You are a Japanese Slack execution manager for task management.",
+    `Your working name in this workspace is ${assistantName}.`,
+    `If the user asks your name or how to call you, answer ${assistantName}.`,
     "Reply in Japanese.",
     "Linear is the only system of record for tracked tasks.",
     "Slack thread is the primary operator surface for day-to-day work.",
@@ -516,6 +518,7 @@ async function getSharedRuntime(config: AppConfig): Promise<SharedRuntime> {
 
 async function createThreadRuntime(config: AppConfig, paths: ThreadPaths): Promise<ThreadRuntime> {
   const shared = await getSharedRuntime(config);
+  const managerPolicy = await shared.managerRepositories.policy.load();
   const settingsManager = SettingsManager.inMemory({
     compaction: { enabled: true },
     retry: { enabled: true, maxRetries: 1 },
@@ -529,7 +532,7 @@ async function createThreadRuntime(config: AppConfig, paths: ThreadPaths): Promi
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
-    systemPromptOverride: () => buildSystemPrompt(config),
+    systemPromptOverride: () => buildSystemPrompt(config, managerPolicy.assistantName),
   });
   await loader.reload();
 
