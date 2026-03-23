@@ -298,6 +298,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For larger requests, propose a parent issue and execution-sized child issues.",
     "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
     "If Notion tools are available, use them as read-only reference material for specs, notes, and operating context. Do not treat Notion as the task system of record.",
+    "For reference-material replies that mention multiple Notion pages or documents, use short bullet lines and include markdown links when URLs are available.",
+    "When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.",
     "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
     "Use raw facts tools for priority and review judgments. Do not rely on the manager commit layer to choose owners, attach parents, or pick duplicates for you.",
     "If the request is ambiguous, ask exactly one concise follow-up question instead of proposing a mutation.",

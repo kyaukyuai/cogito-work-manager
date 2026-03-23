@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildGetNotionPageArgs, buildNotionShellCommand, buildSearchNotionArgs } from "../src/lib/notion.js";
+import {
+  buildGetNotionPageArgs,
+  buildListNotionBlockChildrenArgs,
+  buildNotionShellCommand,
+  buildSearchNotionArgs,
+} from "../src/lib/notion.js";
 
 describe("notion command builders", () => {
   it("builds search args for page-only Notion queries", () => {
@@ -25,6 +30,17 @@ describe("notion command builders", () => {
     expect(buildGetNotionPageArgs("abcd-1234")).toEqual(["api", "/v1/pages/abcd-1234"]);
   });
 
+  it("builds block children args for page content reads", () => {
+    expect(buildListNotionBlockChildrenArgs("abcd-1234")).toEqual([
+      "api",
+      "/v1/blocks/abcd-1234/children?page_size=100",
+    ]);
+    expect(buildListNotionBlockChildrenArgs("abcd-1234", "cursor-1")).toEqual([
+      "api",
+      "/v1/blocks/abcd-1234/children?page_size=100&start_cursor=cursor-1",
+    ]);
+  });
+
   it("builds a shell-safe ntn command", () => {
     const command = buildNotionShellCommand(buildSearchNotionArgs({
       query: "AIC 仕様",
@@ -38,5 +54,6 @@ describe("notion command builders", () => {
   it("rejects empty search query or page id", () => {
     expect(() => buildSearchNotionArgs({ query: "   " })).toThrow("Search query is required");
     expect(() => buildGetNotionPageArgs("   ")).toThrow("Notion page ID is required");
+    expect(() => buildListNotionBlockChildrenArgs("   ")).toThrow("Notion page ID is required");
   });
 });

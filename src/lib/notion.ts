@@ -32,6 +32,17 @@ export interface NotionPageFacts extends NotionPageSummary {
   raw: Record<string, unknown>;
 }
 
+export interface NotionPageContentLine {
+  type: string;
+  text: string;
+  depth: number;
+}
+
+export interface NotionPageContent extends NotionPageSummary {
+  lines: NotionPageContentLine[];
+  excerpt: string;
+}
+
 function ensureNotionAuthConfigured(env: NotionCommandEnv = process.env): void {
   if (!env.NOTION_API_TOKEN?.trim()) {
     throw new Error("NOTION_API_TOKEN is required for Notion API access");
@@ -129,6 +140,59 @@ function normalizePageSummary(raw: Record<string, unknown>): NotionPageSummary {
   };
 }
 
+function getBlockData(raw: Record<string, unknown>): Record<string, unknown> | undefined {
+  const type = typeof raw.type === "string" ? raw.type : undefined;
+  if (!type) return undefined;
+  const value = raw[type];
+  return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
+}
+
+function formatBlockPlainText(raw: Record<string, unknown>): string | undefined {
+  const type = typeof raw.type === "string" ? raw.type : undefined;
+  if (!type) return undefined;
+  const block = getBlockData(raw);
+  if (!block) return undefined;
+
+  if (type === "child_page" && typeof block.title === "string" && block.title.trim()) {
+    return block.title.trim();
+  }
+
+  if (type === "to_do") {
+    const text = firstRichTextPlainText(block.rich_text);
+    if (!text) return undefined;
+    return `${block.checked ? "[x]" : "[ ]"} ${text}`;
+  }
+
+  if (type === "bookmark") {
+    const caption = firstRichTextPlainText(block.caption);
+    const url = typeof block.url === "string" ? block.url : undefined;
+    return caption || url;
+  }
+
+  if (type === "link_preview") {
+    return typeof block.url === "string" ? block.url : undefined;
+  }
+
+  const richText = firstRichTextPlainText(block.rich_text);
+  if (richText) return richText;
+
+  if (Array.isArray(block.title)) {
+    return firstRichTextPlainText(block.title);
+  }
+
+  return undefined;
+}
+
+function buildExcerpt(lines: NotionPageContentLine[], maxLines = 4, maxLength = 280): string {
+  const joined = lines
+    .map((line) => line.text.trim())
+    .filter(Boolean)
+    .slice(0, maxLines)
+    .join(" / ");
+  if (joined.length <= maxLength) return joined;
+  return `${joined.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 export function buildSearchNotionArgs(input: SearchNotionInput): string[] {
   const query = input.query.trim();
   if (!query) throw new Error("Search query is required");
@@ -149,6 +213,16 @@ export function buildGetNotionPageArgs(pageId: string): string[] {
   const trimmed = pageId.trim();
   if (!trimmed) throw new Error("Notion page ID is required");
   return ["api", `/v1/pages/${trimmed}`];
+}
+
+export function buildListNotionBlockChildrenArgs(pageId: string, startCursor?: string): string[] {
+  const trimmed = pageId.trim();
+  if (!trimmed) throw new Error("Notion page ID is required");
+  const search = new URLSearchParams({ page_size: "100" });
+  if (startCursor?.trim()) {
+    search.set("start_cursor", startCursor.trim());
+  }
+  return ["api", `/v1/blocks/${trimmed}/children?${search.toString()}`];
 }
 
 export async function searchNotionPages(
@@ -187,5 +261,90 @@ export async function getNotionPageFacts(
     isLocked: Boolean(payload.is_locked),
     properties: (payload.properties as Record<string, unknown> | undefined) ?? undefined,
     raw: payload,
+  };
+}
+
+async function listNotionBlockChildren(
+  blockId: string,
+  env: NotionCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<Array<Record<string, unknown>>> {
+  const results: Array<Record<string, unknown>> = [];
+  let cursor: string | undefined;
+
+  while (true) {
+    const payload = await execNotionJson<{
+      results?: Array<Record<string, unknown>>;
+      has_more?: boolean;
+      next_cursor?: string | null;
+    }>(
+      buildListNotionBlockChildrenArgs(blockId, cursor),
+      env,
+      signal,
+    );
+    results.push(...(payload.results ?? []));
+    if (!payload.has_more || !payload.next_cursor) {
+      break;
+    }
+    cursor = payload.next_cursor;
+  }
+
+  return results;
+}
+
+async function collectNotionPageContentLines(
+  blockId: string,
+  env: NotionCommandEnv,
+  signal: AbortSignal | undefined,
+  depth = 0,
+  options?: { maxDepth?: number; maxLines?: number },
+): Promise<NotionPageContentLine[]> {
+  const maxDepth = options?.maxDepth ?? 2;
+  const maxLines = options?.maxLines ?? 80;
+  if (depth > maxDepth || maxLines <= 0) return [];
+
+  const blocks = await listNotionBlockChildren(blockId, env, signal);
+  const lines: NotionPageContentLine[] = [];
+
+  for (const block of blocks) {
+    const type = typeof block.type === "string" ? block.type : "unknown";
+    const text = formatBlockPlainText(block);
+    if (text) {
+      lines.push({ type, text, depth });
+      if (lines.length >= maxLines) break;
+    }
+    if (block.has_children && depth < maxDepth && lines.length < maxLines) {
+      const childLines = await collectNotionPageContentLines(
+        String(block.id ?? ""),
+        env,
+        signal,
+        depth + 1,
+        { maxDepth, maxLines: maxLines - lines.length },
+      );
+      lines.push(...childLines);
+      if (lines.length >= maxLines) break;
+    }
+  }
+
+  return lines;
+}
+
+export async function getNotionPageContent(
+  pageId: string,
+  env: NotionCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<NotionPageContent> {
+  const facts = await getNotionPageFacts(pageId, env, signal);
+  const lines = await collectNotionPageContentLines(pageId, env, signal);
+  return {
+    id: facts.id,
+    object: facts.object,
+    url: facts.url,
+    title: facts.title,
+    lastEditedTime: facts.lastEditedTime,
+    parent: facts.parent,
+    icon: facts.icon,
+    lines,
+    excerpt: buildExcerpt(lines),
   };
 }

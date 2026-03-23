@@ -11,6 +11,7 @@ import {
   type LinearCommandEnv,
 } from "./linear.js";
 import {
+  getNotionPageContent,
   getNotionPageFacts,
   searchNotionPages,
   type NotionCommandEnv,
@@ -47,6 +48,78 @@ function formatJsonDetails(value: unknown): string {
 
 function formatIssue(issue: { identifier: string; title: string; url?: string | null }): string {
   return issue.url ? `${issue.identifier} ${issue.title}\n${issue.url}` : `${issue.identifier} ${issue.title}`;
+}
+
+function formatDateLabel(value: string | null | undefined): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatNotionPageLabel(page: {
+  title?: string;
+  url?: string | null;
+  lastEditedTime?: string | null;
+}): string {
+  const title = page.title?.trim() || "Untitled";
+  const linkedTitle = page.url ? `[${title}](${page.url})` : title;
+  const edited = formatDateLabel(page.lastEditedTime);
+  return edited ? `${linkedTitle}（最終更新: ${edited}）` : linkedTitle;
+}
+
+function formatNotionSearchResultText(
+  pages: Array<{
+    title?: string;
+    url?: string | null;
+    lastEditedTime?: string | null;
+  }>,
+): string {
+  if (pages.length === 0) {
+    return "No matching Notion pages found.";
+  }
+  return [
+    "Notion pages:",
+    ...pages.map((page) => `- ${formatNotionPageLabel(page)}`),
+  ].join("\n");
+}
+
+function formatNotionPageFactsText(page: {
+  title?: string;
+  url?: string | null;
+  lastEditedTime?: string | null;
+  createdTime?: string | null;
+  archived?: boolean;
+  inTrash?: boolean;
+}): string {
+  return [
+    `Title: ${formatNotionPageLabel(page)}`,
+    page.createdTime ? `Created: ${formatDateLabel(page.createdTime)}` : undefined,
+    page.archived ? "Archived: yes" : undefined,
+    page.inTrash ? "In trash: yes" : undefined,
+  ].filter(Boolean).join("\n");
+}
+
+function formatNotionPageContentText(page: {
+  title?: string;
+  url?: string | null;
+  excerpt?: string;
+  lines?: Array<{ text?: string }>;
+}): string {
+  const bodyLines = (page.lines ?? [])
+    .map((line) => line.text?.trim())
+    .filter((line): line is string => Boolean(line))
+    .slice(0, 5);
+  return [
+    `Title: ${formatNotionPageLabel(page)}`,
+    page.excerpt ? `Excerpt: ${page.excerpt}` : undefined,
+    ...(bodyLines.length > 0 ? ["Page lines:", ...bodyLines.map((line) => `- ${line}`)] : []),
+  ].filter(Boolean).join("\n");
 }
 
 function businessDaysSince(leftIso: string | null | undefined, right = new Date()): number | undefined {
@@ -314,7 +387,7 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
       async execute(_toolCallId, params, signal) {
         const pages = await searchNotionPages(params as { query: string; pageSize?: number }, env, signal);
         return {
-          content: [{ type: "text", text: pages.length > 0 ? formatJsonDetails(pages) : "No matching Notion pages found." }],
+          content: [{ type: "text", text: formatNotionSearchResultText(pages) }],
           details: pages,
         };
       },
@@ -330,7 +403,23 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
       async execute(_toolCallId, params, signal) {
         const page = await getNotionPageFacts((params as { pageId: string }).pageId, env, signal);
         return {
-          content: [{ type: "text", text: formatJsonDetails(page) }],
+          content: [{ type: "text", text: formatNotionPageFactsText(page) }],
+          details: page,
+        };
+      },
+    },
+    {
+      name: "notion_get_page_content",
+      label: "Notion Get Page Content",
+      description: "Load one Notion page and extract read-only content lines and a short excerpt.",
+      promptSnippet: "Use this when metadata is not enough and you need the actual Notion page contents.",
+      parameters: Type.Object({
+        pageId: Type.String({ description: "Notion page ID." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const page = await getNotionPageContent((params as { pageId: string }).pageId, env, signal);
+        return {
+          content: [{ type: "text", text: formatNotionPageContentText(page) }],
           details: page,
         };
       },
