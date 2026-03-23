@@ -3638,6 +3638,8 @@ describe("handleManagerMessage clarification flow", () => {
       expect.any(Object),
     );
     expect(result.reply).toContain("AIC-40 を AIC-39 の子 task として反映しました。");
+    expect(result.reply).not.toContain("AIC-40 を AIC-39 の子 task として反映します。");
+    expect(result.reply).not.toContain("設定しました");
 
     const thread = await loadThreadProjection("C0ALAMDRB9V:thread-parent-update");
     expect(thread).toMatchObject({

@@ -269,6 +269,31 @@ function buildCommitRejectionReply(rejections: string[]): string | undefined {
   ]);
 }
 
+function isShortMutationAcknowledgement(text: string): boolean {
+  const normalized = text.trim();
+  if (!normalized) return false;
+  return normalized.length <= 80
+    && /(反映|設定|更新|追加|作成|記録|紐づけ|子\s*task|子タスク|親タスク|期限)/i.test(normalized);
+}
+
+function shouldSuppressAgentReply(
+  agentReply: string,
+  commitSummaries: string[],
+): boolean {
+  const normalizedReply = agentReply.trim();
+  if (!normalizedReply || commitSummaries.length === 0) return false;
+  if (!isShortMutationAcknowledgement(normalizedReply)) return false;
+
+  const commitText = commitSummaries.join(" ");
+  const agentIssueIds = extractIssueIdsFromText(normalizedReply);
+  const commitIssueIds = extractIssueIdsFromText(commitText);
+  const issueIdsCovered = agentIssueIds.length === 0
+    || agentIssueIds.every((issueId) => commitIssueIds.includes(issueId));
+  if (!issueIdsCovered) return false;
+
+  return /(反映|設定|更新|追加|作成|記録|紐づけ|子\s*task|子タスク|親タスク|期限)/i.test(commitText);
+}
+
 function inferQueryScopeFromText(
   text: string,
   queryKind: ThreadQueryKind,
@@ -400,7 +425,7 @@ function mergeAgentReplyWithCommit(args: {
   commitRejections: string[];
 }): string {
   const paragraphs: string[] = [];
-  if (args.agentReply.trim()) {
+  if (args.agentReply.trim() && !shouldSuppressAgentReply(args.agentReply, args.commitSummaries)) {
     paragraphs.push(args.agentReply.trim());
   }
   if (args.commitSummaries.length > 0) {
