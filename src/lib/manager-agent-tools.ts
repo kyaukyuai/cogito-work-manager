@@ -4,10 +4,10 @@ import type { AppConfig } from "./config.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import {
   getLinearIssue,
-  listActiveLinearIssues,
   listLinearTeamMembers,
   listRiskyLinearIssues,
   searchLinearIssues,
+  type LinearIssue,
   type LinearCommandEnv,
 } from "./linear.js";
 import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
@@ -34,6 +34,71 @@ function formatJsonDetails(value: unknown): string {
 
 function formatIssue(issue: { identifier: string; title: string; url?: string | null }): string {
   return issue.url ? `${issue.identifier} ${issue.title}\n${issue.url}` : `${issue.identifier} ${issue.title}`;
+}
+
+function businessDaysSince(leftIso: string | null | undefined, right = new Date()): number | undefined {
+  if (!leftIso) return undefined;
+  const start = new Date(leftIso);
+  if (Number.isNaN(start.getTime())) return undefined;
+  const current = new Date(start);
+  current.setHours(0, 0, 0, 0);
+  const end = new Date(right);
+  end.setHours(0, 0, 0, 0);
+  if (current >= end) return 0;
+
+  let days = 0;
+  while (current < end) {
+    current.setDate(current.getDate() + 1);
+    const day = current.getDay();
+    if (day !== 0 && day !== 6) {
+      days += 1;
+    }
+  }
+  return days;
+}
+
+function overdueDays(dueDate: string | null | undefined, right = new Date()): number | undefined {
+  if (!dueDate) return undefined;
+  const due = new Date(`${dueDate}T00:00:00Z`);
+  if (Number.isNaN(due.getTime())) return undefined;
+  const today = new Date(Date.UTC(right.getUTCFullYear(), right.getUTCMonth(), right.getUTCDate()));
+  const diffMs = today.getTime() - due.getTime();
+  if (diffMs <= 0) return 0;
+  return Math.floor(diffMs / (24 * 60 * 60 * 1000));
+}
+
+function buildIssueFacts(issue: LinearIssue): Record<string, unknown> {
+  const blockedState = issue.state?.name?.toLowerCase() === "blocked";
+  const blockedByDependency = (issue.inverseRelations ?? []).some((relation) => relation.type === "blocked-by");
+  const recentBlockedUpdate = issue.latestActionKind === "blocked";
+  return {
+    identifier: issue.identifier,
+    title: issue.title,
+    url: issue.url ?? undefined,
+    description: issue.description ?? undefined,
+    state: issue.state ?? undefined,
+    dueDate: issue.dueDate ?? undefined,
+    priority: issue.priority ?? undefined,
+    priorityLabel: issue.priorityLabel ?? undefined,
+    cycle: issue.cycle ?? undefined,
+    updatedAt: issue.updatedAt ?? undefined,
+    assignee: issue.assignee ?? undefined,
+    parent: issue.parent ?? undefined,
+    children: issue.children ?? [],
+    relations: issue.relations ?? [],
+    inverseRelations: issue.inverseRelations ?? [],
+    latestActionKind: issue.latestActionKind ?? undefined,
+    latestActionAt: issue.latestActionAt ?? undefined,
+    overdueDays: overdueDays(issue.dueDate),
+    staleBusinessDays: businessDaysSince(issue.updatedAt),
+    ownerMissing: !issue.assignee,
+    dueMissing: !issue.dueDate,
+    blockedSignals: {
+      blockedState,
+      blockedByDependency,
+      recentBlockedUpdate,
+    },
+  };
 }
 
 function createIntentReportTool(): ToolDefinition {
@@ -116,27 +181,37 @@ function createLinearReadTools(
 
   return [
     {
-      name: "linear_list_active_issues",
-      label: "Linear List Active Issues",
-      description: "List active Linear issues in the configured workspace and team.",
-      promptSnippet: "Use this for task lists and broad active-work queries.",
+      name: "linear_list_active_issue_facts",
+      label: "Linear List Active Issue Facts",
+      description: "List active Linear issues as raw facts for query, prioritization, and next-step reasoning.",
+      promptSnippet: "Use this for task lists and broad active-work queries. Decide prioritization yourself from the returned facts.",
       parameters: Type.Object({
         limit: Type.Optional(Type.Number({ description: "Maximum number of issues to fetch." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const result = await listActiveLinearIssues((params as { limit?: number }).limit ?? 20, env, signal);
+        const issues = await listRiskyLinearIssues(
+          {
+            staleBusinessDays: (await repositories.policy.load()).staleBusinessDays,
+            urgentPriorityThreshold: (await repositories.policy.load()).urgentPriorityThreshold,
+          },
+          env,
+          signal,
+        );
+        const limited = issues.slice(0, (params as { limit?: number }).limit ?? 20).map((issue) => buildIssueFacts(issue));
         return {
-          content: [{ type: "text", text: result.output || "(no active issues found)" }],
-          details: result,
+          content: [{ type: "text", text: limited.length > 0 ? formatJsonDetails(limited) : "No active issue facts found." }],
+          details: limited,
         };
       },
     },
     {
-      name: "linear_list_risky_issues",
-      label: "Linear List Risky Issues",
-      description: "List issues that are overdue, blocked, stale, or otherwise risky under current policy.",
-      promptSnippet: "Use this for prioritization, heartbeat, review, and next-step suggestions.",
-      parameters: Type.Object({}),
+      name: "linear_list_review_facts",
+      label: "Linear List Review Facts",
+      description: "List active Linear issues with raw review-oriented facts such as overdueDays, staleBusinessDays, blockedSignals, ownerMissing, and dueMissing.",
+      promptSnippet: "Use this for review, heartbeat, and next-step suggestions. Select the important issues yourself from the facts.",
+      parameters: Type.Object({
+        limit: Type.Optional(Type.Number({ description: "Maximum number of issues to fetch." })),
+      }),
       async execute(_toolCallId, _params, signal) {
         const policy = await repositories.policy.load();
         const issues = await listRiskyLinearIssues(
@@ -148,24 +223,24 @@ function createLinearReadTools(
           signal,
         );
         return {
-          content: [{ type: "text", text: issues.length > 0 ? formatJsonDetails(issues) : "No risky issues found." }],
-          details: issues,
+          content: [{ type: "text", text: issues.length > 0 ? formatJsonDetails(issues.slice(0, (_params as { limit?: number } | undefined)?.limit ?? 50).map((issue) => buildIssueFacts(issue))) : "No review facts found." }],
+          details: issues.slice(0, (_params as { limit?: number } | undefined)?.limit ?? 50).map((issue) => buildIssueFacts(issue)),
         };
       },
     },
     {
-      name: "linear_get_issue",
-      label: "Linear Get Issue",
-      description: "Load one Linear issue including parent, children, relations, and comments.",
-      promptSnippet: "Use this for inspect-work and next-step reasoning.",
+      name: "linear_get_issue_facts",
+      label: "Linear Get Issue Facts",
+      description: "Load one Linear issue and return raw facts including hierarchy, relations, comments, and review signals.",
+      promptSnippet: "Use this for inspect-work and next-step reasoning. Decide the next step yourself from the returned facts.",
       parameters: Type.Object({
         issueId: Type.String({ description: "Issue identifier like AIC-123." }),
       }),
       async execute(_toolCallId, params, signal) {
         const issue = await getLinearIssue((params as { issueId: string }).issueId, env, signal, { includeComments: true });
         return {
-          content: [{ type: "text", text: formatIssue(issue) }],
-          details: issue,
+          content: [{ type: "text", text: formatJsonDetails(buildIssueFacts(issue)) }],
+          details: buildIssueFacts(issue),
         };
       },
     },
@@ -300,9 +375,16 @@ function createProposalTools(): ToolDefinition[] {
           description: Type.String({ description: "Markdown description." }),
           state: Type.Optional(Type.String({ description: "Optional initial state." })),
           dueDate: Type.Optional(Type.String({ description: "Due date in YYYY-MM-DD." })),
-          assignee: Type.Optional(Type.String({ description: "Assignee hint." })),
+          assigneeMode: Type.String({ description: "assign | leave-unassigned. Decide explicitly whether to assign an owner." }),
+          assignee: Type.Optional(Type.String({ description: "Assignee identifier. Required when assigneeMode=assign." })),
           parent: Type.Optional(Type.String({ description: "Optional parent issue identifier." })),
           priority: Type.Optional(Type.Number({ description: "Priority 1-4." })),
+        }),
+        threadParentHandling: Type.String({
+          description: "ignore | attach. Decide explicitly whether this issue should become a child of the existing thread parent issue.",
+        }),
+        duplicateHandling: Type.String({
+          description: "clarify | reuse-existing | reuse-and-attach-parent | create-new. Decide explicitly how to handle existing duplicate issues.",
         }),
         reasonSummary: Type.String({ description: "Short reason for this proposal." }),
         evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
@@ -322,7 +404,8 @@ function createProposalTools(): ToolDefinition[] {
           description: Type.String({ description: "Parent issue description." }),
           state: Type.Optional(Type.String({ description: "Optional initial state." })),
           dueDate: Type.Optional(Type.String({ description: "Due date in YYYY-MM-DD." })),
-          assignee: Type.Optional(Type.String({ description: "Assignee hint." })),
+          assigneeMode: Type.String({ description: "assign | leave-unassigned. Decide explicitly whether to assign the parent issue." }),
+          assignee: Type.Optional(Type.String({ description: "Assignee identifier. Required when assigneeMode=assign." })),
           parent: Type.Optional(Type.String({ description: "Optional grandparent issue identifier." })),
           priority: Type.Optional(Type.Number({ description: "Priority 1-4." })),
         }),
@@ -331,7 +414,8 @@ function createProposalTools(): ToolDefinition[] {
           description: Type.String({ description: "Child issue description." }),
           state: Type.Optional(Type.String({ description: "Optional initial state." })),
           dueDate: Type.Optional(Type.String({ description: "Due date in YYYY-MM-DD." })),
-          assignee: Type.Optional(Type.String({ description: "Assignee hint." })),
+          assigneeMode: Type.String({ description: "assign | leave-unassigned. Decide explicitly whether to assign this child issue." }),
+          assignee: Type.Optional(Type.String({ description: "Assignee identifier. Required when assigneeMode=assign." })),
           parent: Type.Optional(Type.String({ description: "Optional parent issue identifier override." })),
           priority: Type.Optional(Type.Number({ description: "Priority 1-4." })),
           kind: Type.Optional(Type.String({ description: "execution or research." })),

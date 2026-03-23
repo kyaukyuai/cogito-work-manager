@@ -27,6 +27,7 @@ import {
 } from "../../state/workgraph/events.js";
 import {
   findExistingThreadIntakeByFingerprint,
+  getThreadPlanningContext,
   type PendingClarificationContext,
 } from "../../state/workgraph/queries.js";
 import {
@@ -85,6 +86,40 @@ export interface HandleIntakeRequestArgs {
   requestMessage: IntakeMessage;
   env: LinearCommandEnv;
   helpers: IntakeHelpers;
+}
+
+type SlackIssueReference = Pick<LinearIssue, "identifier" | "title"> & { url?: string | null };
+
+function toSlackIssueReference(
+  issue: Pick<LinearIssue, "identifier" | "title" | "url"> | { issueId: string; title?: string },
+): SlackIssueReference {
+  return {
+    identifier: "identifier" in issue ? issue.identifier : issue.issueId,
+    title: issue.title ?? ("identifier" in issue ? issue.identifier : issue.issueId),
+    url: "url" in issue ? issue.url : undefined,
+  };
+}
+
+function pickReusableDuplicate(
+  duplicates: LinearIssue[],
+  preferredParentIssueId?: string,
+): LinearIssue | undefined {
+  const candidates = preferredParentIssueId
+    ? duplicates.filter((issue) => issue.identifier !== preferredParentIssueId)
+    : duplicates;
+  if (candidates.length === 0) return undefined;
+
+  if (preferredParentIssueId) {
+    const alreadyAttached = candidates.filter((issue) => issue.parent?.identifier === preferredParentIssueId);
+    if (alreadyAttached.length === 1) {
+      return alreadyAttached[0];
+    }
+    if (alreadyAttached.length > 1) {
+      return undefined;
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export async function handleIntakeRequest({
@@ -170,6 +205,15 @@ export async function handleIntakeRequest({
   const primaryTitle = planningTitle;
   const research = planningReason === "research-first" || taskPlan.children.some((child) => child.kind === "research");
   const globalDueDate = taskPlan.parentDueDate;
+  const threadPlanningContext = planningReason === "single-issue"
+    ? await getThreadPlanningContext(
+        repositories.workgraph,
+        buildWorkgraphThreadKey(requestMessage.channelId, requestMessage.rootThreadTs),
+      )
+    : undefined;
+  const threadParentIssue = !research && planningReason === "single-issue" && threadPlanningContext?.parentIssue
+    ? toSlackIssueReference(threadPlanningContext.parentIssue)
+    : undefined;
   const duplicates = await searchLinearIssues(
     {
       query: planningTitle.slice(0, 32),
@@ -179,6 +223,44 @@ export async function handleIntakeRequest({
   );
 
   if (duplicates.length > 0 && !research) {
+    const reusableDuplicate = pickReusableDuplicate(duplicates, threadParentIssue?.identifier);
+    if (reusableDuplicate) {
+      const preferredParentIssueId = threadParentIssue?.identifier;
+      const attachedToParent = Boolean(
+        preferredParentIssueId
+        && reusableDuplicate.identifier !== preferredParentIssueId
+        && reusableDuplicate.parent?.identifier !== preferredParentIssueId,
+      );
+      const reusedIssue = attachedToParent && preferredParentIssueId
+        ? await updateManagedLinearIssue(
+            {
+              issueId: reusableDuplicate.identifier,
+              parent: preferredParentIssueId,
+            },
+            env,
+          )
+        : reusableDuplicate;
+      await recordIntakeLinkedExisting(repositories.workgraph, {
+        occurredAt,
+        source: workgraphSource,
+        messageFingerprint: fingerprint,
+        linkedIssueIds: [reusedIssue.identifier],
+        lastResolvedIssueId: reusedIssue.identifier,
+        originalText: requestMessage.text,
+      });
+      return {
+        handled: true,
+        reply: formatExistingIssueReply(
+          [reusedIssue],
+          threadParentIssue
+            ? {
+                parent: threadParentIssue,
+                attachedToParent,
+              }
+            : undefined,
+        ),
+      };
+    }
     await recordIntakeLinkedExisting(repositories.workgraph, {
       occurredAt,
       source: workgraphSource,
@@ -310,7 +392,7 @@ export async function handleIntakeRequest({
           title: child.title,
           description: child.description,
           dueDate: child.dueDate,
-          parent: parent?.identifier,
+          parent: parent?.identifier ?? threadParentIssue?.identifier,
           assignee: child.assignee,
           priority: child.priority,
         },
@@ -518,13 +600,14 @@ export async function handleIntakeRequest({
   }
 
   const ownerResolution = usedFallbackOwners.size > 0 ? "fallback" : "mapped";
+  const effectiveParent = parent ?? threadParentIssue;
   const lastResolvedIssueId = createdChildren.length === 1
     ? createdChildren[0]?.identifier
-    : createdChildren.length === 0 ? parent?.identifier : undefined;
+    : createdChildren.length === 0 ? effectiveParent?.identifier : undefined;
 
   const planningEntry: PlanningLedgerEntry = {
     sourceThread: `${message.channelId}:${message.rootThreadTs}`,
-    parentIssueId: parent?.identifier,
+    parentIssueId: effectiveParent?.identifier,
     generatedChildIssueIds: createdChildren.map((issue) => issue.identifier),
     planningReason,
     ownerResolution,
@@ -544,7 +627,7 @@ export async function handleIntakeRequest({
           assignee: parentOwner?.entry.linearAssignee,
         }
       : undefined,
-    parentIssueId: parent?.identifier,
+    parentIssueId: effectiveParent?.identifier,
     childIssues: createdChildren.map((issue, index) => buildPlanningChildRecord(
       issue,
       plannedChildren[index]?.isResearch ? "research" : "execution",
@@ -561,8 +644,9 @@ export async function handleIntakeRequest({
 
   return {
     handled: true,
-    reply: formatAutonomousCreateReply(parent, createdChildren, planningReason, usedFallbackOwners.size > 0, {
+    reply: formatAutonomousCreateReply(effectiveParent, createdChildren, planningReason, usedFallbackOwners.size > 0, {
       reusedParent: Boolean(existingResearchParent),
+      attachedToExistingParent: Boolean(threadParentIssue && !existingResearchParent && !createdParent),
     }),
   };
 }

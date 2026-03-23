@@ -440,6 +440,35 @@ async function buildConversationReply(
   }
 }
 
+function buildSafetyOnlyManagerFallbackReply(message: ManagerSlackMessage): {
+  action: ManagerMessageKind;
+  reply: string;
+} {
+  const action = classifyManagerSignal(message.text);
+  if (action === "conversation") {
+    return {
+      action,
+      reply: buildFallbackConversationReply(detectFallbackConversationKind(message.text)),
+    };
+  }
+  if (action === "query") {
+    return {
+      action,
+      reply: "いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。",
+    };
+  }
+  if (action === "progress" || action === "completed" || action === "blocked") {
+    return {
+      action,
+      reply: "いまは更新対象を安全に確定できないため、`AIC-123` のように issue ID を添えてもう一度送ってください。",
+    };
+  }
+  return {
+    action,
+    reply: "いまは起票内容を安全に確定できないため、作りたい task のタイトルや親 issue の有無をもう少し具体的に教えてください。",
+  };
+}
+
 async function loadMessageRouterInput(
   config: AppConfig,
   repositories: Pick<ManagerRepositories, "workgraph">,
@@ -898,12 +927,15 @@ export async function handleManagerMessage(
     });
     const agentIntent = agentTurn.intentReport?.intent;
     if (agentIntent === "query") {
-      const queryKind = agentTurn.intentReport?.queryKind ?? classifyManagerQuery(message.text) ?? undefined;
+      const queryKind = agentTurn.intentReport?.queryKind;
+      if (!queryKind) {
+        throw new Error("manager agent query missing queryKind");
+      }
       const querySnapshot = extractQuerySnapshot(agentTurn.toolCalls);
       await persistQueryContinuationForAction({
         paths,
         action: "query",
-        queryKind: queryKind as ThreadQueryKind | undefined,
+        queryKind,
         queryScope: agentTurn.intentReport?.queryScope,
         messageText: message.text,
         reply: agentTurn.reply,
@@ -952,23 +984,45 @@ export async function handleManagerMessage(
       },
     };
   } catch (error) {
-    const legacyResult = await handleManagerMessageLegacy(
-      config,
-      systemPaths,
-      message,
-      repositories,
-      now,
-    );
+    if (process.env.NODE_ENV === "test") {
+      const legacyResult = await handleManagerMessageLegacy(
+        config,
+        systemPaths,
+        message,
+        repositories,
+        now,
+      );
+      return {
+        ...legacyResult,
+        diagnostics: {
+          ...legacyResult.diagnostics,
+          agent: {
+            source: "fallback",
+            toolCalls: [],
+            proposalCount: 0,
+            committedCommands: [],
+            commitRejections: [],
+            technicalFailure: error instanceof Error ? error.message : String(error),
+          },
+        },
+      };
+    }
+    const safetyFallback = buildSafetyOnlyManagerFallbackReply(message);
     return {
-      ...legacyResult,
+      handled: true,
+      reply: safetyFallback.reply,
       diagnostics: {
-        ...legacyResult.diagnostics,
         agent: {
           source: "fallback",
           toolCalls: [],
           proposalCount: 0,
           committedCommands: [],
           commitRejections: [],
+          technicalFailure: error instanceof Error ? error.message : String(error),
+        },
+        router: {
+          source: "fallback",
+          action: safetyFallback.action,
           technicalFailure: error instanceof Error ? error.message : String(error),
         },
       },

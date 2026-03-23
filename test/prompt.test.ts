@@ -54,6 +54,10 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
     expect(prompt).toContain("Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.");
+    expect(prompt).toContain("For single-issue create proposals, decide explicitly whether the issue should stay standalone or attach under the existing thread parent issue.");
+    expect(prompt).toContain("Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.");
+    expect(prompt).toContain("Express that duplicate decision in propose_create_issue with duplicateHandling=reuse-existing, reuse-and-attach-parent, clarify, or create-new.");
+    expect(prompt).toContain("Express that owner decision with assigneeMode=assign or leave-unassigned.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");

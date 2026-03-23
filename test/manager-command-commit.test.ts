@@ -247,4 +247,214 @@ describe("manager command commit", () => {
     );
     expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
   });
+
+  it("inherits the thread parent for single issue creation proposals", async () => {
+    await recordPlanningOutcome(repositories.workgraph, {
+      occurredAt: "2026-03-23T00:00:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-parented-create",
+        messageTs: "seed-parent-1",
+      },
+      messageFingerprint: "seed parent",
+      parentIssue: {
+        issueId: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      parentIssueId: "AIC-39",
+      childIssues: [],
+      planningReason: "complex-request",
+      lastResolvedIssueId: "AIC-39",
+      originalText: "親 issue を作成",
+    });
+
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-40",
+      identifier: "AIC-40",
+      title: "コギトをシステム設定・プロンプトに命名として反映する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-40",
+      parent: {
+        id: "parent-39",
+        identifier: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "attach",
+          duplicateHandling: "create-new",
+          issue: {
+            title: "コギトをシステム設定・プロンプトに命名として反映する",
+            description: "## Slack source\nissue 化してください",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "既存親の子 task と判断しました。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-parented-create",
+        messageTs: "msg-parented-create-1",
+        userId: "U1",
+        text: "issue 化してください",
+      },
+      now: new Date("2026-03-23T00:05:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: "AIC-39",
+        title: "コギトをシステム設定・プロンプトに命名として反映する",
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.summary).toContain("親は AIC-39 AIマネージャーを実用レベルへ引き上げる");
+    expect(result.committed[0]?.summary).toContain("子 task として <https://linear.app/kyaukyuai/issue/AIC-40|AIC-40 コギトをシステム設定・プロンプトに命名として反映する> を追加しています。");
+  });
+
+  it("reuses and reparents an existing duplicate under the thread parent", async () => {
+    await recordPlanningOutcome(repositories.workgraph, {
+      occurredAt: "2026-03-23T00:00:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-parented-duplicate",
+        messageTs: "seed-parent-2",
+      },
+      messageFingerprint: "seed duplicate parent",
+      parentIssue: {
+        issueId: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      parentIssueId: "AIC-39",
+      childIssues: [],
+      planningReason: "complex-request",
+      lastResolvedIssueId: "AIC-39",
+      originalText: "親 issue を作成",
+    });
+
+    linearMocks.searchLinearIssues.mockResolvedValueOnce([
+      {
+        id: "issue-40",
+        identifier: "AIC-40",
+        title: "コギトをシステム設定・プロンプトに命名として反映する",
+        url: "https://linear.app/kyaukyuai/issue/AIC-40",
+        relations: [],
+        inverseRelations: [],
+      },
+    ]);
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-40",
+      identifier: "AIC-40",
+      title: "コギトをシステム設定・プロンプトに命名として反映する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-40",
+      parent: {
+        id: "parent-39",
+        identifier: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "attach",
+          duplicateHandling: "reuse-and-attach-parent",
+          issue: {
+            title: "コギトをシステム設定・プロンプトに命名として反映する",
+            description: "## Slack source\nissue 化してください",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "既存 issue を再利用します。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-parented-duplicate",
+        messageTs: "msg-parented-duplicate-1",
+        userId: "U1",
+        text: "issue 化してください",
+      },
+      now: new Date("2026-03-23T00:06:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      {
+        issueId: "AIC-40",
+        parent: "AIC-39",
+      },
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.summary).toContain("既存の issue を親 issue に紐づけ直しました。");
+    expect(result.committed[0]?.summary).toContain("親は AIC-39 AIマネージャーを実用レベルへ引き上げる です。");
+  });
+
+  it("rejects create proposals that omit required decision fields", async () => {
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          issue: {
+            title: "曖昧な create",
+            description: "## Slack source\n曖昧です",
+          },
+          reasonSummary: "create したいです。",
+        } as unknown as Parameters<typeof commitManagerCommandProposals>[0]["proposals"][number],
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-missing-decisions",
+        messageTs: "msg-missing-decisions-1",
+        userId: "U1",
+        text: "issue を作って",
+      },
+      now: new Date("2026-03-23T00:08:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("判断に必要な項目が不足");
+    expect(result.rejected[0]?.reason).toContain("threadParentHandling");
+    expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+  });
 });

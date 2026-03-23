@@ -10,6 +10,8 @@
 - 現在の本体 workflow は `workgraph` を primary read model として扱い、Linear を work の source of truth とする
 - 2026-03-19 時点で、Slack message / query / create / update の primary path は `pi-coding-agent + strict tools + manager commit` に移行している
 - scheduler / heartbeat も同じ agent/tool surface を primary path とし、旧 planner / regex / review builder は emergency fallback に縮退している
+- primary path の business judgment は agent proposal に必須化し、manager commit は validation / dedupe / execution / state 更新だけを担当する
+- emergency fallback は safety-only とし、旧 heuristics を primary path の代替判断としては使わない
 - 今後の主題は大規模 refactor の継続ではなく、運用耐性、可観測性、event log の保守性改善である
 
 ## Goals
@@ -74,6 +76,9 @@ agent は自由文のまま副作用を起こさない。read / proposal / inter
 例:
 
 - `linear_list_active_issues`
+- `linear_list_active_issue_facts`
+- `linear_get_issue_facts`
+- `linear_list_review_facts`
 - `workgraph_get_thread_context`
 - `propose_create_issue`
 - `propose_update_issue_status`

@@ -194,11 +194,11 @@ export function buildResearchComment(args: {
 }
 
 export function formatAutonomousCreateReply(
-  parent: LinearIssue | undefined,
+  parent: (Pick<LinearIssue, "identifier" | "title"> & { url?: string | null }) | undefined,
   children: LinearIssue[],
   reason: string,
   usedFallback: boolean,
-  options?: { reusedParent?: boolean },
+  options?: { reusedParent?: boolean; attachedToExistingParent?: boolean },
 ): string {
   const primary = parent ?? children[0];
   const paragraphs: Array<string | undefined> = [];
@@ -218,6 +218,15 @@ export function formatAutonomousCreateReply(
       joinSlackSentences([
         "この依頼は Linear に登録しておきました。",
         `対象は ${buildSlackTargetLabel(children[0])} です。`,
+      ]),
+    );
+  } else if (parent && children.length === 1 && children[0]) {
+    paragraphs.push(
+      joinSlackSentences([
+        "この依頼は Linear に登録しておきました。",
+        options?.attachedToExistingParent
+          ? `親は ${buildSlackTargetLabel(parent)} で、子 task として ${buildSlackTargetLabel(children[0])} を追加しています。`
+          : `親は ${buildSlackTargetLabel(parent)} で、子 task として ${buildSlackTargetLabel(children[0])} を作成しています。`,
       ]),
     );
   } else {
@@ -240,12 +249,25 @@ export function formatAutonomousCreateReply(
   return composeSlackReply(paragraphs);
 }
 
-export function formatExistingIssueReply(duplicates: LinearIssue[]): string {
+export function formatExistingIssueReply(
+  duplicates: LinearIssue[],
+  options?: {
+    parent?: Pick<LinearIssue, "identifier" | "title"> & { url?: string | null };
+    attachedToParent?: boolean;
+  },
+): string {
   if (duplicates.length === 1) {
-  return composeSlackReply([
-    "同じ内容の issue が見つかったので、新規起票はせず既存の issue に寄せます。",
-    `対象は ${buildSlackTargetLabel(duplicates[0])} です。`,
-    "進捗・完了・blocked は、この thread にそのまま返してください。",
+    return composeSlackReply([
+      options?.parent
+        ? options.attachedToParent
+          ? "同じ内容の issue が見つかったので、新規起票はせず既存の issue を親 issue に紐づけ直しました。"
+          : "同じ内容の issue が見つかったので、新規起票はせず既存の issue をそのまま使います。"
+        : "同じ内容の issue が見つかったので、新規起票はせず既存の issue に寄せます。",
+      joinSlackSentences([
+        `対象は ${buildSlackTargetLabel(duplicates[0])} です。`,
+        options?.parent ? `親は ${buildSlackTargetLabel(options.parent)} です。` : undefined,
+      ]),
+      "進捗・完了・blocked は、この thread にそのまま返してください。",
     ]);
   }
 

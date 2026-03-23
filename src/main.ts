@@ -7,7 +7,7 @@ import { loadConfig } from "./lib/config.js";
 import { HeartbeatService } from "./lib/heartbeat.js";
 import { verifyLinearCli } from "./lib/linear.js";
 import { Logger } from "./lib/logger.js";
-import { buildHeartbeatReviewDecision, buildManagerReview, formatControlRoomReviewForSlack, handleManagerMessage, type ManagerReviewResult } from "./lib/manager.js";
+import { handleManagerMessage } from "./lib/manager.js";
 import { commitManagerCommandProposals } from "./lib/manager-command-commit.js";
 import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
@@ -41,40 +41,6 @@ class ThreadQueue {
 
     this.jobs.set(key, current);
   }
-}
-
-async function formatManagerReviewForSlack(
-  webClient: WebClient,
-  logger: Logger,
-  result: ManagerReviewResult,
-): Promise<string> {
-  if (!result.followup) {
-    return formatControlRoomReviewForSlack(result);
-  }
-
-  const fallbackThreadRef = result.followup.source
-    ? `${result.followup.source.channelId} / ${result.followup.source.rootThreadTs}`
-    : "source thread unavailable";
-  let threadReference = fallbackThreadRef;
-
-  if (result.followup.source) {
-    try {
-      const permalink = await webClient.chat.getPermalink({
-        channel: result.followup.source.channelId,
-        message_ts: result.followup.source.sourceMessageTs,
-      });
-      if (permalink.permalink) {
-        threadReference = permalink.permalink;
-      }
-    } catch (error) {
-      logger.warn("Failed to resolve Slack permalink for manager follow-up", {
-        issueId: result.followup.issueId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  return formatControlRoomReviewForSlack(result, threadReference);
 }
 
 function mergeSystemReply(agentReply: string, commitSummaries: string[], commitRejections: string[]): string {
@@ -286,7 +252,7 @@ async function main(): Promise<void> {
         commitResult.rejected.map((entry) => entry.reason),
       );
     } catch (error) {
-      logger.warn("Manager system agent fell back to legacy flow", {
+      logger.warn("Manager system agent fell back to safety-only response", {
         channelId: args.input.channelId,
         threadTs: args.input.rootThreadTs,
         error: error instanceof Error ? error.message : String(error),
@@ -377,7 +343,7 @@ async function main(): Promise<void> {
             threadTs: message.rootThreadTs,
           };
           if (agent.source === "fallback") {
-            logger.warn("Manager agent fell back to legacy path", logPayload);
+            logger.warn("Manager agent fell back to safety-only response", logPayload);
           } else {
             logger.info("Manager agent decision", logPayload);
           }
@@ -395,7 +361,7 @@ async function main(): Promise<void> {
             threadTs: message.rootThreadTs,
           };
           if (router.source === "fallback") {
-            logger.warn("Manager router fell back to legacy classification", logPayload);
+            logger.warn("Manager fallback routing decided a safety-only response", logPayload);
           } else {
             logger.info("Manager router decision", logPayload);
           }
@@ -472,11 +438,7 @@ async function main(): Promise<void> {
           text: prompt,
         },
         fallback: async () => {
-          const decision = await buildHeartbeatReviewDecision(config, systemPaths, managerRepositories);
-          if (!decision.review) {
-            return `heartbeat noop: ${decision.reason ?? "no-urgent-items"}`;
-          }
-          return formatManagerReviewForSlack(webClient, logger, decision.review);
+          return "heartbeat noop: agent-fallback";
         },
       }));
       if (reply.startsWith("heartbeat noop:")) {
@@ -526,8 +488,8 @@ async function main(): Promise<void> {
         await ensureThreadWorkspace(paths);
         const reply = formatSlackMessageText(await executeManagerSystemTask({
           paths,
-          input: {
-            kind: mappedKind,
+        input: {
+          kind: mappedKind,
             channelId: job.channelId,
             rootThreadTs: job.id,
             messageTs: job.id,
@@ -540,14 +502,10 @@ async function main(): Promise<void> {
             },
           },
           fallback: async () => {
-            const review = await buildManagerReview(config, systemPaths, mappedKind, managerRepositories);
-            if (!review) {
-              return "No review output";
-            }
-            return formatManagerReviewForSlack(webClient, logger, review);
+            return "Manager review is temporarily unavailable. Please retry this review from the control room if needed.";
           },
         }));
-        if (reply === "No review output") {
+        if (reply === "Manager review is temporarily unavailable. Please retry this review from the control room if needed.") {
           return {
             delivered: false,
             summary: reply,

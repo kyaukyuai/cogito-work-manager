@@ -8,6 +8,8 @@
 
 - 2026-03-19 時点で、Phase 1-4 の refactor は完了済みと扱う
 - 2026-03-19 時点で、runtime の primary path は `agent-first / tool-contract-first / manager commit` で動かす
+- primary path では business judgment を code が補完しない。判断が必要な proposal field は agent が必ず明示する
+- emergency fallback は safety-only とし、旧 heuristics を primary path の代替判断に使わない
 - 以後の変更は、原則として新たな大規模構造変更ではなく、運用耐性、可観測性、保守性改善を優先する
 - 新しい構造再編を始める場合は、既存 architecture / roadmap のどの完了条件が不足しているかを先に明記する
 
@@ -44,6 +46,7 @@
 
 - agent は intent 理解、read tool 利用、proposal 組み立て、reply 生成に使う。
 - create / update / comment / assign / relation / state change は必ず manager commit の command で実行する。
+- parent 継承、duplicate reuse、assignee 判断、review 優先順位付けは primary path では agent proposal に必須化する。
 - planner は必ず schema 付き JSON を返す。
 - planner ごとに `contract.ts`, `prompt.ts`, `parser.ts`, `runner.ts` を分ける。
 - parser は保守的に実装し、曖昧な応答は失敗または clarify に倒す。
@@ -53,6 +56,7 @@
 
 - 外部副作用は idempotent に扱う。
 - proposal 実行前に schema validate, policy check, dedupe を行う。
+- proposal に判断必須 field が欠けている場合は補完せず reject する。
 - duplicate 防止、再送耐性、再実行耐性を常に考慮する。
 - Slack thread は入力チャネルであり、状態の主語ではない。
 - ローカル state は orchestration 補助に限定する。

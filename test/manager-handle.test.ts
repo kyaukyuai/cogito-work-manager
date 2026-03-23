@@ -13,6 +13,7 @@ import {
 import { ensureManagerStateFiles, loadFollowupsLedger } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
+import { recordPlanningOutcome } from "../src/state/workgraph/recorder.js";
 
 const linearMocks = vi.hoisted(() => ({
   searchLinearIssues: vi.fn(),
@@ -3259,9 +3260,13 @@ describe("handleManagerMessage clarification flow", () => {
             proposal: {
               commandType: "create_issue",
               planningReason: "single-issue",
+              threadParentHandling: "ignore",
+              duplicateHandling: "create-new",
               issue: {
                 title: "OPT社の社内チャネルへの招待依頼",
                 description: "## Slack source\n招待してもらう task を追加する",
+                assigneeMode: "assign",
+                assignee: "y.kakui",
               },
               reasonSummary: "単発 task と判断しました。",
               dedupeKeyCandidate: "thread-create-1",
@@ -3273,9 +3278,13 @@ describe("handleManagerMessage clarification flow", () => {
         {
           commandType: "create_issue",
           planningReason: "single-issue",
+          threadParentHandling: "ignore",
+          duplicateHandling: "create-new",
           issue: {
             title: "OPT社の社内チャネルへの招待依頼",
             description: "## Slack source\n招待してもらう task を追加する",
+            assigneeMode: "assign",
+            assignee: "y.kakui",
           },
           reasonSummary: "単発 task と判断しました。",
           dedupeKeyCandidate: "thread-create-1",
@@ -3322,5 +3331,117 @@ describe("handleManagerMessage clarification flow", () => {
       proposalCount: 1,
       committedCommands: ["create_issue"],
     });
+  });
+
+  it("attaches single issue create proposals to the existing thread parent", async () => {
+    await recordPlanningOutcome(createFileBackedManagerRepositories(systemPaths).workgraph, {
+      occurredAt: "2026-03-23T00:00:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-agent-child-create",
+        messageTs: "seed-parent-msg",
+      },
+      messageFingerprint: "seed parent thread",
+      parentIssue: {
+        issueId: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      parentIssueId: "AIC-39",
+      childIssues: [],
+      planningReason: "complex-request",
+      lastResolvedIssueId: "AIC-39",
+      originalText: "親 issue の作成",
+    });
+
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "issue 化しておきます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "create_work",
+              confidence: 0.95,
+              summary: "既存親の子 issue 追加です。",
+            },
+          },
+        },
+        {
+          toolName: "propose_create_issue",
+          details: {
+            proposal: {
+              commandType: "create_issue",
+              planningReason: "single-issue",
+              threadParentHandling: "attach",
+              duplicateHandling: "create-new",
+              issue: {
+                title: "コギトをシステム設定・プロンプトに命名として反映する",
+                description: "## Slack source\nissue 化してください",
+                assigneeMode: "leave-unassigned",
+              },
+              reasonSummary: "既存親の子 issue にする提案です。",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "attach",
+          duplicateHandling: "create-new",
+          issue: {
+            title: "コギトをシステム設定・プロンプトに命名として反映する",
+            description: "## Slack source\nissue 化してください",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "既存親の子 issue にする提案です。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "create_work",
+        confidence: 0.95,
+        summary: "既存親の子 issue 追加です。",
+      },
+    });
+
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-40",
+      identifier: "AIC-40",
+      title: "コギトをシステム設定・プロンプトに命名として反映する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-40",
+      parent: {
+        id: "parent-39",
+        identifier: "AIC-39",
+        title: "AIマネージャーを実用レベルへ引き上げる",
+      },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-agent-child-create",
+        messageTs: "msg-agent-child-1",
+        userId: "U1",
+        text: "issue 化してください",
+      },
+      new Date("2026-03-23T00:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: "AIC-39",
+        title: "コギトをシステム設定・プロンプトに命名として反映する",
+      }),
+      expect.any(Object),
+    );
+    expect(result.reply).toContain("親は AIC-39 AIマネージャーを実用レベルへ引き上げる");
+    expect(result.reply).toContain("子 task として <https://linear.app/kyaukyuai/issue/AIC-40|AIC-40 コギトをシステム設定・プロンプトに命名として反映する> を追加しています。");
   });
 });

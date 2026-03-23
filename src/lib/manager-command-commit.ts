@@ -33,7 +33,6 @@ import {
   findExistingThreadIntakeByFingerprint,
   getThreadPlanningContext,
 } from "../state/workgraph/queries.js";
-import { chooseOwner } from "../orchestrators/intake/planning-support.js";
 import {
   compactLinearIssues,
   formatAutonomousCreateReply,
@@ -63,28 +62,75 @@ const proposalBaseSchema = z.object({
   dedupeKeyCandidate: z.string().trim().min(1).optional(),
 });
 
-const createIssuePayloadSchema = z.object({
+const createIssuePayloadBaseSchema = z.object({
   title: z.string().trim().min(1),
   description: z.string().trim().min(1),
   state: optionalStringSchema,
   dueDate: optionalDateSchema,
+  assigneeMode: z.enum(["assign", "leave-unassigned"]),
   assignee: optionalStringSchema,
   parent: optionalStringSchema,
   priority: z.number().int().min(0).max(4).optional(),
 });
 
+const createIssuePayloadSchema = createIssuePayloadBaseSchema.superRefine((value, ctx) => {
+  if (value.assigneeMode === "assign" && !value.assignee) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["assignee"],
+      message: "assignee is required when assigneeMode=assign",
+    });
+  }
+  if (value.assigneeMode === "leave-unassigned" && value.assignee) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["assignee"],
+      message: "assignee must be omitted when assigneeMode=leave-unassigned",
+    });
+  }
+});
+
+const createIssueThreadParentHandlingSchema = z.enum([
+  "ignore",
+  "attach",
+]);
+
+const createIssueDuplicateHandlingSchema = z.enum([
+  "clarify",
+  "reuse-existing",
+  "reuse-and-attach-parent",
+  "create-new",
+]);
+
 const createIssueProposalSchema = proposalBaseSchema.extend({
   commandType: z.literal("create_issue"),
   planningReason: z.enum(["single-issue", "complex-request", "research-first"]).default("single-issue"),
   issue: createIssuePayloadSchema,
+  threadParentHandling: createIssueThreadParentHandlingSchema,
+  duplicateHandling: createIssueDuplicateHandlingSchema,
 });
 
 const createIssueBatchProposalSchema = proposalBaseSchema.extend({
   commandType: z.literal("create_issue_batch"),
   planningReason: z.enum(["single-issue", "complex-request", "research-first"]),
   parent: createIssuePayloadSchema,
-  children: z.array(createIssuePayloadSchema.extend({
+  children: z.array(createIssuePayloadBaseSchema.extend({
     kind: z.enum(["execution", "research"]).default("execution"),
+  }).superRefine((value, ctx) => {
+    if (value.assigneeMode === "assign" && !value.assignee) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["assignee"],
+        message: "assignee is required when assigneeMode=assign",
+      });
+    }
+    if (value.assigneeMode === "leave-unassigned" && value.assignee) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["assignee"],
+        message: "assignee must be omitted when assigneeMode=leave-unassigned",
+      });
+    }
   })).min(1).max(8),
 });
 
@@ -309,6 +355,61 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
   };
 }
 
+type SlackIssueReference = Pick<LinearIssue, "identifier" | "title"> & { url?: string | null };
+
+function toSlackIssueReference(
+  issue:
+    | Pick<LinearIssue, "identifier" | "title" | "url">
+    | { issueId: string; title?: string },
+): SlackIssueReference {
+  return {
+    identifier: "identifier" in issue ? issue.identifier : issue.issueId,
+    title: issue.title ?? ("identifier" in issue ? issue.identifier : issue.issueId),
+    url: "url" in issue ? issue.url : undefined,
+  };
+}
+
+async function loadThreadParentIssueReference(
+  args: CommitManagerCommandArgs,
+  threadKey: string,
+): Promise<SlackIssueReference | undefined> {
+  const planningContext = await getThreadPlanningContext(args.repositories.workgraph, threadKey);
+  return planningContext?.parentIssue ? toSlackIssueReference(planningContext.parentIssue) : undefined;
+}
+
+function pickReusableDuplicate(
+  duplicates: LinearIssue[],
+  preferredParentIssueId?: string,
+): LinearIssue | undefined {
+  const candidates = preferredParentIssueId
+    ? duplicates.filter((issue) => issue.identifier !== preferredParentIssueId)
+    : duplicates;
+  if (candidates.length === 0) return undefined;
+
+  if (preferredParentIssueId) {
+    const alreadyAttached = candidates.filter((issue) => issue.parent?.identifier === preferredParentIssueId);
+    if (alreadyAttached.length === 1) {
+      return alreadyAttached[0];
+    }
+    if (alreadyAttached.length > 1) {
+      return undefined;
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+function resolveEffectiveParentIssueId(
+  proposal: z.infer<typeof createIssueProposalSchema>,
+  threadParentIssue: SlackIssueReference | undefined,
+): string | undefined {
+  const explicitParentIssueId = proposal.issue.parent?.trim();
+  if (explicitParentIssueId) {
+    return explicitParentIssueId;
+  }
+  return proposal.threadParentHandling === "attach" ? threadParentIssue?.identifier : undefined;
+}
+
 async function validateUpdateIssueStatusProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof updateIssueStatusProposalSchema>,
@@ -476,11 +577,26 @@ async function commitCreateIssueProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof createIssueProposalSchema>,
 ): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
-  const ownerMap = await args.repositories.ownerMap.load();
   const planningLedger = await args.repositories.planning.load();
   const occurredAt = buildOccurredAt(args.now);
   const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
   const fingerprint = fingerprintText(args.message.text);
+  const threadParentIssue = proposal.planningReason === "single-issue"
+    ? await loadThreadParentIssueReference(args, threadKey)
+    : undefined;
+  const effectiveParentIssueId = resolveEffectiveParentIssueId(proposal, threadParentIssue);
+  if (proposal.threadParentHandling === "attach" && !effectiveParentIssueId) {
+    return {
+      proposal,
+      reason: "親 issue に紐づける提案でしたが、この thread から親 issue を特定できませんでした。親 issue ID を明示してください。",
+    };
+  }
+  if (proposal.duplicateHandling === "reuse-and-attach-parent" && !effectiveParentIssueId) {
+    return {
+      proposal,
+      reason: "既存 issue を親 issue に紐づけ直す提案でしたが、親 issue を特定できませんでした。親 issue ID を明示してください。",
+    };
+  }
   const existingThreadIntake = await findExistingThreadIntakeByFingerprint(
     args.repositories.workgraph,
     threadKey,
@@ -502,6 +618,78 @@ async function commitCreateIssueProposal(
     args.env,
   );
   if (duplicates.length > 0) {
+    const duplicateHandling = proposal.duplicateHandling;
+    if (duplicateHandling !== "create-new") {
+      const reusableDuplicate = duplicateHandling === "reuse-existing"
+        ? pickReusableDuplicate(duplicates)
+        : pickReusableDuplicate(duplicates, effectiveParentIssueId);
+      const shouldAttachToParent = duplicateHandling === "reuse-and-attach-parent";
+
+      if (duplicateHandling === "clarify") {
+        return {
+          proposal,
+          reason: "近い既存 issue が見つかったため、新規起票にするか既存 issue を使うか確認したいです。対象 issue ID か、`新規で作成` と返してください。",
+        };
+      }
+
+      if (reusableDuplicate) {
+        const attachedToParent = Boolean(
+          shouldAttachToParent
+          && effectiveParentIssueId
+          && reusableDuplicate.identifier !== effectiveParentIssueId
+          && reusableDuplicate.parent?.identifier !== effectiveParentIssueId,
+        );
+        const reusedIssue = attachedToParent
+          ? await updateManagedLinearIssue(
+              {
+                issueId: reusableDuplicate.identifier,
+                parent: effectiveParentIssueId,
+              },
+              args.env,
+            )
+          : reusableDuplicate;
+        await recordIntakeLinkedExisting(args.repositories.workgraph, {
+          occurredAt,
+          source: {
+            channelId: args.message.channelId,
+            rootThreadTs: args.message.rootThreadTs,
+            messageTs: args.message.messageTs,
+          },
+          messageFingerprint: fingerprint,
+          linkedIssueIds: [reusedIssue.identifier],
+          lastResolvedIssueId: reusedIssue.identifier,
+          originalText: args.message.text,
+        });
+        return {
+          commandType: proposal.commandType,
+          issueIds: [reusedIssue.identifier],
+          summary: formatExistingIssueReply(
+            [reusedIssue],
+            threadParentIssue && shouldAttachToParent
+              ? {
+                  parent: threadParentIssue,
+                  attachedToParent,
+                }
+              : undefined,
+          ),
+        };
+      }
+
+      if (duplicateHandling === "reuse-existing") {
+        return {
+          proposal,
+          reason: "既存 issue を使う提案でしたが、対象を 1 件に絞れませんでした。対象 issue ID を明記してください。",
+        };
+      }
+
+      if (duplicateHandling === "reuse-and-attach-parent") {
+        return {
+          proposal,
+          reason: "既存 issue を親 issue に紐づけ直す提案でしたが、対象を 1 件に絞れませんでした。対象 issue ID を明記してください。",
+        };
+      }
+    }
+
     await recordIntakeLinkedExisting(args.repositories.workgraph, {
       occurredAt,
       source: {
@@ -521,13 +709,15 @@ async function commitCreateIssueProposal(
     };
   }
 
-  const owner = proposal.issue.assignee
-    ? undefined
-    : chooseOwner(proposal.issue.title, ownerMap);
   const issue = await createManagedLinearIssue(
     {
-      ...proposal.issue,
-      assignee: proposal.issue.assignee ?? owner?.entry.linearAssignee,
+      title: proposal.issue.title,
+      description: proposal.issue.description,
+      state: proposal.issue.state,
+      dueDate: proposal.issue.dueDate,
+      assignee: proposal.issue.assignee,
+      parent: effectiveParentIssueId,
+      priority: proposal.issue.priority,
     },
     args.env,
   );
@@ -537,10 +727,10 @@ async function commitCreateIssueProposal(
     ...planningLedger,
     buildPlanningEntry(
       threadKey,
-      undefined,
+      effectiveParentIssueId,
       [issue.identifier],
       proposal.planningReason,
-      owner?.resolution === "fallback" ? "fallback" : "mapped",
+      proposal.issue.assignee ? "mapped" : "fallback",
       occurredAt,
     ),
   ];
@@ -553,13 +743,13 @@ async function commitCreateIssueProposal(
       messageTs: args.message.messageTs,
     },
     messageFingerprint: fingerprint,
-    parentIssueId: undefined,
+    parentIssueId: effectiveParentIssueId,
     childIssues: [buildPlanningChildRecord(issue, "execution", {
       dueDate: proposal.issue.dueDate,
-      assignee: proposal.issue.assignee ?? owner?.entry.linearAssignee,
+      assignee: proposal.issue.assignee,
     })],
     planningReason: proposal.planningReason,
-    ownerResolution: owner?.resolution === "fallback" ? "fallback" : "mapped",
+    ownerResolution: proposal.issue.assignee ? "mapped" : "fallback",
     lastResolvedIssueId: issue.identifier,
     originalText: args.message.text,
   });
@@ -567,7 +757,13 @@ async function commitCreateIssueProposal(
   return {
     commandType: proposal.commandType,
     issueIds: [issue.identifier],
-    summary: formatAutonomousCreateReply(undefined, [issue], "single-issue", owner?.resolution === "fallback"),
+    summary: formatAutonomousCreateReply(
+      threadParentIssue,
+      [issue],
+      "single-issue",
+      proposal.issue.assigneeMode === "leave-unassigned",
+      threadParentIssue ? { attachedToExistingParent: true } : undefined,
+    ),
   };
 }
 
@@ -582,11 +778,14 @@ async function commitCreateIssueBatchProposal(
     return commitCreateIssueProposal(args, {
       commandType: "create_issue",
       planningReason: "single-issue",
+      threadParentHandling: "ignore",
+      duplicateHandling: "create-new",
       issue: {
         title: proposal.children[0]!.title,
         description: proposal.children[0]!.description,
         dueDate: proposal.children[0]!.dueDate,
         assignee: proposal.children[0]!.assignee,
+        assigneeMode: proposal.children[0]!.assigneeMode,
         priority: proposal.children[0]!.priority,
         state: proposal.children[0]!.state,
       },
@@ -595,7 +794,6 @@ async function commitCreateIssueBatchProposal(
       dedupeKeyCandidate: proposal.dedupeKeyCandidate,
     });
   }
-  const ownerMap = await args.repositories.ownerMap.load();
   const planningLedger = await args.repositories.planning.load();
   const occurredAt = buildOccurredAt(args.now);
   const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
@@ -613,32 +811,26 @@ async function commitCreateIssueBatchProposal(
     };
   }
 
-  const parentOwner = proposal.parent.assignee
-    ? undefined
-    : chooseOwner(proposal.parent.title, ownerMap);
-  const usedFallback = new Set<string>();
-  if (parentOwner?.resolution === "fallback") {
-    usedFallback.add(parentOwner.entry.id);
-  }
-
   const batch = await createManagedLinearIssueBatch(
     {
       parent: {
-        ...proposal.parent,
-        assignee: proposal.parent.assignee ?? parentOwner?.entry.linearAssignee,
+        title: proposal.parent.title,
+        description: proposal.parent.description,
+        state: proposal.parent.state,
+        dueDate: proposal.parent.dueDate,
+        assignee: proposal.parent.assignee,
+        parent: proposal.parent.parent,
+        priority: proposal.parent.priority,
       },
-      children: proposal.children.map((child) => {
-        const childOwner = child.assignee
-          ? undefined
-          : chooseOwner(child.title, ownerMap);
-        if (childOwner?.resolution === "fallback") {
-          usedFallback.add(childOwner.entry.id);
-        }
-        return {
-          ...child,
-          assignee: child.assignee ?? childOwner?.entry.linearAssignee,
-        };
-      }),
+      children: proposal.children.map((child) => ({
+        title: child.title,
+        description: child.description,
+        state: child.state,
+        dueDate: child.dueDate,
+        assignee: child.assignee,
+        parent: child.parent,
+        priority: child.priority,
+      })),
     },
     args.env,
   );
@@ -662,7 +854,7 @@ async function commitCreateIssueBatchProposal(
       parent.identifier,
       children.map((issue) => issue.identifier),
       proposal.planningReason,
-      usedFallback.size > 0 ? "fallback" : "mapped",
+      [proposal.parent, ...proposal.children].some((entry) => !entry.assignee) ? "fallback" : "mapped",
       occurredAt,
     ),
   ];
@@ -679,7 +871,7 @@ async function commitCreateIssueBatchProposal(
       issueId: parent.identifier,
       title: parent.title,
       dueDate: proposal.parent.dueDate,
-      assignee: proposal.parent.assignee ?? parentOwner?.entry.linearAssignee,
+      assignee: proposal.parent.assignee,
     },
     parentIssueId: parent.identifier,
     childIssues: children.map((issue, index) => buildPlanningChildRecord(
@@ -691,7 +883,7 @@ async function commitCreateIssueBatchProposal(
       },
     )),
     planningReason: proposal.planningReason,
-    ownerResolution: usedFallback.size > 0 ? "fallback" : "mapped",
+    ownerResolution: [proposal.parent, ...proposal.children].some((entry) => !entry.assignee) ? "fallback" : "mapped",
     lastResolvedIssueId: children[0]?.identifier,
     originalText: args.message.text,
   });
@@ -699,7 +891,12 @@ async function commitCreateIssueBatchProposal(
   return {
     commandType: proposal.commandType,
     issueIds: [parent.identifier, ...children.map((issue) => issue.identifier)],
-    summary: formatAutonomousCreateReply(parent, children, proposal.planningReason, usedFallback.size > 0),
+    summary: formatAutonomousCreateReply(
+      parent,
+      children,
+      proposal.planningReason,
+      [proposal.parent, ...proposal.children].some((entry) => !entry.assignee),
+    ),
   };
 }
 
@@ -944,21 +1141,37 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
   const rejected: ManagerProposalRejection[] = [];
 
   for (const proposal of deduped.values()) {
-    const result = proposal.commandType === "create_issue"
-      ? await commitCreateIssueProposal(args, proposal)
-      : proposal.commandType === "create_issue_batch"
-        ? await commitCreateIssueBatchProposal(args, proposal)
-        : proposal.commandType === "update_issue_status"
-          ? await commitUpdateIssueStatusProposal(args, proposal)
-          : proposal.commandType === "assign_issue"
-            ? await commitAssignIssueProposal(args, proposal)
-            : proposal.commandType === "add_comment"
-              ? await commitAddCommentProposal(args, proposal)
-              : proposal.commandType === "add_relation"
-                ? await commitAddRelationProposal(args, proposal)
-                : proposal.commandType === "resolve_followup"
-                  ? await commitResolveFollowupProposal(args, proposal)
-                  : await commitReviewFollowupProposal(args, proposal);
+    const parsedProposal = managerCommandProposalSchema.safeParse(proposal);
+    if (!parsedProposal.success) {
+      const missingDecisionFields = parsedProposal.error.issues
+        .map((issue) => issue.path.join("."))
+        .filter(Boolean)
+        .join(", ");
+      rejected.push({
+        proposal,
+        reason: missingDecisionFields
+          ? `判断に必要な項目が不足しているため確定できませんでした。不足項目: ${missingDecisionFields}`
+          : "判断に必要な項目が不足しているため確定できませんでした。",
+      });
+      continue;
+    }
+
+    const validatedProposal = parsedProposal.data;
+    const result = validatedProposal.commandType === "create_issue"
+      ? await commitCreateIssueProposal(args, validatedProposal)
+      : validatedProposal.commandType === "create_issue_batch"
+        ? await commitCreateIssueBatchProposal(args, validatedProposal)
+        : validatedProposal.commandType === "update_issue_status"
+          ? await commitUpdateIssueStatusProposal(args, validatedProposal)
+          : validatedProposal.commandType === "assign_issue"
+            ? await commitAssignIssueProposal(args, validatedProposal)
+            : validatedProposal.commandType === "add_comment"
+              ? await commitAddCommentProposal(args, validatedProposal)
+              : validatedProposal.commandType === "add_relation"
+                ? await commitAddRelationProposal(args, validatedProposal)
+                : validatedProposal.commandType === "resolve_followup"
+                  ? await commitResolveFollowupProposal(args, validatedProposal)
+                  : await commitReviewFollowupProposal(args, validatedProposal);
 
     if ("reason" in result) {
       rejected.push(result);
