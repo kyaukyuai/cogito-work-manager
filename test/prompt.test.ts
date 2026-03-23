@@ -60,7 +60,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.");
     expect(prompt).toContain("Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.");
     expect(prompt).toContain("For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.");
-    expect(prompt).toContain("For reference-material query replies, also include referenceItems in report_query_snapshot with id, title, url, and source for each page or document you surfaced.");
+    expect(prompt).toContain("For reference-material query replies, also include referenceItems in report_query_snapshot with id, title, url, and source for each page, document, or database you surfaced.");
     expect(prompt).toContain("A query reply without report_query_snapshot is unsafe and will be rejected by the manager.");
     expect(prompt).toContain("When the last query context contains referenceItems and the user asks to look deeper into a topic, inspect those stored reference items first before running a broader new search.");
     expect(prompt).toContain("Prefer existing work in this order: thread-linked issue, existing parent issue, existing duplicate, then new issue.");
@@ -75,9 +75,14 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
     expect(prompt).toContain("If Notion tools are available, use them as read-only reference material for specs, notes, and operating context.");
-    expect(prompt).toContain("For reference-material replies that mention multiple Notion pages or documents, use short bullet lines and include markdown links when URLs are available.");
+    expect(prompt).toContain("For reference-material replies that mention multiple Notion pages, documents, or databases, use short bullet lines and include markdown links when URLs are available.");
     expect(prompt).toContain("When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.");
+    expect(prompt).toContain("If the user explicitly says database or データベース, treat it as a database-only request unless they also ask for pages.");
+    expect(prompt).toContain("A request like Notion の database を検索して is still a query. Do not downgrade it to casual conversation just because the keyword is missing.");
+    expect(prompt).toContain("If the user asks to browse or search Notion databases without a keyword, use notion_list_databases before asking a follow-up question.");
     expect(prompt).toContain("When the relevant Notion information is structured in a database, prefer notion_search_databases and notion_query_database over broad page summarization.");
+    expect(prompt).toContain("When you surface a Notion database in report_query_snapshot, set the referenceItems source to notion-database.");
+    expect(prompt).toContain("If the last query context contains a notion-database reference item and the user says その database を見て or その一覧を確認して, query that database before starting a broader new search.");
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
@@ -226,6 +231,41 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Treat this as a follow-up on the previous reference-material reply unless the user clearly changes the topic.");
     expect(prompt).toContain("Use the stored referenceItems from the last query context before starting a broader new search.");
     expect(prompt).toContain("- referenceItems: notion / notion-page-1 / 2026.03.10 | AIクローンプラットフォーム 初回会議共有資料 / https://www.notion.so/notion-page-1");
+  });
+
+  it("adds database-only guidance for Notion database requests", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "Notion の database を検索して",
+      currentDate: "2026-03-23",
+      lastQueryContext: {
+        kind: "reference-material",
+        scope: "team",
+        userMessage: "Notion の database を検索して",
+        replySummary: "Notion databases を一覧で返しました。",
+        issueIds: [],
+        shownIssueIds: [],
+        remainingIssueIds: [],
+        totalItemCount: 2,
+        referenceItems: [
+          {
+            id: "notion-database-1",
+            title: "案件一覧",
+            url: "https://www.notion.so/notion-database-1",
+            source: "notion-database",
+          },
+        ],
+        recordedAt: "2026-03-23T08:19:00.000Z",
+      },
+    });
+
+    expect(prompt).toContain("Treat this as a database-oriented Notion request. Prefer notion_list_databases, notion_search_databases, and notion_query_database over page search.");
+    expect(prompt).toContain("If no keyword is given, list accessible databases first instead of asking a clarification question.");
+    expect(prompt).toContain("- referenceItems: notion-database / notion-database-1 / 案件一覧 / https://www.notion.so/notion-database-1");
   });
 
   it("defines an issue-centric heartbeat prompt", () => {

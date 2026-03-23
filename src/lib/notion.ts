@@ -11,6 +11,10 @@ export interface SearchNotionInput {
   pageSize?: number;
 }
 
+export interface ListNotionInput {
+  pageSize?: number;
+}
+
 export interface NotionPageSummary {
   id: string;
   object: string;
@@ -271,6 +275,18 @@ export function buildSearchNotionDatabasesArgs(input: SearchNotionInput): string
   return ["api", "/v1/search", "--data", JSON.stringify(payload)];
 }
 
+export function buildListNotionDatabasesArgs(input: ListNotionInput = {}): string[] {
+  const payload = {
+    page_size: input.pageSize ?? 10,
+    filter: {
+      property: "object",
+      value: "database",
+    },
+  };
+
+  return ["api", "/v1/search", "--data", JSON.stringify(payload)];
+}
+
 export function buildGetNotionPageArgs(pageId: string): string[] {
   const trimmed = pageId.trim();
   if (!trimmed) throw new Error("Notion page ID is required");
@@ -329,6 +345,21 @@ export async function searchNotionDatabases(
 ): Promise<NotionDatabaseSummary[]> {
   const payload = await execNotionJson<{ results?: Array<Record<string, unknown>> }>(
     buildSearchNotionDatabasesArgs(input),
+    env,
+    signal,
+  );
+  return (payload.results ?? [])
+    .filter((item) => item.object === "database")
+    .map((item) => normalizeDatabaseSummary(item));
+}
+
+export async function listNotionDatabases(
+  input: ListNotionInput = {},
+  env: NotionCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<NotionDatabaseSummary[]> {
+  const payload = await execNotionJson<{ results?: Array<Record<string, unknown>> }>(
+    buildListNotionDatabasesArgs(input),
     env,
     signal,
   );

@@ -102,6 +102,15 @@ function isReferenceMaterialContinuation(text: string, lastQueryContext?: Thread
   return /(?:詳しく|詳細|項目|内容|範囲|確認|見て|読んで|教えて)/.test(text);
 }
 
+function isNotionDatabaseRequest(text: string): boolean {
+  return /(?:notion|ノーション).*(?:database|データベース)|(?:database|データベース).*(?:notion|ノーション)/i.test(text);
+}
+
+function extractQuotedSearchKeyword(text: string): string | undefined {
+  const match = text.match(/[「"']([^」"']+)[」"']/);
+  return match?.[1]?.trim();
+}
+
 function getIssueAssigneeLabel(issue: LinearIssueFact): string | undefined {
   return issue.assignee?.displayName ?? issue.assignee?.name ?? issue.assignee?.email ?? undefined;
 }
@@ -270,20 +279,42 @@ async function buildQueryTurn(
   };
 
   if (router.queryKind === "reference-material") {
-    const referenceItems = input.lastQueryContext?.referenceItems ?? [{
-      id: "notion-page-1",
-      title: "2026.03.10 | AIクローンプラットフォーム 初回会議共有資料",
-      url: "https://www.notion.so/notion-page-1",
-      source: "notion",
-    }];
-    const reply = args.buildReply({
-      kind: "reference-material",
-      facts: {
-        source: /notion|ノーション/i.test(input.text) ? "notion" : "reference",
-        referenceItems,
-        followupTopic: input.text,
-      },
-    }).reply;
+    const databaseReferenceItems = input.lastQueryContext?.referenceItems?.filter((item) => item.source === "notion-database") ?? [];
+    const databaseOnly = isNotionDatabaseRequest(input.text)
+      || (databaseReferenceItems.length > 0 && /(?:その|この).*(?:database|データベース)|一覧を(?:見て|確認)/i.test(input.text));
+    const keyword = extractQuotedSearchKeyword(input.text);
+    const referenceItems = databaseOnly
+      ? (databaseReferenceItems.length > 0
+        ? databaseReferenceItems
+        : [{
+            id: "notion-database-1",
+            title: "案件一覧",
+            url: "https://www.notion.so/notion-database-1",
+            source: "notion-database",
+          }])
+      : input.lastQueryContext?.referenceItems ?? [{
+          id: "notion-page-1",
+          title: "2026.03.10 | AIクローンプラットフォーム 初回会議共有資料",
+          url: "https://www.notion.so/notion-page-1",
+          source: "notion",
+        }];
+    const reply = databaseOnly
+      ? databaseReferenceItems.length > 0 && /(?:その|この).*(?:database|データベース)|一覧を(?:見て|確認)/i.test(input.text)
+        ? `${referenceItems[0]?.title ?? "Notion database"} を確認しました。冒頭 2 件は Alpha 社 / Beta 社で、どちらも進行中です。`
+        : keyword
+          ? `「${keyword}」に一致する Notion database は 1 件です。\n- [${referenceItems[0]?.title ?? "案件一覧"}](${referenceItems[0]?.url ?? "https://www.notion.so/notion-database-1"})`
+          : [
+              "アクセスできる Notion database は次のとおりです。",
+              ...referenceItems.map((item) => `- [${item.title ?? item.id}](${item.url ?? "https://www.notion.so/notion-database-1"})`),
+            ].join("\n")
+      : args.buildReply({
+          kind: "reference-material",
+          facts: {
+            source: /notion|ノーション/i.test(input.text) ? "notion" : "reference",
+            referenceItems,
+            followupTopic: input.text,
+          },
+        }).reply;
     return {
       reply,
       toolCalls: [

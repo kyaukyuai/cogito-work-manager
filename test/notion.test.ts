@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildGetNotionDatabaseArgs,
   buildGetNotionPageArgs,
+  buildListNotionDatabasesArgs,
   buildListNotionBlockChildrenArgs,
   buildNotionShellCommand,
   buildQueryNotionDatabaseArgs,
@@ -45,6 +46,21 @@ describe("notion command builders", () => {
     expect(JSON.parse(args[3] ?? "")).toEqual({
       query: "案件一覧",
       page_size: 4,
+      filter: {
+        property: "object",
+        value: "database",
+      },
+    });
+  });
+
+  it("builds list args for keywordless database listing", () => {
+    const args = buildListNotionDatabasesArgs({ pageSize: 7 });
+
+    expect(args[0]).toBe("api");
+    expect(args[1]).toBe("/v1/search");
+    expect(args[2]).toBe("--data");
+    expect(JSON.parse(args[3] ?? "")).toEqual({
+      page_size: 7,
       filter: {
         property: "object",
         value: "database",

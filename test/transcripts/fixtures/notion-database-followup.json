@@ -1,0 +1,32 @@
+{
+  "name": "notion-database-followup",
+  "turns": [
+    {
+      "id": "list-databases",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-notion-database-followup",
+      "messageTs": "msg-1",
+      "userId": "U1",
+      "text": "Notion の database を検索して",
+      "now": "2026-03-23T14:27:00.000Z",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["アクセスできる Notion database", "案件一覧"]
+      }
+    },
+    {
+      "id": "query-database",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-notion-database-followup",
+      "messageTs": "msg-2",
+      "userId": "U1",
+      "text": "その database を見て",
+      "now": "2026-03-23T14:28:00.000Z",
+      "expect": {
+        "handled": true,
+        "replyIncludes": ["案件一覧", "冒頭 2 件"],
+        "replyExcludes": ["ページ"]
+      }
+    }
+  ]
+}

@@ -120,6 +120,15 @@ function defaultMessageRouter(input: { messageText: string; threadContext?: { pe
       reasoningSummary: "挨拶です。",
     };
   }
+  if (/(?:notion|ノーション).*(?:database|データベース)|(?:database|データベース).*(?:notion|ノーション)/i.test(text)) {
+    return {
+      action: "query",
+      queryKind: "reference-material",
+      queryScope: /(?:その|この).*(?:database|データベース)|一覧を(?:見て|確認)/i.test(text) ? "thread-context" : "team",
+      confidence: 0.9,
+      reasoningSummary: "Notion database の参照依頼です。",
+    };
+  }
   const queryKind = classifyManagerQuery(text);
   if (queryKind) {
     return {
@@ -183,6 +192,18 @@ function defaultManagerReply(input: { kind: string; conversationKind?: string; f
         typeof facts.recentThreadSummary === "string" ? facts.recentThreadSummary : undefined,
         typeof facts.recommendedAction === "string" ? facts.recommendedAction : undefined,
       ].filter(Boolean).join(" "),
+    };
+  }
+  if (input.kind === "reference-material") {
+    const referenceItems = Array.isArray(facts.referenceItems) ? facts.referenceItems as Array<Record<string, unknown>> : [];
+    if (referenceItems.length === 0) {
+      return { reply: "参照できる資料はまだ見当たりませんでした。" };
+    }
+    return {
+      reply: [
+        "参照できる資料を確認しました。",
+        ...referenceItems.map((item) => `- ${String(item.title ?? item.id ?? "")}`),
+      ].join("\n"),
     };
   }
   return { reply: "対応しました。" };

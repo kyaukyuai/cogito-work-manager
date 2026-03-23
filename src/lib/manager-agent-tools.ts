@@ -13,6 +13,7 @@ import {
 import {
   getNotionPageContent,
   getNotionPageFacts,
+  listNotionDatabases,
   queryNotionDatabase,
   searchNotionDatabases,
   searchNotionPages,
@@ -289,7 +290,7 @@ function createQuerySnapshotTool(): ToolDefinition {
     name: "report_query_snapshot",
     label: "Report Query Snapshot",
     description: "Record which items were shown in a query reply and what remains available for continuation.",
-    promptSnippet: "Use this once for every query reply. Include referenceItems for Notion/docs/web replies when documents or pages were surfaced.",
+    promptSnippet: "Use this once for every query reply. Include referenceItems for Notion/docs/web replies when documents, pages, or databases were surfaced.",
     parameters: Type.Object({
       issueIds: Type.Array(Type.String({ description: "Issue IDs explicitly shown in this reply." })),
       shownIssueIds: Type.Array(Type.String({ description: "All issue IDs already shown in this query chain, including this reply." })),
@@ -298,10 +299,10 @@ function createQuerySnapshotTool(): ToolDefinition {
       replySummary: Type.String({ description: "One short sentence summarizing the reply." }),
       scope: Type.String({ description: "self | team | thread-context" }),
       referenceItems: Type.Optional(Type.Array(Type.Object({
-        id: Type.String({ description: "Stable identifier for the referenced document or page." }),
+        id: Type.String({ description: "Stable identifier for the referenced document, page, or database." }),
         title: Type.Optional(Type.String({ description: "Human-readable title." })),
         url: Type.Optional(Type.String({ description: "Canonical URL when available." })),
-        source: Type.Optional(Type.String({ description: "Origin such as notion, web, slack, or docs." })),
+        source: Type.Optional(Type.String({ description: "Origin such as notion, notion-database, web, slack, or docs." })),
       }))),
     }),
     async execute(_toolCallId, params) {
@@ -469,6 +470,22 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
         return {
           content: [{ type: "text", text: formatNotionSearchResultText(pages) }],
           details: pages,
+        };
+      },
+    },
+    {
+      name: "notion_list_databases",
+      label: "Notion List Databases",
+      description: "List accessible Notion databases as raw facts. Read-only.",
+      promptSnippet: "Use this when the user asks for Notion databases without a specific keyword or wants to browse which databases are available.",
+      parameters: Type.Object({
+        pageSize: Type.Optional(Type.Number({ description: "Maximum number of databases to return." })),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const databases = await listNotionDatabases(params as { pageSize?: number }, env, signal);
+        return {
+          content: [{ type: "text", text: formatNotionDatabaseSearchResultText(databases) }],
+          details: databases,
         };
       },
     },

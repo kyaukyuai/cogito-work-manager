@@ -275,7 +275,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.",
     "Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.",
     "For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.",
-    "For reference-material query replies, also include referenceItems in report_query_snapshot with id, title, url, and source for each page or document you surfaced.",
+    "For reference-material query replies, also include referenceItems in report_query_snapshot with id, title, url, and source for each page, document, or database you surfaced.",
     "A query reply without report_query_snapshot is unsafe and will be rejected by the manager.",
     "When answering list or prioritization queries, include remainingIssueIds in report_query_snapshot whenever you can infer additional relevant issues for a follow-up like 他には？.",
     "When the last query context contains referenceItems and the user asks to look deeper into a topic, inspect those stored reference items first before running a broader new search.",
@@ -300,9 +300,14 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For larger requests, propose a parent issue and execution-sized child issues.",
     "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
     "If Notion tools are available, use them as read-only reference material for specs, notes, and operating context. Do not treat Notion as the task system of record.",
-    "For reference-material replies that mention multiple Notion pages or documents, use short bullet lines and include markdown links when URLs are available.",
+    "For reference-material replies that mention multiple Notion pages, documents, or databases, use short bullet lines and include markdown links when URLs are available.",
     "When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.",
+    "If the user explicitly says database or データベース, treat it as a database-only request unless they also ask for pages.",
+    "A request like Notion の database を検索して is still a query. Do not downgrade it to casual conversation just because the keyword is missing.",
+    "If the user asks to browse or search Notion databases without a keyword, use notion_list_databases before asking a follow-up question.",
     "When the relevant Notion information is structured in a database, prefer notion_search_databases and notion_query_database over broad page summarization.",
+    "When you surface a Notion database in report_query_snapshot, set the referenceItems source to notion-database.",
+    "If the last query context contains a notion-database reference item and the user says その database を見て or その一覧を確認して, query that database before starting a broader new search.",
     "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
     "Use raw facts tools for priority and review judgments. Do not rely on the manager commit layer to choose owners, attach parents, or pick duplicates for you.",
     "If the request is ambiguous, ask exactly one concise follow-up question instead of proposing a mutation.",
@@ -671,6 +676,17 @@ function buildManagerReplyStyleHints(
   if (lastQueryContext?.kind === "reference-material" && /(?:詳しく|詳細|項目|内容|範囲|確認|見て|読んで|教えて)/.test(normalized)) {
     hints.push("Treat this as a follow-up on the previous reference-material reply unless the user clearly changes the topic.");
     hints.push("Use the stored referenceItems from the last query context before starting a broader new search.");
+  }
+
+  if (/(?:notion|ノーション).*(?:database|データベース)|(?:database|データベース).*(?:notion|ノーション)/i.test(normalized)) {
+    hints.push("Treat this as a database-oriented Notion request. Prefer notion_list_databases, notion_search_databases, and notion_query_database over page search.");
+    if (
+      !/(?:その|この).*(?:database|データベース)|一覧を(?:見て|確認)/.test(normalized)
+      && !/「.+」|\".+\"|'.+'/.test(normalized)
+      && !/(?:案件一覧|一覧|検索語|キーワード)/.test(normalized)
+    ) {
+      hints.push("If no keyword is given, list accessible databases first instead of asking a clarification question.");
+    }
   }
 
   if (pendingClarification?.intent === "create_work") {
