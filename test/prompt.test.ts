@@ -83,6 +83,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("When the relevant Notion information is structured in a database, prefer notion_search_databases and notion_query_database over broad page summarization.");
     expect(prompt).toContain("When you surface a Notion database in report_query_snapshot, set the referenceItems source to notion-database.");
     expect(prompt).toContain("If the last query context contains a notion-database reference item and the user says その database を見て or その一覧を確認して, query that database before starting a broader new search.");
+    expect(prompt).toContain("Before filtering or sorting a Notion database, call notion_get_database_facts so you know the property names, types, and status/select options.");
+    expect(prompt).toContain("Use notion_query_database filterProperty/filterOperator/filterValue when the user narrows a Notion database like 進行中だけ, 自分の担当だけ, or 期限が今週のもの.");
+    expect(prompt).toContain("Use notion_query_database sortProperty/sortDirection when the user asks for an order like 期限が近い順 or 更新が新しい順.");
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });

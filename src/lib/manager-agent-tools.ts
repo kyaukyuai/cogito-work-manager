@@ -11,6 +11,7 @@ import {
   type LinearCommandEnv,
 } from "./linear.js";
 import {
+  getNotionDatabaseFacts,
   getNotionPageContent,
   getNotionPageFacts,
   listNotionDatabases,
@@ -183,17 +184,48 @@ function formatNotionDatabaseQueryText(result: {
   url?: string | null;
   lastEditedTime?: string | null;
   description?: string;
+  properties?: Record<string, { type?: string; options?: string[] }>;
   rows: Array<{
     title?: string;
     url?: string | null;
     properties?: Record<string, unknown>;
   }>;
 }): string {
+  const propertySummary = Object.entries(result.properties ?? {})
+    .slice(0, 6)
+    .map(([name, schema]) => {
+      const options = Array.isArray(schema.options) && schema.options.length > 0
+        ? ` (${schema.options.join(", ")})`
+        : "";
+      return `- ${name}: ${schema.type ?? "unknown"}${options}`;
+    });
   return [
     `Database: ${formatNotionDatabaseLabel(result)}`,
+    ...(propertySummary.length > 0 ? ["Properties:", ...propertySummary] : []),
     result.rows.length > 0
       ? ["Rows:", ...result.rows.slice(0, 5).map((row) => `- ${formatNotionDatabaseRow(row)}`)].join("\n")
       : "Rows: (none)",
+  ].join("\n");
+}
+
+function formatNotionDatabaseFactsText(database: {
+  title?: string;
+  url?: string | null;
+  lastEditedTime?: string | null;
+  description?: string;
+  properties?: Record<string, { type?: string; options?: string[] }>;
+}): string {
+  const properties = Object.entries(database.properties ?? {})
+    .slice(0, 12)
+    .map(([name, schema]) => {
+      const options = Array.isArray(schema.options) && schema.options.length > 0
+        ? ` (${schema.options.join(", ")})`
+        : "";
+      return `- ${name}: ${schema.type ?? "unknown"}${options}`;
+    });
+  return [
+    `Database: ${formatNotionDatabaseLabel(database)}`,
+    ...(properties.length > 0 ? ["Properties:", ...properties] : []),
   ].join("\n");
 }
 
@@ -539,16 +571,45 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
       },
     },
     {
+      name: "notion_get_database_facts",
+      label: "Notion Get Database Facts",
+      description: "Load one Notion database and return its schema as raw facts. Read-only.",
+      promptSnippet: "Use this before filtering or sorting a Notion database so you know the property names and types.",
+      parameters: Type.Object({
+        databaseId: Type.String({ description: "Notion database ID." }),
+      }),
+      async execute(_toolCallId, params, signal) {
+        const database = await getNotionDatabaseFacts((params as { databaseId: string }).databaseId, env, signal);
+        return {
+          content: [{ type: "text", text: formatNotionDatabaseFactsText(database) }],
+          details: database,
+        };
+      },
+    },
+    {
       name: "notion_query_database",
       label: "Notion Query Database",
       description: "Load one Notion database and return a small read-only row sample.",
-      promptSnippet: "Use this after selecting a relevant Notion database when you need structured rows instead of free-form page text.",
+      promptSnippet: "Use this after selecting a relevant Notion database when you need structured rows instead of free-form page text. Call notion_get_database_facts first when you need to filter or sort by property.",
       parameters: Type.Object({
         databaseId: Type.String({ description: "Notion database ID." }),
         pageSize: Type.Optional(Type.Number({ description: "Maximum number of rows to return." })),
+        filterProperty: Type.Optional(Type.String({ description: "Optional property name to filter by." })),
+        filterOperator: Type.Optional(Type.String({ description: "Optional filter operator: equals | contains | on_or_after | on_or_before." })),
+        filterValue: Type.Optional(Type.String({ description: "Optional filter value, serialized as text." })),
+        sortProperty: Type.Optional(Type.String({ description: "Optional property name to sort by." })),
+        sortDirection: Type.Optional(Type.String({ description: "Optional sort direction: ascending | descending." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const result = await queryNotionDatabase(params as { databaseId: string; pageSize?: number }, env, signal);
+        const result = await queryNotionDatabase(params as {
+          databaseId: string;
+          pageSize?: number;
+          filterProperty?: string;
+          filterOperator?: "equals" | "contains" | "on_or_after" | "on_or_before";
+          filterValue?: string;
+          sortProperty?: string;
+          sortDirection?: "ascending" | "descending";
+        }, env, signal);
         return {
           content: [{ type: "text", text: formatNotionDatabaseQueryText(result) }],
           details: result,

@@ -59,6 +59,22 @@ export interface NotionPageContent extends NotionPageSummary {
 export interface QueryNotionDatabaseInput {
   databaseId: string;
   pageSize?: number;
+  filterProperty?: string;
+  filterOperator?: "equals" | "contains" | "on_or_after" | "on_or_before";
+  filterValue?: string;
+  sortProperty?: string;
+  sortDirection?: "ascending" | "descending";
+}
+
+export interface NotionDatabasePropertySchema {
+  name: string;
+  type: string;
+  options?: string[];
+}
+
+export interface NotionDatabaseFacts extends NotionDatabaseSummary {
+  properties: Record<string, NotionDatabasePropertySchema>;
+  raw: Record<string, unknown>;
 }
 
 export interface NotionDatabaseRowSummary {
@@ -71,6 +87,7 @@ export interface NotionDatabaseRowSummary {
 }
 
 export interface NotionDatabaseQueryResult extends NotionDatabaseSummary {
+  properties?: Record<string, NotionDatabasePropertySchema>;
   rows: NotionDatabaseRowSummary[];
 }
 
@@ -165,6 +182,58 @@ function extractDatabaseTitle(value: unknown): string | undefined {
 
 function extractDatabaseDescription(value: unknown): string | undefined {
   return firstRichTextPlainText(value);
+}
+
+function extractOptionNames(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const names = value
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+    .map((entry) => entry.name)
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+  return names.length > 0 ? names : undefined;
+}
+
+function simplifyDatabasePropertySchema(
+  name: string,
+  value: unknown,
+): NotionDatabasePropertySchema | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : undefined;
+  if (!type) {
+    return undefined;
+  }
+
+  const schema: NotionDatabasePropertySchema = {
+    name,
+    type,
+  };
+
+  if (type === "status" && record.status && typeof record.status === "object") {
+    schema.options = extractOptionNames((record.status as Record<string, unknown>).options);
+  }
+  if (type === "select" && record.select && typeof record.select === "object") {
+    schema.options = extractOptionNames((record.select as Record<string, unknown>).options);
+  }
+  if (type === "multi_select" && record.multi_select && typeof record.multi_select === "object") {
+    schema.options = extractOptionNames((record.multi_select as Record<string, unknown>).options);
+  }
+
+  return schema;
+}
+
+function simplifyDatabaseProperties(properties: unknown): Record<string, NotionDatabasePropertySchema> {
+  if (!properties || typeof properties !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(properties as Record<string, unknown>)
+      .map(([key, value]) => [key, simplifyDatabasePropertySchema(key, value)] as const)
+      .filter((entry): entry is [string, NotionDatabasePropertySchema] => Boolean(entry[1])),
+  );
 }
 
 function normalizePageSummary(raw: Record<string, unknown>): NotionPageSummary {
@@ -309,16 +378,89 @@ export function buildGetNotionDatabaseArgs(databaseId: string): string[] {
   return ["api", `/v1/databases/${trimmed}`];
 }
 
-export function buildQueryNotionDatabaseArgs(input: QueryNotionDatabaseInput, startCursor?: string): string[] {
-  const databaseId = input.databaseId.trim();
-  if (!databaseId) throw new Error("Notion database ID is required");
+function coerceNotionFilterValue(
+  schema: NotionDatabasePropertySchema | undefined,
+  operator: QueryNotionDatabaseInput["filterOperator"],
+  value: string,
+): Record<string, unknown> | undefined {
+  if (!schema || !operator) {
+    return undefined;
+  }
 
+  switch (schema.type) {
+    case "title":
+      return { title: { [operator]: value } };
+    case "rich_text":
+      return { rich_text: { [operator]: value } };
+    case "status":
+      return operator === "equals" ? { status: { equals: value } } : undefined;
+    case "select":
+      return operator === "equals" ? { select: { equals: value } } : undefined;
+    case "multi_select":
+      return (operator === "equals" || operator === "contains") ? { multi_select: { contains: value } } : undefined;
+    case "checkbox":
+      return operator === "equals" ? { checkbox: { equals: value === "true" } } : undefined;
+    case "number": {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || operator !== "equals") {
+        return undefined;
+      }
+      return { number: { equals: numeric } };
+    }
+    case "date":
+      return (operator === "equals" || operator === "on_or_after" || operator === "on_or_before")
+        ? { date: { [operator]: value } }
+        : undefined;
+    case "relation":
+      return (operator === "equals" || operator === "contains") ? { relation: { contains: value } } : undefined;
+    default:
+      return undefined;
+  }
+}
+
+function buildNotionDatabaseQueryPayload(
+  input: QueryNotionDatabaseInput,
+  schemaMap?: Record<string, NotionDatabasePropertySchema>,
+  startCursor?: string,
+): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     page_size: input.pageSize ?? 10,
   };
   if (startCursor?.trim()) {
     payload.start_cursor = startCursor.trim();
   }
+
+  if (input.filterProperty?.trim() && input.filterOperator && input.filterValue?.trim()) {
+    const property = input.filterProperty.trim();
+    const filter = coerceNotionFilterValue(schemaMap?.[property], input.filterOperator, input.filterValue.trim());
+    if (!filter) {
+      throw new Error(`Unsupported Notion database filter for property ${property}`);
+    }
+    payload.filter = {
+      property,
+      ...filter,
+    };
+  }
+
+  if (input.sortProperty?.trim()) {
+    payload.sorts = [{
+      property: input.sortProperty.trim(),
+      direction: input.sortDirection ?? "ascending",
+    }];
+  }
+
+  return payload;
+}
+
+export function buildQueryNotionDatabaseArgs(
+  input: QueryNotionDatabaseInput,
+  schemaMap?: Record<string, NotionDatabasePropertySchema>,
+  startCursor?: string,
+): string[] {
+  const databaseId = input.databaseId.trim();
+  if (!databaseId) throw new Error("Notion database ID is required");
+
+  const payload = buildNotionDatabaseQueryPayload(input, schemaMap, startCursor);
 
   return ["api", `/v1/databases/${databaseId}/query`, "--data", JSON.stringify(payload)];
 }
@@ -388,6 +530,23 @@ export async function getNotionPageFacts(
     archived: Boolean(payload.is_archived),
     isLocked: Boolean(payload.is_locked),
     properties: (payload.properties as Record<string, unknown> | undefined) ?? undefined,
+    raw: payload,
+  };
+}
+
+export async function getNotionDatabaseFacts(
+  databaseId: string,
+  env: NotionCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<NotionDatabaseFacts> {
+  const payload = await execNotionJson<Record<string, unknown>>(
+    buildGetNotionDatabaseArgs(databaseId),
+    env,
+    signal,
+  );
+  return {
+    ...normalizeDatabaseSummary(payload),
+    properties: simplifyDatabaseProperties(payload.properties),
     raw: payload,
   };
 }
@@ -580,21 +739,21 @@ export async function queryNotionDatabase(
   env: NotionCommandEnv = process.env,
   signal?: AbortSignal,
 ): Promise<NotionDatabaseQueryResult> {
-  const [database, payload] = await Promise.all([
-    execNotionJson<Record<string, unknown>>(
-      buildGetNotionDatabaseArgs(input.databaseId),
-      env,
-      signal,
-    ),
-    execNotionJson<{ results?: Array<Record<string, unknown>> }>(
-      buildQueryNotionDatabaseArgs(input),
-      env,
-      signal,
-    ),
-  ]);
+  const database = await execNotionJson<Record<string, unknown>>(
+    buildGetNotionDatabaseArgs(input.databaseId),
+    env,
+    signal,
+  );
+  const properties = simplifyDatabaseProperties(database.properties);
+  const payload = await execNotionJson<{ results?: Array<Record<string, unknown>> }>(
+    buildQueryNotionDatabaseArgs(input, properties),
+    env,
+    signal,
+  );
 
   return {
     ...normalizeDatabaseSummary(database),
+    properties,
     rows: (payload.results ?? [])
       .filter((item) => item.object === "page")
       .map((item) => normalizeDatabaseRowSummary(item)),

@@ -78,6 +78,50 @@ describe("notion command builders", () => {
     ]);
   });
 
+  it("builds database query args with filter and sort using schema", () => {
+    const args = buildQueryNotionDatabaseArgs(
+      {
+        databaseId: "db-1234",
+        pageSize: 5,
+        filterProperty: "Status",
+        filterOperator: "equals",
+        filterValue: "進行中",
+        sortProperty: "期限",
+        sortDirection: "ascending",
+      },
+      {
+        Status: {
+          name: "Status",
+          type: "status",
+          options: ["進行中", "完了"],
+        },
+        期限: {
+          name: "期限",
+          type: "date",
+        },
+      },
+    );
+
+    expect(args[0]).toBe("api");
+    expect(args[1]).toBe("/v1/databases/db-1234/query");
+    expect(args[2]).toBe("--data");
+    expect(JSON.parse(args[3] ?? "")).toEqual({
+      page_size: 5,
+      filter: {
+        property: "Status",
+        status: {
+          equals: "進行中",
+        },
+      },
+      sorts: [
+        {
+          property: "期限",
+          direction: "ascending",
+        },
+      ],
+    });
+  });
+
   it("builds block children args for page content reads", () => {
     expect(buildListNotionBlockChildrenArgs("abcd-1234")).toEqual([
       "api",
