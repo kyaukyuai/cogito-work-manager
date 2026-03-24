@@ -35,7 +35,7 @@ const config: AppConfig = {
   notionApiToken: "secret_test",
   notionAgendaParentPageId: "parent-page-1",
   botModel: "claude-sonnet-4-6",
-  workspaceDir: "/tmp/pi-slack-linear",
+  workspaceDir: "/tmp/cogito-work-manager",
   heartbeatIntervalMin: 30,
   heartbeatActiveLookbackHours: 24,
   schedulerPollSec: 30,
@@ -43,11 +43,11 @@ const config: AppConfig = {
 };
 
 const threadPaths: ThreadPaths = {
-  rootDir: "/tmp/pi-slack-linear/threads/C0ALAMDRB9V/12345",
-  sessionFile: "/tmp/pi-slack-linear/threads/C0ALAMDRB9V/12345/session.jsonl",
-  logFile: "/tmp/pi-slack-linear/threads/C0ALAMDRB9V/12345/log.jsonl",
-  attachmentsDir: "/tmp/pi-slack-linear/threads/C0ALAMDRB9V/12345/attachments",
-  scratchDir: "/tmp/pi-slack-linear/threads/C0ALAMDRB9V/12345/scratch",
+  rootDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345",
+  sessionFile: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/session.jsonl",
+  logFile: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/log.jsonl",
+  attachmentsDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/attachments",
+  scratchDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/scratch",
 };
 
 describe("prompt helpers", () => {

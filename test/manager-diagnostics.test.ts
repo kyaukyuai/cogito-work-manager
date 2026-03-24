@@ -67,6 +67,7 @@ describe("manager diagnostics", () => {
   });
 
   it("builds thread diagnostics with workgraph and Slack context", async () => {
+    const clarificationRecordedAt = new Date().toISOString();
     await recordPlanningOutcome(repositories.workgraph, {
       occurredAt: "2026-03-19T04:00:00.000Z",
       source: {
@@ -117,7 +118,7 @@ describe("manager diagnostics", () => {
       missingDecisionSummary: "task title が曖昧です。",
       threadParentIssueId: "AIC-970",
       relatedIssueIds: ["AIC-970"],
-      recordedAt: "2026-03-23T04:06:00.000Z",
+      recordedAt: clarificationRecordedAt,
     });
     await saveLastManagerAgentTurn(threadPaths, {
       recordedAt: "2026-03-23T04:06:30.000Z",

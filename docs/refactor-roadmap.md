@@ -1,6 +1,6 @@
 # Refactor Roadmap
 
-この文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) の補足ではなく、実装順序、完了条件、禁止事項を固定するための運用文書である。
+この文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/execution-manager-architecture.md) の補足ではなく、実装順序、完了条件、禁止事項を固定するための運用文書である。
 
 対象読者は maintainers / implementers とする。user-facing な挙動説明文書ではない。
 
@@ -220,7 +220,7 @@ planning / intake / followup を横断する work graph を導入し、append-on
 
 - Phase 番号と名称が architecture doc と一致している
 - 各 phase の `In Scope` と `Out of Scope` が矛盾していない
-- legacy 互換方針が [AGENTS.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/AGENTS.md) のルールと衝突していない
+- legacy 互換方針が [AGENTS.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/AGENTS.md) のルールと衝突していない
 - この roadmap が architecture doc の詳細化であり、別アーキテクチャを定義していない
 
 ## Defaults and Assumptions

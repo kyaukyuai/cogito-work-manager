@@ -21,7 +21,7 @@ import {
 
 describe("workgraph repository", () => {
   it("appends events and projects unified thread and issue state", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 
@@ -119,7 +119,7 @@ describe("workgraph repository", () => {
   });
 
   it("exposes thread and issue read models through query helpers", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-query-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-query-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 
@@ -288,7 +288,7 @@ describe("workgraph repository", () => {
   });
 
   it("projects from a compacted snapshot plus replayed tail events", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-snapshot-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-snapshot-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 
@@ -375,7 +375,7 @@ describe("workgraph repository", () => {
   });
 
   it("recovers a fresh snapshot by replaying the current event log", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-recover-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-recover-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 
@@ -439,7 +439,7 @@ describe("workgraph repository", () => {
   });
 
   it("reports health and compacts automatically when the active log reaches the threshold", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-health-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-health-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 
@@ -492,7 +492,7 @@ describe("workgraph repository", () => {
   });
 
   it("flags recovery-required when the snapshot claims more tail events than the active log contains", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-workgraph-health-recovery-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-workgraph-health-recovery-"));
     const paths = buildSystemPaths(workspaceDir);
     const repository = createFileBackedWorkgraphRepository(paths);
 

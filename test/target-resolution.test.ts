@@ -8,7 +8,7 @@ import { resolveIssueTargetsFromThread } from "../src/orchestrators/updates/targ
 
 describe("resolveIssueTargetsFromThread", () => {
   it("uses workgraph planning context when intake ledger is empty", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-target-resolution-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-target-resolution-"));
     const repository = createFileBackedWorkgraphRepository(buildSystemPaths(workspaceDir));
 
     await repository.append([

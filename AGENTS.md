@@ -2,7 +2,7 @@
 
 この repo は Slack 上の会話 bot ではなく、Linear を system of record とする execution manager として扱う。
 
-設計方針の一次文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) とし、実装順序と完了条件は [docs/refactor-roadmap.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/refactor-roadmap.md) を参照する。この `AGENTS.md` は日々の実装判断で厳守するルールを定義する。
+設計方針の一次文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/execution-manager-architecture.md) とし、実装順序と完了条件は [docs/refactor-roadmap.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/refactor-roadmap.md) を参照する。この `AGENTS.md` は日々の実装判断で厳守するルールを定義する。
 
 ## Current Mode
 
@@ -119,5 +119,5 @@
 
 ## Documentation Rule
 
-- 設計判断を変える変更では、必要に応じて [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) も更新する。
+- 設計判断を変える変更では、必要に応じて [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/execution-manager-architecture.md) も更新する。
 - 実装が方針から逸れる場合は、黙って進めず理由を明記する。

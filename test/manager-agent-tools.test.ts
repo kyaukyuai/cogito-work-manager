@@ -31,7 +31,7 @@ const config: AppConfig = {
   linearTeamKey: "AIC",
   notionApiToken: "secret_test",
   botModel: "claude-sonnet-4-6",
-  workspaceDir: "/tmp/pi-slack-linear",
+  workspaceDir: "/tmp/cogito-work-manager",
   heartbeatIntervalMin: 30,
   heartbeatActiveLookbackHours: 24,
   schedulerPollSec: 30,

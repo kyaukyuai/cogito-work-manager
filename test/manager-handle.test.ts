@@ -464,7 +464,7 @@ describe("handleManagerMessage clarification flow", () => {
   }
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-manager-"));
+    workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-manager-"));
     systemPaths = buildSystemPaths(workspaceDir);
     await ensureManagerStateFiles(systemPaths);
 

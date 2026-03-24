@@ -1,4 +1,4 @@
-# Deploying `pi-slack-linear` on `exe.dev`
+# Deploying `cogito-work-manager` on `exe.dev`
 
 この bot は Slack Socket Mode を使うため、外部から受ける Webhook は不要です。`exe.dev` では VM 上で Docker Compose を常駐させるだけで動かせます。
 
@@ -54,8 +54,8 @@ ssh pi-linear-bot.exe.xyz
 VM 内で repo を配置します。
 
 ```bash
-git clone https://github.com/kyaukyuai/pi-slack-linear.git
-cd pi-slack-linear
+git clone https://github.com/kyaukyuai/cogito-work-manager.git
+cd cogito-work-manager
 ```
 
 private repo の場合は `gh auth login` か deploy key を使ってください。
@@ -110,7 +110,7 @@ NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 ローカルから:
 
 ```bash
-scp ~/.pi/agent/auth.json pi-linear-bot.exe.xyz:/home/exedev/pi-slack-linear/.pi-auth.json
+scp ~/.pi/agent/auth.json pi-linear-bot.exe.xyz:/home/exedev/cogito-work-manager/.pi-auth.json
 ```
 
 VM 内で:

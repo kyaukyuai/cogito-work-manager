@@ -1,4 +1,4 @@
-# pi-slack-linear
+# cogito-work-manager
 
 Slack の専用チャンネルを常時監視し、`pi-coding-agent` を使って Linear を task system of record として扱う execution manager assistant「コギト」です。
 
@@ -26,7 +26,7 @@ Slack (Socket Mode)
   -> Linear API
 ```
 
-execution manager としての中長期設計方針と、repo 向けの目標ディレクトリ構成は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md) を参照してください。
+execution manager としての中長期設計方針と、repo 向けの目標ディレクトリ構成は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/execution-manager-architecture.md) を参照してください。
 
 ## Directory Layout
 
@@ -202,7 +202,7 @@ docker compose up --build
 
 ## Deploy to exe.dev
 
-`exe.dev` では VM 上で Docker Compose を常駐させるだけで動かせます。手順は [docs/exe-dev-deploy.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/exe-dev-deploy.md) を参照してください。
+`exe.dev` では VM 上で Docker Compose を常駐させるだけで動かせます。手順は [docs/exe-dev-deploy.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/exe-dev-deploy.md) を参照してください。
 
 ## Verify
 

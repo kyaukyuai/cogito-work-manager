@@ -33,7 +33,7 @@ describe("system workspace helpers", () => {
   });
 
   it("creates default manager files and review jobs", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-system-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-system-"));
     const paths = buildSystemPaths(workspaceDir);
 
     await ensureManagerStateFiles(paths);
@@ -55,7 +55,7 @@ describe("system workspace helpers", () => {
   });
 
   it("removes the legacy intake ledger file during manager state bootstrap", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-system-legacy-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-system-legacy-"));
     const paths = buildSystemPaths(workspaceDir);
     const legacyFile = join(paths.rootDir, "intake-ledger.json");
 
@@ -67,7 +67,7 @@ describe("system workspace helpers", () => {
   });
 
   it("writes a default heartbeat prompt for fresh workspaces", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-heartbeat-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-heartbeat-"));
     const paths = buildSystemPaths(workspaceDir);
 
     await ensureSystemWorkspace(paths);
@@ -78,7 +78,7 @@ describe("system workspace helpers", () => {
   });
 
   it("removes disabled built-in review jobs when syncing manager state", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-builtins-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-builtins-"));
     const paths = buildSystemPaths(workspaceDir);
 
     await ensureManagerStateFiles(paths);

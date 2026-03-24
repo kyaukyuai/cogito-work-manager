@@ -1098,7 +1098,7 @@ export async function createManagedLinearIssueBatch(
 ): Promise<ManagedCreateIssueBatchResult> {
   ensureLinearAuthConfigured(env);
   const teamKey = requireEnv(env, "LINEAR_TEAM_KEY");
-  const tempDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-batch-"));
+  const tempDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-batch-"));
   const batchFilePath = join(tempDir, "issue-batch.json");
 
   try {

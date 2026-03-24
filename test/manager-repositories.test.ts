@@ -12,7 +12,7 @@ import { createFileBackedManagerRepositories } from "../src/state/repositories/f
 
 describe("file-backed manager repositories", () => {
   it("loads default values from missing files", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-repositories-defaults-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-defaults-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const repositories = createFileBackedManagerRepositories(systemPaths);
 
@@ -29,7 +29,7 @@ describe("file-backed manager repositories", () => {
   });
 
   it("persists manager state without changing file-backed reads", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-repositories-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const now = new Date("2026-03-18T00:00:00.000Z").toISOString();
 
@@ -66,7 +66,7 @@ describe("file-backed manager repositories", () => {
   });
 
   it("reloads saved values from a new repository instance", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-repositories-reload-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-reload-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const now = new Date("2026-03-18T09:00:00.000Z").toISOString();
 
@@ -92,7 +92,7 @@ describe("file-backed manager repositories", () => {
   });
 
   it("validates stored JSON against the repository schema", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-repositories-invalid-"));
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-invalid-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const repositories = createFileBackedManagerRepositories(systemPaths);
 

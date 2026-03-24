@@ -245,7 +245,7 @@ describe("manager transcript fixtures", () => {
   };
 
   beforeEach(async () => {
-    workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-transcript-"));
+    workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-transcript-"));
     systemPaths = buildSystemPaths(workspaceDir);
     await ensureManagerStateFiles(systemPaths);
 

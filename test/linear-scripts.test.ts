@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 
-const repoRoot = "/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear";
+const repoRoot = "/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager";
 const scriptsDir = join(repoRoot, "skills/linear-cli/scripts");
 
 function createLinearStub(): { binDir: string; outputFile: string; cleanup: () => void } {
