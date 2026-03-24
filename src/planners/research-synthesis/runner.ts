@@ -1,6 +1,7 @@
 import type { ResearchSynthesisInput, ResearchSynthesisResult } from "./contract.js";
 import { parseResearchSynthesisReply } from "./parser.js";
 import { buildResearchSynthesisPrompt } from "./prompt.js";
+import { appendWorkspacePersonalizationToSystemPrompt } from "../../lib/prompt-personalization.js";
 
 export type ResearchSynthesisReplyExecutor = (
   prompt: string,
@@ -23,7 +24,7 @@ export async function runResearchSynthesisTurnWithExecutor(
 ): Promise<ResearchSynthesisResult> {
   const reply = await executeReply(
     buildResearchSynthesisPrompt(input),
-    RESEARCH_SYNTHESIS_SYSTEM_PROMPT,
+    appendWorkspacePersonalizationToSystemPrompt(RESEARCH_SYNTHESIS_SYSTEM_PROMPT, input),
     input.taskKey ?? `${input.channelId}-${input.rootThreadTs}-research-synthesis`,
   );
 

@@ -98,6 +98,8 @@ export interface MessageRouterInput {
   userId: string;
   messageText: string;
   currentDate: string;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
   recentThreadEntries: MessageRouterRecentEntry[];
   threadContext?: MessageRouterThreadContext;
   lastQueryContext?: MessageRouterLastQueryContext;

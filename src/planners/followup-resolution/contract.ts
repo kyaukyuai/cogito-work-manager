@@ -5,6 +5,8 @@ export interface FollowupResolutionInput {
   requestText: string;
   acceptableAnswerHint?: string;
   responseText: string;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
   taskKey?: string;
 }
 

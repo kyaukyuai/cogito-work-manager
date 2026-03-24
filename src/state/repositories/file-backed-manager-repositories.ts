@@ -9,10 +9,12 @@ import {
   managerPolicySchema,
   ownerMapSchema,
   planningLedgerSchema,
+  personalizationLedgerSchema,
   webhookDeliveriesSchema,
   type FollowupLedgerEntry,
   type ManagerPolicy,
   type OwnerMap,
+  type PersonalizationLedgerEntry,
   type PlanningLedgerEntry,
   type WebhookDeliveryEntry,
 } from "../manager-state-contract.js";
@@ -31,12 +33,14 @@ export type OwnerMapRepository = ReadonlyRepository<OwnerMap>;
 export type FollowupRepository = MutableRepository<FollowupLedgerEntry[]>;
 export type PlanningRepository = MutableRepository<PlanningLedgerEntry[]>;
 export type WebhookDeliveryRepository = MutableRepository<WebhookDeliveryEntry[]>;
+export type PersonalizationRepository = MutableRepository<PersonalizationLedgerEntry[]>;
 
 export interface ManagerRepositories {
   policy: PolicyRepository;
   ownerMap: OwnerMapRepository;
   followups: FollowupRepository;
   planning: PlanningRepository;
+  personalization: PersonalizationRepository;
   webhookDeliveries: WebhookDeliveryRepository;
   workgraph: WorkgraphRepository;
 }
@@ -90,6 +94,7 @@ export function createFileBackedManagerRepositories(paths: SystemPaths): Manager
     ownerMap: createReadonlyJsonRepository(paths.ownerMapFile, ownerMapSchema, DEFAULT_OWNER_MAP),
     followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, []),
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
+    personalization: createMutableJsonRepository(paths.personalizationLedgerFile, personalizationLedgerSchema, []),
     webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, []),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };

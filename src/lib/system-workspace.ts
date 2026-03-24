@@ -1,20 +1,31 @@
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { stripGeneratedPersonalizationMarkers } from "./personalization-commit.js";
 import type { ThreadPaths } from "./thread-workspace.js";
 
 export interface SystemPaths {
   rootDir: string;
   jobsFile: string;
   heartbeatPromptFile: string;
+  workspaceAgentsFile: string;
+  memoryFile: string;
+  agendaTemplateFile: string;
   policyFile: string;
   ownerMapFile: string;
   followupsFile: string;
   planningLedgerFile: string;
+  personalizationLedgerFile: string;
   webhookDeliveriesFile: string;
   workgraphEventsFile: string;
   workgraphSnapshotFile: string;
   sessionsDir: string;
+}
+
+export interface WorkspaceCustomizationContext {
+  workspaceAgents?: string;
+  workspaceMemory?: string;
+  agendaTemplate?: string;
 }
 
 export const schedulerJobSchema = z
@@ -100,10 +111,14 @@ export function buildSystemPaths(workspaceDir: string): SystemPaths {
     rootDir,
     jobsFile: join(rootDir, "jobs.json"),
     heartbeatPromptFile: join(rootDir, "HEARTBEAT.md"),
+    workspaceAgentsFile: join(rootDir, "AGENTS.md"),
+    memoryFile: join(rootDir, "MEMORY.md"),
+    agendaTemplateFile: join(rootDir, "AGENDA_TEMPLATE.md"),
     policyFile: join(rootDir, "policy.json"),
     ownerMapFile: join(rootDir, "owner-map.json"),
     followupsFile: join(rootDir, "followups.json"),
     planningLedgerFile: join(rootDir, "planning-ledger.json"),
+    personalizationLedgerFile: join(rootDir, "personalization-ledger.json"),
     webhookDeliveriesFile: join(rootDir, "webhook-deliveries.json"),
     workgraphEventsFile: join(rootDir, "workgraph-events.jsonl"),
     workgraphSnapshotFile: join(rootDir, "workgraph-snapshot.json"),
@@ -169,6 +184,36 @@ export async function ensureSystemWorkspace(paths: SystemPaths): Promise<void> {
       throw error;
     }
   }
+
+  try {
+    await stat(paths.workspaceAgentsFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await writeFile(paths.workspaceAgentsFile, "\n", "utf8");
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    await stat(paths.memoryFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await writeFile(paths.memoryFile, "\n", "utf8");
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    await stat(paths.agendaTemplateFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await writeFile(paths.agendaTemplateFile, "\n", "utf8");
+    } else {
+      throw error;
+    }
+  }
 }
 
 export async function loadSchedulerJobs(paths: SystemPaths): Promise<SchedulerJob[]> {
@@ -200,6 +245,58 @@ export async function readHeartbeatInstructions(paths: SystemPaths): Promise<str
     }
     throw error;
   }
+}
+
+export async function readWorkspaceMemory(paths: SystemPaths): Promise<string | undefined> {
+  try {
+    const raw = stripGeneratedPersonalizationMarkers(await readFile(paths.memoryFile, "utf8"));
+    const normalized = raw.trim();
+    return normalized ? normalized : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function readWorkspaceAgents(paths: SystemPaths): Promise<string | undefined> {
+  try {
+    const raw = stripGeneratedPersonalizationMarkers(await readFile(paths.workspaceAgentsFile, "utf8"));
+    const normalized = raw.trim();
+    return normalized ? normalized : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function readAgendaTemplate(paths: SystemPaths): Promise<string | undefined> {
+  try {
+    const raw = await readFile(paths.agendaTemplateFile, "utf8");
+    const normalized = raw.trim();
+    return normalized ? normalized : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export async function loadWorkspaceCustomization(paths: SystemPaths): Promise<WorkspaceCustomizationContext> {
+  const [workspaceAgents, workspaceMemory, agendaTemplate] = await Promise.all([
+    readWorkspaceAgents(paths),
+    readWorkspaceMemory(paths),
+    readAgendaTemplate(paths),
+  ]);
+  return {
+    workspaceAgents,
+    workspaceMemory,
+    agendaTemplate,
+  };
 }
 
 export async function listActiveChannels(

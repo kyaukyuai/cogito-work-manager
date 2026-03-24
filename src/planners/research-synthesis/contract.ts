@@ -7,6 +7,8 @@ export interface ResearchSynthesisInput {
   recentChannelSummary: string;
   relatedIssuesSummary: string;
   webSummary: string;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
   taskKey?: string;
 }
 

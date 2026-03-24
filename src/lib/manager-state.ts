@@ -8,6 +8,7 @@ import {
   type ManagerPolicy,
   type OwnerMap,
   type OwnerMapEntry,
+  type PersonalizationLedgerEntry,
   type PlanningLedgerEntry,
   type WebhookDeliveryEntry,
 } from "../state/manager-state-contract.js";
@@ -60,6 +61,7 @@ export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void>
   await ensureJsonFile(paths.ownerMapFile, DEFAULT_OWNER_MAP);
   await ensureJsonFile(paths.followupsFile, []);
   await ensureJsonFile(paths.planningLedgerFile, []);
+  await ensureJsonFile(paths.personalizationLedgerFile, []);
   await ensureJsonFile(paths.webhookDeliveriesFile, []);
   await ensureTextFile(paths.workgraphEventsFile, "");
   await ensureJsonFile(paths.workgraphSnapshotFile, EMPTY_WORKGRAPH_SNAPSHOT);
@@ -108,4 +110,12 @@ export async function loadWebhookDeliveries(paths: SystemPaths): Promise<Webhook
 
 export async function saveWebhookDeliveries(paths: SystemPaths, ledger: WebhookDeliveryEntry[]): Promise<void> {
   await createFileBackedManagerRepositories(paths).webhookDeliveries.save(ledger);
+}
+
+export async function loadPersonalizationLedger(paths: SystemPaths): Promise<PersonalizationLedgerEntry[]> {
+  return createFileBackedManagerRepositories(paths).personalization.load();
+}
+
+export async function savePersonalizationLedger(paths: SystemPaths, ledger: PersonalizationLedgerEntry[]): Promise<void> {
+  await createFileBackedManagerRepositories(paths).personalization.save(ledger);
 }

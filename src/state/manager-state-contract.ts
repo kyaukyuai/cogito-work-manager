@@ -116,12 +116,72 @@ export const webhookDeliveryEntrySchema = z.object({
 
 export const webhookDeliveriesSchema = z.array(webhookDeliveryEntrySchema);
 
+export const personalizationKindSchema = z.enum(["operating_rule", "preference_or_fact"]);
+export const personalizationSourceSchema = z.enum(["explicit", "inferred"]);
+export const personalizationStatusSchema = z.enum(["candidate", "promoted", "rejected", "superseded"]);
+export const personalizationTargetFileSchema = z.enum(["agents", "memory"]);
+export const personalizationCategorySchema = z.enum([
+  "workflow",
+  "reply-style",
+  "priority",
+  "terminology",
+  "people-and-projects",
+  "preferences",
+  "context",
+]);
+
+export const personalizationLedgerEntrySchema = z.object({
+  id: z.string().min(1),
+  kind: personalizationKindSchema,
+  source: personalizationSourceSchema,
+  category: personalizationCategorySchema,
+  summary: z.string().trim().min(1),
+  canonicalText: z.string().trim().min(1),
+  confidence: z.number().min(0).max(1),
+  evidenceCount: z.number().int().positive(),
+  lastSeenAt: z.string().datetime(),
+  status: personalizationStatusSchema,
+  targetFile: personalizationTargetFileSchema,
+}).superRefine((value, ctx) => {
+  if (value.targetFile === "agents" && value.kind !== "operating_rule") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["targetFile"],
+      message: "agents target requires operating_rule kind",
+    });
+  }
+  if (value.targetFile === "memory" && value.kind !== "preference_or_fact") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["targetFile"],
+      message: "memory target requires preference_or_fact kind",
+    });
+  }
+  if (value.targetFile === "agents" && !["workflow", "reply-style", "priority"].includes(value.category)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["category"],
+      message: "agents target must use an operating-rule category",
+    });
+  }
+  if (value.targetFile === "memory" && !["terminology", "people-and-projects", "preferences", "context"].includes(value.category)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["category"],
+      message: "memory target must use a memory category",
+    });
+  }
+});
+
+export const personalizationLedgerSchema = z.array(personalizationLedgerEntrySchema);
+
 export type ManagerPolicy = z.infer<typeof managerPolicySchema>;
 export type OwnerMap = z.infer<typeof ownerMapSchema>;
 export type OwnerMapEntry = z.infer<typeof ownerMapEntrySchema>;
 export type FollowupLedgerEntry = z.infer<typeof followupLedgerEntrySchema>;
 export type PlanningLedgerEntry = z.infer<typeof planningLedgerEntrySchema>;
 export type WebhookDeliveryEntry = z.infer<typeof webhookDeliveryEntrySchema>;
+export type PersonalizationLedgerEntry = z.infer<typeof personalizationLedgerEntrySchema>;
 
 export const DEFAULT_POLICY: ManagerPolicy = {
   controlRoomChannelId: "C0ALAMDRB9V",

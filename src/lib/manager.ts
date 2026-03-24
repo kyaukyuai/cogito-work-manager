@@ -89,6 +89,7 @@ import {
   savePendingManagerClarification,
   type PendingManagerClarification,
 } from "./pending-manager-clarification.js";
+import { handlePersonalizationUpdate } from "../orchestrators/personalization/handle-personalization.js";
 
 export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation" | "scheduler";
 export type ClarificationNeed = "scope" | "due_date" | "execution_plan";
@@ -1271,6 +1272,28 @@ export async function handleManagerMessage(
         ].filter(Boolean)),
         now,
       });
+    }
+
+    try {
+      await handlePersonalizationUpdate({
+        config,
+        systemPaths,
+        paths,
+        repositories,
+        turnKind: "slack-message",
+        latestUserMessage: message.text,
+        latestAssistantReply: mergedReply,
+        committedCommands: commitResult.committed.map((entry) => entry.commandType),
+        rejectedReasons: commitResult.rejected.map((entry) => entry.reason),
+        currentDate: currentDateInJst(now),
+        issueContext: {
+          issueId: agentTurn.taskExecutionDecision?.targetIssueId,
+          issueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
+        },
+        now,
+      });
+    } catch {
+      // Personalization updates are silent and must not affect the main reply path.
     }
 
     await saveLastManagerAgentTurn(paths, {

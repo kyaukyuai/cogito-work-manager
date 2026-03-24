@@ -36,6 +36,11 @@ import {
   type TaskPlanningInput,
   type TaskPlanningResult,
 } from "../planners/task-intake/index.js";
+import {
+  runPersonalizationExtractionTurnWithExecutor,
+  type PersonalizationExtractionInput,
+  type PersonalizationExtractionResult,
+} from "../planners/personalization-extraction/index.js";
 import { createManagerAgentTools } from "./manager-agent-tools.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
@@ -58,7 +63,7 @@ import {
   type TaskExecutionDecisionReport,
 } from "./manager-command-commit.js";
 import type { TaskIntent } from "./slack.js";
-import { buildSystemPaths } from "./system-workspace.js";
+import { buildSystemPaths, loadWorkspaceCustomization, type WorkspaceCustomizationContext } from "./system-workspace.js";
 import type { AttachmentRecord, ThreadPaths } from "./thread-workspace.js";
 
 export interface AgentInput {
@@ -88,6 +93,9 @@ export interface ManagerAgentInput {
   lastQueryContext?: ThreadQueryContinuation;
   combinedRequestText?: string;
   pendingClarification?: PendingManagerClarification;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
+  agendaTemplate?: string;
 }
 
 export interface ManagerSystemInput {
@@ -99,6 +107,9 @@ export interface ManagerSystemInput {
   currentDate: string;
   runAtJst: string;
   metadata?: Record<string, string>;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
+  agendaTemplate?: string;
 }
 
 export interface ManagerAgentTurnResult {
@@ -149,6 +160,14 @@ export {
   type TaskPlanningResultClarify,
   type TaskPlanningResultCreate,
 } from "../planners/task-intake/index.js";
+
+export {
+  buildPersonalizationExtractionPrompt,
+  parsePersonalizationExtractionReply,
+  type PersonalizationExtractionInput,
+  type PersonalizationExtractionResult,
+  type PersonalizationObservation,
+} from "../planners/personalization-extraction/index.js";
 
 interface SharedRuntime {
   agentDir: string;
@@ -271,6 +290,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Treat the allowed Slack channel as a control room for task execution.",
     "Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.",
     "Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.",
+    "If runtime workspace AGENTS are provided in the prompt context, treat them as operator-specific operating rules and stable workflow preferences unless they conflict with hardcoded system rules.",
+    "If workspace memory is provided in the prompt context, treat it as operator-specific working conventions, terminology, and preferences unless it conflicts with the system rules.",
+    "If a Notion agenda template is provided in the prompt context, prefer it when creating or extending Notion agendas unless the user explicitly overrides it.",
     "Use proposal tools for create/update/follow-up actions. Proposal tools do not execute side effects.",
     "Never pretend a proposal has already been committed. The manager will validate and commit proposals after your turn.",
     "When runKind=webhook-issue-created, inspect the freshly created Linear issue and decide whether there is any clear, safe action you can execute now through the existing proposal tools.",
@@ -756,6 +778,33 @@ function buildManagerReplyStyleHints(
   return hints;
 }
 
+async function loadPromptCustomization(config: AppConfig): Promise<WorkspaceCustomizationContext> {
+  return loadWorkspaceCustomization(buildSystemPaths(config.workspaceDir));
+}
+
+function hasNotionSignal(text: string | undefined): boolean {
+  return /(?:notion|ノーション|アジェンダ)/i.test(text ?? "");
+}
+
+function shouldIncludeAgendaTemplateForManagerMessage(input: ManagerAgentInput): boolean {
+  if (hasNotionSignal(input.text)) {
+    return true;
+  }
+  if (hasNotionSignal(input.pendingClarification?.originalUserMessage)
+    || hasNotionSignal(input.pendingClarification?.lastUserMessage)
+    || hasNotionSignal(input.pendingClarification?.clarificationReply)) {
+    return true;
+  }
+  return input.lastQueryContext?.referenceItems?.some((item) => (item.source ?? "").startsWith("notion")) ?? false;
+}
+
+function shouldIncludeAgendaTemplateForManagerSystem(input: ManagerSystemInput): boolean {
+  if (hasNotionSignal(input.text)) {
+    return true;
+  }
+  return Object.values(input.metadata ?? {}).some((value) => hasNotionSignal(value));
+}
+
 export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext, input.pendingClarification)
     .map((hint) => `- ${hint}`);
@@ -789,6 +838,27 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- recordedAt: ${input.pendingClarification.recordedAt}`,
       ]
     : ["- (none)"];
+  const workspaceAgentsSection = input.workspaceAgents
+    ? [
+        "",
+        "Runtime workspace AGENTS:",
+        ...input.workspaceAgents.split("\n"),
+      ]
+    : [];
+  const workspaceMemorySection = input.workspaceMemory
+    ? [
+        "",
+        "Workspace memory:",
+        ...input.workspaceMemory.split("\n"),
+      ]
+    : [];
+  const agendaTemplateSection = input.agendaTemplate
+    ? [
+        "",
+        "Notion agenda template:",
+        ...input.agendaTemplate.split("\n"),
+      ]
+    : [];
   return [
     "Manager message context:",
     `- channelId: ${input.channelId}`,
@@ -805,6 +875,9 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "Pending manager clarification context:",
     ...pendingClarificationLines,
+    ...workspaceAgentsSection,
+    ...workspaceMemorySection,
+    ...agendaTemplateSection,
     "",
     "Public reply style hints:",
     ...styleHints,
@@ -815,6 +888,27 @@ export function buildManagerSystemPromptInput(input: ManagerSystemInput): string
   const metadataLines = Object.entries(input.metadata ?? {})
     .map(([key, value]) => `- ${key}: ${value}`)
     .join("\n");
+  const workspaceAgentsSection = input.workspaceAgents
+    ? [
+        "",
+        "Runtime workspace AGENTS:",
+        ...input.workspaceAgents.split("\n"),
+      ]
+    : [];
+  const workspaceMemorySection = input.workspaceMemory
+    ? [
+        "",
+        "Workspace memory:",
+        ...input.workspaceMemory.split("\n"),
+      ]
+    : [];
+  const agendaTemplateSection = input.agendaTemplate
+    ? [
+        "",
+        "Notion agenda template:",
+        ...input.agendaTemplate.split("\n"),
+      ]
+    : [];
 
   return [
     "Manager system task context:",
@@ -825,6 +919,9 @@ export function buildManagerSystemPromptInput(input: ManagerSystemInput): string
     `- currentDateJst: ${input.currentDate}`,
     `- runAtJst: ${input.runAtJst}`,
     ...(metadataLines ? ["", "Metadata:", metadataLines] : []),
+    ...workspaceAgentsSection,
+    ...workspaceMemorySection,
+    ...agendaTemplateSection,
     "",
     "Task:",
     input.text,
@@ -836,6 +933,7 @@ export async function runResearchSynthesisTurn(
   paths: ThreadPaths,
   input: ResearchSynthesisInput,
 ): Promise<ResearchSynthesisResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runResearchSynthesisTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
@@ -844,7 +942,11 @@ export async function runResearchSynthesisTurn(
       systemPrompt,
       sessionSuffix,
     ),
-    input,
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
   );
 }
 
@@ -853,6 +955,7 @@ export async function runMessageRouterTurn(
   paths: ThreadPaths,
   input: MessageRouterInput,
 ): Promise<MessageRouterResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runMessageRouterTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
@@ -861,7 +964,11 @@ export async function runMessageRouterTurn(
       systemPrompt,
       sessionSuffix,
     ),
-    input,
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
   );
 }
 
@@ -870,6 +977,7 @@ export async function runManagerReplyTurn(
   paths: ThreadPaths,
   input: ManagerReplyInput,
 ): Promise<ManagerReplyResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runManagerReplyTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
@@ -878,7 +986,11 @@ export async function runManagerReplyTurn(
       systemPrompt,
       sessionSuffix,
     ),
-    input,
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
   );
 }
 
@@ -887,6 +999,7 @@ export async function runTaskPlanningTurn(
   paths: ThreadPaths,
   input: TaskPlanningInput,
 ): Promise<TaskPlanningResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runTaskPlanningTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
@@ -895,7 +1008,11 @@ export async function runTaskPlanningTurn(
       systemPrompt,
       sessionSuffix,
     ),
-    input,
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
   );
 }
 
@@ -904,6 +1021,7 @@ export async function runFollowupResolutionTurn(
   paths: ThreadPaths,
   input: FollowupResolutionInput,
 ): Promise<FollowupResolutionResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runFollowupResolutionTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
@@ -912,7 +1030,33 @@ export async function runFollowupResolutionTurn(
       systemPrompt,
       sessionSuffix,
     ),
-    input,
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
+  );
+}
+
+export async function runPersonalizationExtractionTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: PersonalizationExtractionInput,
+): Promise<PersonalizationExtractionResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
+  return runPersonalizationExtractionTurnWithExecutor(
+    (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
+      config,
+      paths,
+      prompt,
+      systemPrompt,
+      sessionSuffix,
+    ),
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
   );
 }
 
@@ -982,7 +1126,15 @@ export async function runManagerAgentTurn(
   paths: ThreadPaths,
   input: ManagerAgentInput,
 ): Promise<ManagerAgentTurnResult> {
-  return runStructuredPromptTurn(config, paths, buildManagerAgentPrompt(input));
+  const customization = await loadPromptCustomization(config);
+  return runStructuredPromptTurn(config, paths, buildManagerAgentPrompt({
+    ...input,
+    workspaceAgents: customization.workspaceAgents,
+    workspaceMemory: customization.workspaceMemory,
+    agendaTemplate: shouldIncludeAgendaTemplateForManagerMessage(input)
+      ? customization.agendaTemplate
+      : undefined,
+  }));
 }
 
 export async function runManagerSystemTurn(
@@ -990,7 +1142,15 @@ export async function runManagerSystemTurn(
   paths: ThreadPaths,
   input: ManagerSystemInput,
 ): Promise<ManagerAgentTurnResult> {
-  return runStructuredPromptTurn(config, paths, buildManagerSystemPromptInput(input));
+  const customization = await loadPromptCustomization(config);
+  return runStructuredPromptTurn(config, paths, buildManagerSystemPromptInput({
+    ...input,
+    workspaceAgents: customization.workspaceAgents,
+    workspaceMemory: customization.workspaceMemory,
+    agendaTemplate: shouldIncludeAgendaTemplateForManagerSystem(input)
+      ? customization.agendaTemplate
+      : undefined,
+  }));
 }
 
 async function runPromptTurn(config: AppConfig, paths: ThreadPaths, prompt: string): Promise<string> {

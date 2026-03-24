@@ -56,6 +56,8 @@ export interface TaskPlanningInput {
   combinedRequest: string;
   clarificationQuestion?: string;
   currentDate: string;
+  workspaceAgents?: string;
+  workspaceMemory?: string;
   taskKey?: string;
 }
 

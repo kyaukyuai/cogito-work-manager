@@ -1,4 +1,5 @@
 import { mergeSystemReply } from "../../lib/system-slack-reply.js";
+import { handlePersonalizationUpdate } from "../personalization/handle-personalization.js";
 import {
   runManagerSystemTurn,
   type ManagerAgentTurnResult,
@@ -7,6 +8,7 @@ import { commitManagerCommandProposals, type ManagerCommitResult } from "../../l
 import type { AppConfig } from "../../lib/config.js";
 import type { LinearCommandEnv, LinearIssue } from "../../lib/linear.js";
 import type { SchedulerJob } from "../../lib/system-workspace.js";
+import { buildSystemPaths } from "../../lib/system-workspace.js";
 import type { ManagerPolicy } from "../../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
 import type { ThreadPaths } from "../../lib/thread-workspace.js";
@@ -14,7 +16,7 @@ import type { ThreadPaths } from "../../lib/thread-workspace.js";
 export interface HandleIssueCreatedWebhookArgs {
   config: AppConfig;
   paths: ThreadPaths;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "workgraph">;
+  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "workgraph" | "personalization">;
   policy: ManagerPolicy;
   issue: LinearIssue;
   deliveryId: string;
@@ -90,12 +92,37 @@ export async function handleIssueCreatedWebhook(
   args: HandleIssueCreatedWebhookArgs,
 ): Promise<HandleIssueCreatedWebhookResult> {
   try {
+    const webhookSummary = summarizeIssue(args.issue);
+    const updatePersonalization = async (reply: string, commitResult: ManagerCommitResult): Promise<void> => {
+      try {
+        await handlePersonalizationUpdate({
+          config: args.config,
+          systemPaths: buildSystemPaths(args.config.workspaceDir),
+          paths: args.paths,
+          repositories: args.repositories,
+          turnKind: "manager-system",
+          latestUserMessage: webhookSummary,
+          latestAssistantReply: reply,
+          committedCommands: commitResult.committed.map((entry) => entry.commandType),
+          rejectedReasons: commitResult.rejected.map((entry) => entry.reason),
+          currentDate: args.currentDate,
+          issueContext: {
+            issueId: args.issue.id,
+            issueIdentifier: args.issue.identifier,
+          },
+          now: args.now,
+        });
+      } catch {
+        // webhook automation stays silent if personalization extraction fails
+      }
+    };
+
     const agentResult = await runManagerSystemTurn(args.config, args.paths, {
       kind: "webhook-issue-created",
       channelId: args.policy.controlRoomChannelId,
       rootThreadTs: `webhook:${args.issue.identifier}`,
       messageTs: args.deliveryId,
-      text: summarizeIssue(args.issue),
+      text: webhookSummary,
       currentDate: args.currentDate,
       runAtJst: args.runAtJst,
       metadata: {
@@ -115,7 +142,7 @@ export async function handleIssueCreatedWebhook(
         channelId: args.policy.controlRoomChannelId,
         rootThreadTs: `webhook:${args.issue.identifier}`,
         messageTs: args.deliveryId,
-        text: summarizeIssue(args.issue),
+        text: webhookSummary,
       },
       now: args.now,
       policy: args.policy,
@@ -125,33 +152,39 @@ export async function handleIssueCreatedWebhook(
 
     const createdIssueIds = collectCreatedIssueIds(commitResult);
     if (commitResult.committed.length > 0) {
+      const reply = mergeSystemReply({
+        agentReply: agentResult.reply,
+        commitSummaries: commitResult.replySummaries,
+        commitRejections: commitResult.rejected.map((entry) => entry.reason),
+      });
+      await updatePersonalization(reply, commitResult);
       return {
         status: "committed",
         agentResult,
         commitResult,
         createdIssueIds,
-        reply: mergeSystemReply({
-          agentReply: agentResult.reply,
-          commitSummaries: commitResult.replySummaries,
-          commitRejections: commitResult.rejected.map((entry) => entry.reason),
-        }),
+        reply,
       };
     }
 
     if (commitResult.rejected.length > 0) {
+      const reply = mergeSystemReply({
+        agentReply: agentResult.reply,
+        commitSummaries: commitResult.replySummaries,
+        commitRejections: commitResult.rejected.map((entry) => entry.reason),
+      });
+      await updatePersonalization(reply, commitResult);
       return {
         status: "failed",
         agentResult,
         commitResult,
         createdIssueIds,
         reason: commitResult.rejected.map((entry) => entry.reason).join(" / "),
-        reply: mergeSystemReply({
-          agentReply: agentResult.reply,
-          commitSummaries: commitResult.replySummaries,
-          commitRejections: commitResult.rejected.map((entry) => entry.reason),
-        }),
+        reply,
       };
     }
+
+    await updatePersonalization(agentResult.reply, commitResult);
 
     return {
       status: "noop",

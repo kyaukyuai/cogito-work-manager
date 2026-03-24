@@ -2,14 +2,14 @@ import { resolve } from "node:path";
 import { buildManagerIssueDiagnostics, buildManagerThreadDiagnostics } from "../src/lib/manager-diagnostics.js";
 import type { AppConfig } from "../src/lib/config.js";
 import { ensureManagerStateFiles, loadWebhookDeliveries } from "../src/lib/manager-state.js";
-import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildSystemPaths, readWorkspaceAgents, readWorkspaceMemory } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
-type Command = "thread" | "issue" | "webhook";
+type Command = "thread" | "issue" | "webhook" | "personalization";
 
 function parseCommand(value: string | undefined): Command {
-  if (value === "thread" || value === "issue" || value === "webhook") return value;
-  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|issue|webhook> <arg1> <arg2?> [workspaceDir]");
+  if (value === "thread" || value === "issue" || value === "webhook" || value === "personalization") return value;
+  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|issue|webhook|personalization> <arg1> <arg2?> [workspaceDir]");
 }
 
 function buildRuntimeConfig(workspaceDir: string): AppConfig {
@@ -76,6 +76,20 @@ async function main(): Promise<void> {
   if (command === "webhook") {
     const deliveries = await loadWebhookDeliveries(systemPaths);
     process.stdout.write(`${JSON.stringify(deliveries.slice(-20), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "personalization") {
+    const [ledger, workspaceAgents, workspaceMemory] = await Promise.all([
+      repositories.personalization.load(),
+      readWorkspaceAgents(systemPaths),
+      readWorkspaceMemory(systemPaths),
+    ]);
+    process.stdout.write(`${JSON.stringify({
+      recentEntries: ledger.slice(-20),
+      workspaceAgents,
+      workspaceMemory,
+    }, null, 2)}\n`);
     return;
   }
 

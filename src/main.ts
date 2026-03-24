@@ -22,6 +22,7 @@ import { commitManagerCommandProposals } from "./lib/manager-command-commit.js";
 import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
 import { handleIssueCreatedWebhook } from "./orchestrators/webhooks/handle-issue-created.js";
+import { handlePersonalizationUpdate } from "./orchestrators/personalization/handle-personalization.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runManagerSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
 import { postSlackProcessingNotice, sendSlackReply } from "./lib/slack-replies.js";
@@ -313,11 +314,37 @@ async function main(): Promise<void> {
         channelId: args.input.channelId,
         threadTs: args.input.rootThreadTs,
       });
-      return mergeSystemReply({
+      const mergedReply = mergeSystemReply({
         agentReply: agentResult.reply,
         commitSummaries: commitResult.replySummaries,
         commitRejections: commitResult.rejected.map((entry) => entry.reason),
       });
+      try {
+        await handlePersonalizationUpdate({
+          config,
+          systemPaths,
+          paths: args.paths,
+          repositories: managerRepositories,
+          turnKind: "manager-system",
+          latestUserMessage: args.input.text,
+          latestAssistantReply: mergedReply,
+          committedCommands: commitResult.committed.map((entry) => entry.commandType),
+          rejectedReasons: commitResult.rejected.map((entry) => entry.reason),
+          currentDate: args.input.currentDate,
+          issueContext: {
+            issueId: args.input.metadata?.issueId,
+            issueIdentifier: args.input.metadata?.issueIdentifier,
+          },
+          now: new Date(),
+        });
+      } catch (error) {
+        logger.warn("Personalization update failed after manager system task", {
+          channelId: args.input.channelId,
+          threadTs: args.input.rootThreadTs,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return mergedReply;
     } catch (error) {
       logger.warn("Manager system agent fell back to safety-only response", {
         channelId: args.input.channelId,

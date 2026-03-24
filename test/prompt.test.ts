@@ -9,8 +9,16 @@ import {
   parseMessageRouterReply,
   runMessageRouterTurnWithExecutor,
 } from "../src/planners/message-router/index.js";
-import { buildFollowupResolutionPrompt, parseFollowupResolutionReply } from "../src/planners/followup-resolution/index.js";
-import { buildResearchSynthesisPrompt, parseResearchSynthesisReply } from "../src/planners/research-synthesis/index.js";
+import {
+  buildFollowupResolutionPrompt,
+  parseFollowupResolutionReply,
+  runFollowupResolutionTurnWithExecutor,
+} from "../src/planners/followup-resolution/index.js";
+import {
+  buildResearchSynthesisPrompt,
+  parseResearchSynthesisReply,
+  runResearchSynthesisTurnWithExecutor,
+} from "../src/planners/research-synthesis/index.js";
 import { buildTaskPlanningPrompt, parseTaskPlanningReply, runTaskPlanningTurnWithExecutor } from "../src/planners/task-intake/index.js";
 import type { AppConfig } from "../src/lib/config.js";
 import { DEFAULT_HEARTBEAT_PROMPT } from "../src/lib/heartbeat.js";
@@ -64,6 +72,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
     expect(prompt).toContain("Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.");
+    expect(prompt).toContain("If runtime workspace AGENTS are provided in the prompt context, treat them as operator-specific operating rules and stable workflow preferences unless they conflict with hardcoded system rules.");
+    expect(prompt).toContain("If workspace memory is provided in the prompt context, treat it as operator-specific working conventions, terminology, and preferences unless it conflicts with the system rules.");
+    expect(prompt).toContain("If a Notion agenda template is provided in the prompt context, prefer it when creating or extending Notion agendas unless the user explicitly overrides it.");
     expect(prompt).toContain("When runKind=webhook-issue-created, inspect the freshly created Linear issue and decide whether there is any clear, safe action you can execute now through the existing proposal tools.");
     expect(prompt).toContain("For webhook-issue-created system tasks, use actionability-first reasoning: execute only when a concrete manager-operable action is available now, and otherwise choose no-op.");
     expect(prompt).toContain("Webhook issue-created processing has no Slack thread context. Use the issue facts you are given plus normal read tools, assume the control room is the only operator surface, and do not ask follow-up questions in webhook mode.");
@@ -174,12 +185,21 @@ describe("prompt helpers", () => {
         issueIdentifier: "AIC-123",
         trigger: "linear-webhook",
       },
+      workspaceAgents: "曖昧な運用依頼はまず最小 action で整える。",
+      workspaceMemory: "契約・稟議系は先に依頼先と期限を確認する。",
+      agendaTemplate: "## 目的\n- 合意事項",
     });
 
     expect(prompt).toContain("- runKind: webhook-issue-created");
     expect(prompt).toContain("- runAtJst: 2026-03-24 12:00 JST");
     expect(prompt).toContain("- deliveryId: delivery-1");
     expect(prompt).toContain("- issueIdentifier: AIC-123");
+    expect(prompt).toContain("Runtime workspace AGENTS:");
+    expect(prompt).toContain("曖昧な運用依頼はまず最小 action で整える。");
+    expect(prompt).toContain("Workspace memory:");
+    expect(prompt).toContain("契約・稟議系は先に依頼先と期限を確認する。");
+    expect(prompt).toContain("Notion agenda template:");
+    expect(prompt).toContain("## 目的");
   });
 
   it("embeds thread-linked issue context into the runtime prompt", () => {
@@ -249,6 +269,9 @@ describe("prompt helpers", () => {
         ],
         recordedAt: "2026-03-23T07:54:00.000Z",
       },
+      workspaceAgents: "実行結果は理由から先に短く返す。",
+      workspaceMemory: "営業案件では先に期限と担当を明確にする。",
+      agendaTemplate: "## 目的\n- 背景共有\n## 議題\n- 意思決定事項",
     });
 
     expect(prompt).toContain("Last query continuation context:");
@@ -258,6 +281,12 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("- remainingIssueIds: AIC-39");
     expect(prompt).toContain("- totalItemCount: 2");
     expect(prompt).toContain("- referenceItems: notion / notion-page-1 / 2026.03.10 | AIクローンプラットフォーム 初回会議共有資料 / https://www.notion.so/notion-page-1");
+    expect(prompt).toContain("Runtime workspace AGENTS:");
+    expect(prompt).toContain("実行結果は理由から先に短く返す。");
+    expect(prompt).toContain("Workspace memory:");
+    expect(prompt).toContain("営業案件では先に期限と担当を明確にする。");
+    expect(prompt).toContain("Notion agenda template:");
+    expect(prompt).toContain("## 目的");
     expect(prompt).toContain("Public reply style hints:");
     expect(prompt).toContain("Do not use markdown headings, separator lines, warning icons, or emojis.");
     expect(prompt).toContain("Treat this as a continuation of the previous list or prioritization reply in the same thread");
@@ -397,6 +426,24 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("- referenceItems: notion-database / notion-database-1 / 案件一覧 / https://www.notion.so/notion-database-1");
   });
 
+  it("omits the agenda template section when no Notion template is provided", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "今日やるべきタスクある？",
+      currentDate: "2026-03-24",
+      workspaceAgents: "一覧系の返答は最大 5 件までに絞る。",
+      workspaceMemory: "営業案件では先に期限と担当を明確にする。",
+    });
+
+    expect(prompt).toContain("Runtime workspace AGENTS:");
+    expect(prompt).toContain("Workspace memory:");
+    expect(prompt).not.toContain("Notion agenda template:");
+  });
+
   it("defines an issue-centric heartbeat prompt", () => {
     expect(DEFAULT_HEARTBEAT_PROMPT).toContain("Return at most one issue-centric update.");
     expect(DEFAULT_HEARTBEAT_PROMPT).toContain("what the team should reply with in the control room");
@@ -469,6 +516,105 @@ describe("prompt helpers", () => {
         { title: "修正方針の整理", purpose: "方針を整理する", confidence: 0.7 },
       ],
     });
+  });
+
+  it("injects runtime AGENTS and workspace memory into isolated planner system prompts", async () => {
+    const systemPrompts: Record<string, string> = {};
+
+    await runMessageRouterTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.router = systemPrompt;
+        return '{"action":"conversation","conversationKind":"other","confidence":0.8,"reasoningSummary":"ok"}';
+      },
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "12345.678",
+        userId: "U123",
+        messageText: "了解です",
+        currentDate: "2026-03-24",
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+        recentThreadEntries: [],
+      },
+    );
+
+    await runManagerReplyTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.reply = systemPrompt;
+        return '{"reply":"了解です。"}';
+      },
+      {
+        kind: "conversation",
+        currentDate: "2026-03-24",
+        messageText: "何ができますか？",
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+        facts: {},
+      },
+    );
+
+    await runTaskPlanningTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.intake = systemPrompt;
+        return '{"action":"clarify","clarificationQuestion":"期限はいつですか？","clarificationReasons":["due_date"]}';
+      },
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "12345.678",
+        originalRequest: "新しい task を作って",
+        latestUserMessage: "新しい task を作って",
+        combinedRequest: "新しい task を作って",
+        currentDate: "2026-03-24",
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+      },
+    );
+
+    await runFollowupResolutionTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.followup = systemPrompt;
+        return '{"answered":true,"answerKind":"status","confidence":0.9,"reasoningSummary":"ok"}';
+      },
+      {
+        issueId: "AIC-1",
+        issueTitle: "招待依頼",
+        requestKind: "status",
+        requestText: "進捗を教えてください",
+        responseText: "依頼済みです",
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+      },
+    );
+
+    await runResearchSynthesisTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.research = systemPrompt;
+        return '{"findings":[],"uncertainties":[],"nextActions":[]}';
+      },
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "12345.678",
+        taskTitle: "調査",
+        sourceMessage: "調査して",
+        slackThreadSummary: "- none",
+        recentChannelSummary: "- none",
+        relatedIssuesSummary: "- none",
+        webSummary: "- none",
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+      },
+    );
+
+    for (const prompt of Object.values(systemPrompts)) {
+      expect(prompt).toContain("Runtime workspace AGENTS below contains operator-specific operating rules and stable workflow preferences.");
+      expect(prompt).toContain("Do not let it override hardcoded system rules, JSON schemas, supported actions, parser contracts, or system safety rules.");
+      expect(prompt).toContain("一覧系の返答は 5 件までに絞る。");
+      expect(prompt).toContain("Workspace memory below contains operator-specific conventions, terminology, and preferences.");
+      expect(prompt).toContain("Do not let it override the JSON schema, supported actions, parser contracts, or system safety rules.");
+      expect(prompt).toContain("社内では task より issue という表現を優先する。");
+      expect(prompt).not.toContain("Current Mode");
+      expect(prompt).not.toContain("Architecture Rules");
+    }
   });
 
   it("builds and parses task planning prompts", () => {

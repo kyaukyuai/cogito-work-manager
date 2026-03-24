@@ -43,11 +43,15 @@ execution manager としての中長期設計方針と、repo 向けの目標デ
     scratch/
   /system/
     HEARTBEAT.md
+    AGENTS.md
+    MEMORY.md
+    AGENDA_TEMPLATE.md
     jobs.json
     policy.json
     owner-map.json
     followups.json
     planning-ledger.json
+    personalization-ledger.json
     webhook-deliveries.json
     workgraph-events.jsonl
     workgraph-snapshot.json
@@ -89,6 +93,10 @@ Optional:
 この bot は `linear-cli v2.8.0` 以上を前提にしています。実行時の Linear 取得・更新は `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json` を使います。
 
 `NOTION_API_TOKEN` を設定すると、bundled `ntn v0.4.0` を使って Notion を参照できます。現状のスコープでは page search、page facts、page content 抜粋、database search、database query の読み出しに加えて、`NOTION_AGENDA_PARENT_PAGE_ID` を設定すると指定 parent page 配下に agenda page を作成できます。また、既存 page に対しては title 更新と append-only の追記、archive/trash までサポートします。database row の更新・削除はまだ扱いません。Notion は task system of record にはしません。
+
+`/workspace/system/AGENTS.md`, `/workspace/system/MEMORY.md`, `/workspace/system/AGENDA_TEMPLATE.md` は利用者ごとの runtime customization 用です。`AGENTS.md` には安定した進め方、返信方針、優先順位のような operating rules を置き、`MEMORY.md` には用語、背景知識、個別の好み、人物や案件のメモを置きます。`AGENTS.md` と `MEMORY.md` は manager/system turn に加えて reply/router/intake/research/follow-up planner にも毎 turn 注入されます。ただし schema、supported actions、parser contract、safety rule は上書きしません。`AGENDA_TEMPLATE.md` は Notion アジェンダの既定構成専用で、Notion agenda の作成・更新に関係する manager/system turn にだけ注入されます。repo ルートの `AGENTS.md` は開発ルール用であり、runtime customization には使いません。
+
+runtime `AGENTS.md` / `MEMORY.md` は会話や実行結果から silent auto-update されます。抽出候補は `/workspace/system/personalization-ledger.json` に保存され、昇格したものだけ runtime `AGENTS.md` / `MEMORY.md` に反映されます。
 
 `LINEAR_WORKSPACE` は固定先の説明用です。`LINEAR_API_KEY` がある場合、`linear-cli v2.8.0` でも `-w/--workspace` と併用しないようにしています。
 
@@ -170,7 +178,7 @@ Slack から既存 issue の実行依頼もできます。主な例:
 ]
 ```
 
-`policy.json` と `owner-map.json` は起動時に自動生成されます。初期値では control room を `C0ALAMDRB9V`、assistant 名を `コギト`、fallback owner を `kyaukyuai` に設定します。
+`policy.json` と `owner-map.json` は起動時に自動生成されます。初期値では control room を `C0ALAMDRB9V`、assistant 名を `コギト`、fallback owner を `kyaukyuai` に設定します。あわせて空の runtime `AGENTS.md`, `MEMORY.md`, `AGENDA_TEMPLATE.md` と `personalization-ledger.json` も生成されます。用途は固定スロット方式で、`AGENTS.md` は全 planner 共通の operating rules、`MEMORY.md` は全 planner 共通の個別知識、`AGENDA_TEMPLATE.md` は Notion agenda 専用です。
 
 `policy.json` では次の manager knobs を調整できます。
 
@@ -269,4 +277,10 @@ npm run manager:diagnostics -- issue AIC-38 /workspace
 
 ```bash
 npm run manager:diagnostics -- webhook /workspace
+```
+
+runtime personalization の ledger と現在の `AGENTS.md` / `MEMORY.md` を確認する場合:
+
+```bash
+npm run manager:diagnostics -- personalization /workspace
 ```

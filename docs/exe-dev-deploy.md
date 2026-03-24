@@ -110,6 +110,11 @@ NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 - `NOTION_API_TOKEN` を入れると bundled `ntn v0.4.0` で Notion page search / page facts / page content excerpt / database search / database query が使えます。
 - `NOTION_AGENDA_PARENT_PAGE_ID` を追加すると、その parent page 配下に agenda page を作成できます。
 - 既存 Notion page への title 更新、append-only の追記、archive/trash も Slack から扱えます。database row の更新・削除は未対応です。
+- `/workspace/system/AGENTS.md` には安定した進め方や返信方針のような operating rules を書けます。manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。ただし schema や safety rule は上書きしません。
+- `/workspace/system/MEMORY.md` には業務の進め方、用語、背景知識、個別の好みを書けます。これも manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。
+- `/workspace/system/AGENDA_TEMPLATE.md` に agenda の既定構成を書いておくと、Notion agenda 作成・更新に関係する manager/system turn だけに注入されます。
+- runtime `AGENTS.md` / `MEMORY.md` は silent auto-update 対象で、候補は `/workspace/system/personalization-ledger.json` に残ります。
+- repo ルートの `AGENTS.md` は開発ルール用で、runtime customization には使いません。
 - `LINEAR_WEBHOOK_ENABLED=true` の場合は、`LINEAR_WEBHOOK_PUBLIC_URL` と `LINEAR_WEBHOOK_SECRET` が必須です。
 - webhook listener は `LINEAR_WEBHOOK_PORT` / `LINEAR_WEBHOOK_PATH` で待ち受けます。Compose では同 port を host に公開します。
 - Linear webhook の対象は `Issue create` のみです。判定基準は「AI にできる action があるか」で、no-op は silent、action/failed のみ control room に通知します。
@@ -241,9 +246,13 @@ docker compose down
 - `workgraph-snapshot.json`
 - `jobs.json`
 - `HEARTBEAT.md`
+- `AGENTS.md`
+- `MEMORY.md`
+- `AGENDA_TEMPLATE.md`
+- `personalization-ledger.json`
 - `webhook-deliveries.json`
 
-このうち、明示的に編集したくなるのは主に `policy.json`, `owner-map.json`, `HEARTBEAT.md` です。
+このうち、明示的に編集したくなるのは主に `policy.json`, `owner-map.json`, `HEARTBEAT.md`, runtime `AGENTS.md`, `MEMORY.md`, `AGENDA_TEMPLATE.md` です。`personalization-ledger.json` は観測用で、通常は直接編集しません。
 
 Slack から scheduler を操作する場合は、通常こちらを優先します。例:
 
@@ -290,6 +299,7 @@ thread の解釈や issue context を確認する場合:
 npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 /workspace
 npm run manager:diagnostics -- issue AIC-38 /workspace
 npm run manager:diagnostics -- webhook /workspace
+npm run manager:diagnostics -- personalization /workspace
 ```
 
 replay recovery 手順:

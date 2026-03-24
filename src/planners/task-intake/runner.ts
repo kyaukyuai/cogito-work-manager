@@ -1,6 +1,7 @@
 import type { TaskPlanningInput, TaskPlanningResult } from "./contract.js";
 import { parseTaskPlanningReply } from "./parser.js";
 import { buildTaskPlanningPrompt } from "./prompt.js";
+import { appendWorkspacePersonalizationToSystemPrompt } from "../../lib/prompt-personalization.js";
 
 export type TaskPlanningReplyExecutor = (
   prompt: string,
@@ -51,7 +52,7 @@ export async function runTaskPlanningTurnWithExecutor(
 ): Promise<TaskPlanningResult> {
   const reply = await executeReply(
     buildTaskPlanningPrompt(input),
-    TASK_PLANNING_SYSTEM_PROMPT,
+    appendWorkspacePersonalizationToSystemPrompt(TASK_PLANNING_SYSTEM_PROMPT, input),
     input.taskKey ?? `${input.channelId}-${input.rootThreadTs}-task-planning`,
   );
 

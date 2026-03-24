@@ -1,6 +1,7 @@
 import type { ManagerReplyInput, ManagerReplyResult } from "./contract.js";
 import { parseManagerReplyReply } from "./parser.js";
 import { buildManagerReplyPrompt } from "./prompt.js";
+import { appendWorkspacePersonalizationToSystemPrompt } from "../../lib/prompt-personalization.js";
 
 export type ManagerReplyExecutor = (
   prompt: string,
@@ -21,7 +22,7 @@ export async function runManagerReplyTurnWithExecutor(
 ): Promise<ManagerReplyResult> {
   const reply = await executeReply(
     buildManagerReplyPrompt(input),
-    MANAGER_REPLY_SYSTEM_PROMPT,
+    appendWorkspacePersonalizationToSystemPrompt(MANAGER_REPLY_SYSTEM_PROMPT, input),
     input.taskKey ?? `${input.kind}-manager-reply`,
   );
 

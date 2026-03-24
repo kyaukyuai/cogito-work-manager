@@ -1,6 +1,7 @@
 import type { FollowupResolutionInput, FollowupResolutionResult } from "./contract.js";
 import { parseFollowupResolutionReply } from "./parser.js";
 import { buildFollowupResolutionPrompt } from "./prompt.js";
+import { appendWorkspacePersonalizationToSystemPrompt } from "../../lib/prompt-personalization.js";
 
 export type FollowupResolutionReplyExecutor = (
   prompt: string,
@@ -21,7 +22,7 @@ export async function runFollowupResolutionTurnWithExecutor(
 ): Promise<FollowupResolutionResult> {
   const reply = await executeReply(
     buildFollowupResolutionPrompt(input),
-    FOLLOWUP_RESOLUTION_SYSTEM_PROMPT,
+    appendWorkspacePersonalizationToSystemPrompt(FOLLOWUP_RESOLUTION_SYSTEM_PROMPT, input),
     input.taskKey ?? `${input.issueId}-followup-resolution`,
   );
 

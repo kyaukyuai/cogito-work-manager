@@ -1,6 +1,7 @@
 import type { MessageRouterInput, MessageRouterResult } from "./contract.js";
 import { parseMessageRouterReply } from "./parser.js";
 import { buildMessageRouterPrompt } from "./prompt.js";
+import { appendWorkspacePersonalizationToSystemPrompt } from "../../lib/prompt-personalization.js";
 
 export type MessageRouterReplyExecutor = (
   prompt: string,
@@ -22,7 +23,7 @@ export async function runMessageRouterTurnWithExecutor(
 ): Promise<MessageRouterResult> {
   const reply = await executeReply(
     buildMessageRouterPrompt(input),
-    MESSAGE_ROUTER_SYSTEM_PROMPT,
+    appendWorkspacePersonalizationToSystemPrompt(MESSAGE_ROUTER_SYSTEM_PROMPT, input),
     input.taskKey ?? `${input.channelId}-${input.rootThreadTs}-message-router`,
   );
 
