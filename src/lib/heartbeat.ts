@@ -13,6 +13,12 @@ export interface HeartbeatExecutionResult {
   reason?: "outside-business-hours" | "no-active-channels" | "no-urgent-items" | "suppressed-by-cooldown";
 }
 
+export interface ParsedHeartbeatReply {
+  status: "posted" | "noop";
+  reply: string;
+  reason?: "outside-business-hours" | "no-active-channels" | "no-urgent-items" | "suppressed-by-cooldown";
+}
+
 export interface HeartbeatServiceOptions {
   logger: Logger;
   workspaceDir: string;
@@ -33,6 +39,36 @@ export const DEFAULT_HEARTBEAT_PROMPT = [
   "Keep the reply short and in Japanese.",
   "If there is nothing worth broadcasting, reply with exactly HEARTBEAT_OK.",
 ].join("\n");
+
+export function parseHeartbeatManagerReply(reply: string): ParsedHeartbeatReply {
+  const normalized = reply.trim();
+  if (normalized === "HEARTBEAT_OK") {
+    return {
+      status: "noop",
+      reply: "heartbeat noop: no-urgent-items",
+      reason: "no-urgent-items",
+    };
+  }
+
+  if (normalized.startsWith("heartbeat noop:")) {
+    const rawReason = normalized.replace("heartbeat noop:", "").trim();
+    const reason = (
+      rawReason === "outside-business-hours"
+      || rawReason === "no-active-channels"
+      || rawReason === "suppressed-by-cooldown"
+    ) ? rawReason : "no-urgent-items";
+    return {
+      status: "noop",
+      reply: normalized,
+      reason,
+    };
+  }
+
+  return {
+    status: "posted",
+    reply,
+  };
+}
 
 export class HeartbeatService {
   private timer: NodeJS.Timeout | undefined;

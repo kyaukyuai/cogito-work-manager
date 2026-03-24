@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { loadConfig } from "./lib/config.js";
-import { HeartbeatService } from "./lib/heartbeat.js";
+import { HeartbeatService, parseHeartbeatManagerReply } from "./lib/heartbeat.js";
 import { ensureLinearIssueCreatedWebhook, getLinearIssue, verifyLinearCli } from "./lib/linear.js";
 import {
   LINEAR_ISSUE_CREATED_WEBHOOK_LABEL,
@@ -947,24 +947,23 @@ async function main(): Promise<void> {
           return "heartbeat noop: agent-fallback";
         },
       });
-      if (reply.startsWith("heartbeat noop:")) {
-        const rawReason = reply.replace("heartbeat noop:", "").trim();
-        const reason = (
-          rawReason === "outside-business-hours"
-          || rawReason === "no-active-channels"
-          || rawReason === "suppressed-by-cooldown"
-        ) ? rawReason : "no-urgent-items";
+      const parsedHeartbeatReply = parseHeartbeatManagerReply(reply);
+      if (parsedHeartbeatReply.status === "noop") {
         await appendThreadLog(paths, {
           type: "system",
           ts: `${Date.now() / 1000}`,
           threadTs: "heartbeat",
-          text: reply,
+          text: parsedHeartbeatReply.reply,
         });
-        return { reply, status: "noop", reason };
+        return {
+          reply: parsedHeartbeatReply.reply,
+          status: "noop",
+          reason: parsedHeartbeatReply.reason,
+        };
       }
       const postedReply = await sendSlackReply(webClient, {
         channel: channelId,
-        reply,
+        reply: parsedHeartbeatReply.reply,
         linearWorkspace: config.linearWorkspace,
       });
 
