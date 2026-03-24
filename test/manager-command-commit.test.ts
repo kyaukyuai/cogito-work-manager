@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -593,6 +593,178 @@ describe("manager command commit", () => {
     expect(result.rejected[0]?.reason).toContain("判断に必要な項目が不足");
     expect(result.rejected[0]?.reason).toContain("threadParentHandling");
     expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+  });
+
+  it("creates a custom scheduler job in jobs.json", async () => {
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_scheduler_job",
+          jobId: "daily-task-check",
+          prompt: "AIC の期限近い task を確認する",
+          kind: "daily",
+          time: "09:00",
+          reasonSummary: "毎朝の custom scheduler job を追加します。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scheduler-create",
+        messageTs: "msg-scheduler-create-1",
+        userId: "U1",
+        text: "毎日 09:00 に AIC の期限近い task を確認する job を追加して",
+      },
+      now: new Date("2026-03-24T00:00:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    const jobs = JSON.parse(await readFile(buildSystemPaths(workspaceDir).jobsFile, "utf8")) as Array<Record<string, unknown>>;
+
+    expect(result.committed).toHaveLength(1);
+    expect(jobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "daily-task-check",
+        kind: "daily",
+        time: "09:00",
+        prompt: "AIC の期限近い task を確認する",
+      }),
+    ]));
+  });
+
+  it("updates and deletes a custom scheduler job", async () => {
+    const systemPaths = buildSystemPaths(workspaceDir);
+    await writeFile(systemPaths.jobsFile, `${JSON.stringify([
+      {
+        id: "daily-task-check",
+        enabled: true,
+        channelId: "C0ALAMDRB9V",
+        prompt: "AIC の期限近い task を確認する",
+        kind: "daily",
+        time: "09:00",
+      },
+    ], null, 2)}\n`, "utf8");
+
+    const updateResult = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "update_scheduler_job",
+          jobId: "daily-task-check",
+          time: "17:00",
+          reasonSummary: "夕方に移動します。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scheduler-update",
+        messageTs: "msg-scheduler-update-1",
+        userId: "U1",
+        text: "daily-task-check を 17:00 に変更して",
+      },
+      now: new Date("2026-03-24T00:00:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    const deleteResult = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "delete_scheduler_job",
+          jobId: "daily-task-check",
+          reasonSummary: "不要になったため削除します。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scheduler-delete",
+        messageTs: "msg-scheduler-delete-1",
+        userId: "U1",
+        text: "daily-task-check を削除して",
+      },
+      now: new Date("2026-03-24T00:00:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    const jobs = JSON.parse(await readFile(systemPaths.jobsFile, "utf8")) as Array<Record<string, unknown>>;
+
+    expect(updateResult.committed).toHaveLength(1);
+    expect(updateResult.committed[0]?.summary).toContain("daily-task-check");
+    expect(deleteResult.committed).toHaveLength(1);
+    expect(jobs.find((job) => job.id === "daily-task-check")).toBeUndefined();
+  });
+
+  it("updates built-in schedule policy and syncs review jobs", async () => {
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "update_builtin_schedule",
+          builtinId: "evening-review",
+          enabled: false,
+          reasonSummary: "夕方レビューを止めます。",
+        },
+        {
+          commandType: "update_builtin_schedule",
+          builtinId: "heartbeat",
+          intervalMin: 60,
+          activeLookbackHours: 12,
+          reasonSummary: "heartbeat cadence を下げます。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-builtin-schedule-update",
+        messageTs: "msg-builtin-schedule-update-1",
+        userId: "U1",
+        text: "夕方レビューを止めて heartbeat を 60分ごとにして",
+      },
+      now: new Date("2026-03-24T00:00:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    const policy = JSON.parse(await readFile(buildSystemPaths(workspaceDir).policyFile, "utf8")) as Record<string, unknown>;
+    const jobs = JSON.parse(await readFile(buildSystemPaths(workspaceDir).jobsFile, "utf8")) as Array<Record<string, unknown>>;
+
+    expect(result.committed).toHaveLength(2);
+    expect(policy).toMatchObject({
+      heartbeatEnabled: true,
+      heartbeatIntervalMin: 60,
+      heartbeatActiveLookbackHours: 12,
+      reviewCadence: expect.objectContaining({
+        eveningEnabled: false,
+      }),
+    });
+    expect(jobs.find((job) => job.id === "manager-review-evening")).toBeUndefined();
+    expect(result.committed.map((entry) => entry.summary).join("\n")).toContain("夕方レビューを停止しました。");
   });
 
   it("creates a Notion agenda under the configured parent page", async () => {

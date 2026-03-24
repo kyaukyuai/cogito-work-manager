@@ -16,7 +16,7 @@ export interface SystemPaths {
   sessionsDir: string;
 }
 
-const schedulerJobSchema = z
+export const schedulerJobSchema = z
   .object({
     id: z.string().min(1),
     enabled: z.boolean().default(true),
@@ -74,7 +74,7 @@ const schedulerJobSchema = z
     }
   });
 
-const schedulerJobsSchema = z.array(schedulerJobSchema);
+export const schedulerJobsSchema = z.array(schedulerJobSchema);
 
 const DEFAULT_HEARTBEAT_INSTRUCTIONS = [
   "You are running a periodic heartbeat for this Slack channel.",

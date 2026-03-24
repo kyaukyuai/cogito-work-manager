@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/lib/config.js";
+import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { createManagerAgentTools } from "../src/lib/manager-agent-tools.js";
+import { buildSystemPaths } from "../src/lib/system-workspace.js";
 
 const linearMocks = vi.hoisted(() => ({
   getLinearIssue: vi.fn(),
@@ -37,6 +42,12 @@ const config: AppConfig = {
 };
 
 describe("manager agent tools", () => {
+  const tempDirs: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
   it("returns dueRelativeLabel and daysUntilDue in review facts", async () => {
     vi.useFakeTimers();
     try {
@@ -137,5 +148,67 @@ describe("manager agent tools", () => {
         }),
       ],
     });
+  });
+
+  it("lists unified custom and built-in schedules", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "manager-agent-tools-scheduler-"));
+    tempDirs.push(workspaceDir);
+    const systemPaths = buildSystemPaths(workspaceDir);
+    await ensureManagerStateFiles(systemPaths);
+    await writeFile(systemPaths.jobsFile, `${JSON.stringify([
+      {
+        id: "custom-daily-check",
+        enabled: true,
+        channelId: "C0ALAMDRB9V",
+        prompt: "custom prompt",
+        kind: "daily",
+        time: "11:00",
+      },
+      {
+        id: "manager-review-evening",
+        enabled: true,
+        channelId: "C0ALAMDRB9V",
+        prompt: "manager review: evening",
+        kind: "daily",
+        time: "17:00",
+        action: "evening-review",
+      },
+    ], null, 2)}\n`, "utf8");
+
+    const tools = createManagerAgentTools(
+      { ...config, workspaceDir },
+      {
+        policy: { load: vi.fn() },
+        workgraph: {} as never,
+      },
+    );
+    const tool = tools.find((entry) => entry.name === "scheduler_list_schedules");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-schedules", {});
+    const details = result.details as Array<Record<string, unknown>>;
+
+    expect(details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "manager-review-evening",
+          kind: "evening-review",
+          source: "policy",
+          scheduleType: "daily",
+        }),
+        expect.objectContaining({
+          id: "custom-daily-check",
+          kind: "custom-job",
+          source: "jobs",
+          scheduleType: "daily",
+          time: "11:00",
+        }),
+        expect.objectContaining({
+          id: "heartbeat",
+          kind: "heartbeat",
+          source: "policy",
+        }),
+      ]),
+    );
   });
 });

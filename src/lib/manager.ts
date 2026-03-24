@@ -83,7 +83,7 @@ import {
   type PendingManagerClarification,
 } from "./pending-manager-clarification.js";
 
-export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation";
+export type ManagerMessageKind = "request" | "query" | "progress" | "completed" | "blocked" | "conversation" | "scheduler";
 export type ClarificationNeed = "scope" | "due_date" | "execution_plan";
 export type {
   HeartbeatNoopReason,
@@ -169,6 +169,7 @@ const LIST_MARKER_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const LIST_HEADING_PATTERN = /^(?:タスク|todo|issue|イシュー)?\s*一覧$/i;
 const GREETING_PATTERN = /^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/i;
 const REFERENCE_QUERY_PATTERN = /((?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ).*(?:確認|見て|検索|探して|調べ|読んで)|(?:確認|見て|検索|探して|調べ|読んで).*(?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ))/i;
+const SCHEDULER_PATTERN = /(スケジュール|schedule|scheduler|cron|heartbeat|朝レビュー|夕方レビュー|週次レビュー|weekly review|morning review|evening review)/i;
 interface ParsedTaskSegment {
   raw: string;
   title: string;
@@ -290,11 +291,14 @@ function buildCommitRejectionReply(rejections: string[]): string | undefined {
 
 function isMutableIntent(
   intent: ManagerIntentReport["intent"] | undefined,
-): intent is "create_work" | "update_progress" | "update_completed" | "update_blocked" | "followup_resolution" {
+): intent is "create_work" | "create_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" {
   return intent === "create_work"
+    || intent === "create_schedule"
     || intent === "update_progress"
     || intent === "update_completed"
     || intent === "update_blocked"
+    || intent === "update_schedule"
+    || intent === "delete_schedule"
     || intent === "followup_resolution";
 }
 
@@ -311,7 +315,7 @@ function originalMessageForPendingClarification(
 
 async function persistPendingManagerClarification(args: {
   paths: ThreadPaths;
-  intent: "create_work" | "update_progress" | "update_completed" | "update_blocked" | "followup_resolution";
+  intent: "create_work" | "create_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution";
   originalUserMessage: string;
   lastUserMessage: string;
   clarificationReply: string;
@@ -615,7 +619,7 @@ function buildSafetyOnlyManagerFallbackReply(
   message: ManagerSlackMessage,
   pendingClarification?: PendingManagerClarification,
 ): {
-  action: ManagerMessageKind;
+  action: ManagerMessageKind | "scheduler";
   reply: string;
 } {
   if (pendingClarification && isPendingManagerClarificationStatusQuestion(message.text)) {
@@ -631,17 +635,28 @@ function buildSafetyOnlyManagerFallbackReply(
     return {
       action: pendingClarification.intent === "create_work"
         ? "request"
+        : pendingClarification.intent === "create_schedule"
+          ? "scheduler"
         : pendingClarification.intent === "update_progress"
           ? "progress"
           : pendingClarification.intent === "update_completed"
             ? "completed"
             : pendingClarification.intent === "update_blocked"
               ? "blocked"
+              : pendingClarification.intent === "update_schedule" || pendingClarification.intent === "delete_schedule"
+                ? "scheduler"
               : "request",
       reply: joinSlackSentences([
         "補足として受け取りました。",
         "この thread の続きとして扱うので、直したい点や更新したい issue を 1 文で言い換えてもらえれば再試行できます。",
       ]) ?? "補足として受け取りました。",
+    };
+  }
+
+  if (SCHEDULER_PATTERN.test(message.text)) {
+    return {
+      action: "scheduler",
+      reply: "いまは scheduler の内容を安全に確定できないため、見たい schedule 名か、追加・変更したい時刻と実行内容をもう少し具体的に教えてください。",
     };
   }
 
@@ -1168,9 +1183,12 @@ export async function handleManagerMessage(
       }
     } else if (
       agentIntent === "create_work"
+      || agentIntent === "create_schedule"
       || agentIntent === "update_progress"
       || agentIntent === "update_completed"
       || agentIntent === "update_blocked"
+      || agentIntent === "update_schedule"
+      || agentIntent === "delete_schedule"
       || agentIntent === "followup_resolution"
       || agentIntent === "review"
       || agentIntent === "heartbeat"
@@ -1270,6 +1288,8 @@ export async function handleManagerMessage(
     if (safetyFallback.action !== "conversation") {
       const fallbackIntent = safetyFallback.action === "request"
         ? "create_work"
+        : safetyFallback.action === "scheduler"
+          ? "create_schedule"
         : safetyFallback.action === "progress"
           ? "update_progress"
           : safetyFallback.action === "completed"

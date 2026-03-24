@@ -12,8 +12,9 @@ import {
 } from "../state/manager-state-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { EMPTY_WORKGRAPH_SNAPSHOT } from "../state/workgraph/snapshot.js";
-import type { SchedulerJob, SystemPaths } from "./system-workspace.js";
+import type { SystemPaths } from "./system-workspace.js";
 import { loadSchedulerJobs, saveSchedulerJobs } from "./system-workspace.js";
+import { syncBuiltInReviewJobs } from "./scheduler-management.js";
 
 export type {
   FollowupLedgerEntry,
@@ -53,57 +54,6 @@ async function ensureTextFile(path: string, defaultValue: string): Promise<void>
   }
 }
 
-function buildManagerReviewJobs(policy: ManagerPolicy): SchedulerJob[] {
-  return [
-    {
-      id: "manager-review-morning",
-      enabled: true,
-      channelId: policy.controlRoomChannelId,
-      prompt: "manager review: morning",
-      kind: "daily",
-      time: policy.reviewCadence.morning,
-      action: "morning-review",
-    },
-    {
-      id: "manager-review-evening",
-      enabled: true,
-      channelId: policy.controlRoomChannelId,
-      prompt: "manager review: evening",
-      kind: "daily",
-      time: policy.reviewCadence.evening,
-      action: "evening-review",
-    },
-    {
-      id: "manager-review-weekly",
-      enabled: true,
-      channelId: policy.controlRoomChannelId,
-      prompt: "manager review: weekly",
-      kind: "weekly",
-      weekday: policy.reviewCadence.weeklyDay,
-      time: policy.reviewCadence.weeklyTime,
-      action: "weekly-review",
-    },
-  ];
-}
-
-function mergeSchedulerJob(existing: SchedulerJob | undefined, desired: SchedulerJob): SchedulerJob {
-  if (!existing) {
-    return desired;
-  }
-
-  return {
-    ...existing,
-    channelId: desired.channelId,
-    prompt: desired.prompt,
-    kind: desired.kind,
-    time: desired.time,
-    weekday: desired.weekday,
-    action: desired.action,
-    at: desired.at,
-    everySec: desired.everySec,
-  };
-}
-
 export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void> {
   await ensureJsonFile(paths.policyFile, DEFAULT_POLICY);
   await ensureJsonFile(paths.ownerMapFile, DEFAULT_OWNER_MAP);
@@ -115,17 +65,7 @@ export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void>
 
   const policy = await loadManagerPolicy(paths);
   const jobs = await loadSchedulerJobs(paths);
-  const desiredJobs = buildManagerReviewJobs(policy);
-  const nextJobs = [...jobs];
-
-  for (const desiredJob of desiredJobs) {
-    const index = nextJobs.findIndex((job) => job.id === desiredJob.id);
-    if (index === -1) {
-      nextJobs.push(desiredJob);
-      continue;
-    }
-    nextJobs[index] = mergeSchedulerJob(nextJobs[index], desiredJob);
-  }
+  const nextJobs = syncBuiltInReviewJobs(policy, jobs);
 
   if (JSON.stringify(jobs) !== JSON.stringify(nextJobs)) {
     await saveSchedulerJobs(paths, nextJobs);
@@ -134,6 +74,10 @@ export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void>
 
 export async function loadManagerPolicy(paths: SystemPaths): Promise<ManagerPolicy> {
   return createFileBackedManagerRepositories(paths).policy.load();
+}
+
+export async function saveManagerPolicy(paths: SystemPaths, policy: ManagerPolicy): Promise<void> {
+  await writeJsonFile(paths.policyFile, policy);
 }
 
 export async function loadOwnerMap(paths: SystemPaths): Promise<OwnerMap> {

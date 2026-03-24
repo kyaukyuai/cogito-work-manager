@@ -37,16 +37,31 @@ export const DEFAULT_HEARTBEAT_PROMPT = [
 export class HeartbeatService {
   private timer: NodeJS.Timeout | undefined;
   private running = false;
+  private intervalMin: number;
+  private activeLookbackHours: number;
 
-  constructor(private readonly options: HeartbeatServiceOptions) {}
+  constructor(private readonly options: HeartbeatServiceOptions) {
+    this.intervalMin = options.intervalMin;
+    this.activeLookbackHours = options.activeLookbackHours;
+  }
 
   async start(): Promise<void> {
-    if (this.options.intervalMin <= 0) return;
+    if (this.intervalMin <= 0) return;
 
     this.timer = setInterval(() => {
       void this.tick();
-    }, this.options.intervalMin * 60 * 1000);
+    }, this.intervalMin * 60 * 1000);
     this.timer.unref();
+  }
+
+  async reconfigure(next: {
+    intervalMin: number;
+    activeLookbackHours: number;
+  }): Promise<void> {
+    this.stop();
+    this.intervalMin = next.intervalMin;
+    this.activeLookbackHours = next.activeLookbackHours;
+    await this.start();
   }
 
   stop(): void {
@@ -65,7 +80,7 @@ export class HeartbeatService {
       const activeChannels = await listActiveChannels(
         this.options.workspaceDir,
         this.options.allowedChannelIds,
-        this.options.activeLookbackHours * 60 * 60 * 1000,
+        this.activeLookbackHours * 60 * 60 * 1000,
       );
 
       if (activeChannels.length === 0) {

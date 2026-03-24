@@ -20,7 +20,14 @@ import {
   searchNotionPages,
   type NotionCommandEnv,
 } from "./notion.js";
+import { loadManagerPolicy } from "./manager-state.js";
+import {
+  getUnifiedSchedule,
+  listUnifiedSchedules,
+  type SchedulerScheduleView,
+} from "./scheduler-management.js";
 import { getRecentChannelContext, getSlackThreadContext } from "./slack-context.js";
+import { buildSystemPaths } from "./system-workspace.js";
 import { webFetchUrl, webSearchFetch } from "./web-research.js";
 import { createWorkgraphReadTools } from "./workgraph-tools.js";
 import {
@@ -229,6 +236,47 @@ function formatNotionDatabaseFactsText(database: {
   ].join("\n");
 }
 
+function formatScheduleLabel(view: SchedulerScheduleView): string {
+  if (view.kind === "custom-job") {
+    return view.id;
+  }
+  if (view.kind === "morning-review") return "朝レビュー";
+  if (view.kind === "evening-review") return "夕方レビュー";
+  if (view.kind === "weekly-review") return "週次レビュー";
+  return "heartbeat";
+}
+
+function formatScheduleTiming(view: SchedulerScheduleView): string {
+  if (view.scheduleType === "heartbeat") {
+    return `${view.intervalMin ?? 0}分ごと`;
+  }
+  if (view.scheduleType === "daily") {
+    return `毎日 ${view.time}`;
+  }
+  if (view.scheduleType === "weekly") {
+    return `毎週 ${view.weekday} ${view.time}`;
+  }
+  if (view.scheduleType === "every") {
+    return `${view.everySec}秒ごと`;
+  }
+  return view.at ?? "単発実行";
+}
+
+function formatScheduleViewText(view: SchedulerScheduleView): string {
+  return [
+    `${formatScheduleLabel(view)} (${view.id})`,
+    `- enabled: ${view.enabled ? "yes" : "no"}`,
+    `- source: ${view.source}`,
+    `- channel: ${view.channelLabel} (${view.channelId})`,
+    `- schedule: ${formatScheduleTiming(view)}`,
+    `- prompt: ${view.prompt}`,
+    view.nextRunAt ? `- nextRunAt: ${view.nextRunAt}` : undefined,
+    view.lastRunAt ? `- lastRunAt: ${view.lastRunAt}` : undefined,
+    view.lastStatus ? `- lastStatus: ${view.lastStatus}` : undefined,
+    view.lastError ? `- lastError: ${view.lastError}` : undefined,
+  ].filter(Boolean).join("\n");
+}
+
 function businessDaysSince(leftIso: string | null | undefined, right = new Date()): number | undefined {
   if (!leftIso) return undefined;
   const start = new Date(leftIso);
@@ -397,7 +445,7 @@ function createIntentReportTool(): ToolDefinition {
     description: "Record the current high-level intent before or during tool usage. Use this once per turn.",
     promptSnippet: "Call this early to tell the manager what kind of turn this is.",
     parameters: Type.Object({
-      intent: Type.String({ description: "conversation | query | create_work | update_progress | update_completed | update_blocked | followup_resolution | review | heartbeat | scheduler" }),
+      intent: Type.String({ description: "conversation | query | query_schedule | create_work | create_schedule | update_progress | update_completed | update_blocked | update_schedule | delete_schedule | followup_resolution | review | heartbeat | scheduler" }),
       queryKind: Type.Optional(Type.String({ description: "Optional query subtype: list-active | list-today | what-should-i-do | inspect-work | search-existing | recommend-next-step | reference-material." })),
       queryScope: Type.Optional(Type.String({ description: "Optional query scope self | team | thread-context." })),
       confidence: Type.Optional(Type.Number({ description: "Confidence between 0 and 1." })),
@@ -719,6 +767,49 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
   ];
 }
 
+function createSchedulerReadTools(config: AppConfig): ToolDefinition[] {
+  const systemPaths = buildSystemPaths(config.workspaceDir);
+
+  return [
+    {
+      name: "scheduler_list_schedules",
+      label: "Scheduler List Schedules",
+      description: "List unified scheduler facts across custom jobs and built-in schedules.",
+      promptSnippet: "Use this when the user asks to list or inspect schedules from Slack.",
+      parameters: Type.Object({
+        channelId: Type.Optional(Type.String({ description: "Optional Slack channel ID filter. Defaults to the control room channel." })),
+      }),
+      async execute(_toolCallId, params) {
+        const policy = await loadManagerPolicy(systemPaths);
+        const schedules = await listUnifiedSchedules(systemPaths, policy, {
+          channelId: (params as { channelId?: string }).channelId,
+        });
+        return {
+          content: [{ type: "text", text: schedules.length > 0 ? schedules.map(formatScheduleViewText).join("\n\n") : "No schedules found." }],
+          details: schedules,
+        };
+      },
+    },
+    {
+      name: "scheduler_get_schedule",
+      label: "Scheduler Get Schedule",
+      description: "Get one unified scheduler fact by job ID or built-in schedule ID.",
+      promptSnippet: "Use this when the user asks about one specific schedule like manager-review-evening or heartbeat.",
+      parameters: Type.Object({
+        id: Type.String({ description: "Custom job id or built-in schedule id such as manager-review-evening, morning-review, or heartbeat." }),
+      }),
+      async execute(_toolCallId, params) {
+        const policy = await loadManagerPolicy(systemPaths);
+        const schedule = await getUnifiedSchedule(systemPaths, policy, (params as { id: string }).id);
+        return {
+          content: [{ type: "text", text: schedule ? formatScheduleViewText(schedule) : "Schedule not found." }],
+          details: schedule,
+        };
+      },
+    },
+  ];
+}
+
 function createSlackContextTools(config: AppConfig): ToolDefinition[] {
   return [
     {
@@ -940,6 +1031,79 @@ function createProposalTools(): ToolDefinition[] {
       }),
     }),
     createProposalTool({
+      name: "propose_create_scheduler_job",
+      label: "Propose Create Scheduler Job",
+      description: "Propose creating a custom scheduler job. This does not execute the mutation.",
+      promptSnippet: "Use this when the user wants to add a new recurring or one-shot custom scheduler job from Slack.",
+      commandType: "create_scheduler_job",
+      parameters: Type.Object({
+        jobId: Type.String({ description: "Stable custom job id such as daily-task-check." }),
+        channelId: Type.Optional(Type.String({ description: "Optional target channel id. Omit to use the control room channel." })),
+        prompt: Type.String({ description: "Prompt the scheduler job should execute." }),
+        kind: Type.String({ description: "at | every | daily | weekly" }),
+        at: Type.Optional(Type.String({ description: "ISO datetime for one-shot runs." })),
+        everySec: Type.Optional(Type.Number({ description: "Interval seconds for kind=every." })),
+        time: Type.Optional(Type.String({ description: "HH:MM for daily or weekly jobs." })),
+        weekday: Type.Optional(Type.String({ description: "mon | tue | wed | thu | fri | sat | sun for weekly jobs." })),
+        enabled: Type.Optional(Type.Boolean({ description: "Whether the custom job should start enabled." })),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
+      name: "propose_update_scheduler_job",
+      label: "Propose Update Scheduler Job",
+      description: "Propose updating a custom scheduler job. This does not execute the mutation.",
+      promptSnippet: "Use this when the user wants to update, stop, resume, or retime a custom scheduler job.",
+      commandType: "update_scheduler_job",
+      parameters: Type.Object({
+        jobId: Type.String({ description: "Existing custom job id." }),
+        enabled: Type.Optional(Type.Boolean({ description: "Optional enabled flag." })),
+        channelId: Type.Optional(Type.String({ description: "Optional channel id patch." })),
+        prompt: Type.Optional(Type.String({ description: "Optional prompt patch." })),
+        kind: Type.Optional(Type.String({ description: "Optional replacement schedule kind: at | every | daily | weekly." })),
+        at: Type.Optional(Type.String({ description: "Optional ISO datetime patch for kind=at." })),
+        everySec: Type.Optional(Type.Number({ description: "Optional seconds patch for kind=every." })),
+        time: Type.Optional(Type.String({ description: "Optional HH:MM patch for daily or weekly jobs." })),
+        weekday: Type.Optional(Type.String({ description: "Optional weekday patch for weekly jobs." })),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
+      name: "propose_delete_scheduler_job",
+      label: "Propose Delete Scheduler Job",
+      description: "Propose deleting a custom scheduler job. This does not execute the mutation.",
+      promptSnippet: "Use this only for custom scheduler jobs. Built-in schedules should be disabled with propose_update_builtin_schedule instead.",
+      commandType: "delete_scheduler_job",
+      parameters: Type.Object({
+        jobId: Type.String({ description: "Existing custom job id." }),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
+      name: "propose_update_builtin_schedule",
+      label: "Propose Update Builtin Schedule",
+      description: "Propose updating a built-in review or heartbeat schedule. This does not execute the mutation.",
+      promptSnippet: "Use this for morning/evening/weekly review or heartbeat changes. Delete on a built-in means disable it instead of removing it.",
+      commandType: "update_builtin_schedule",
+      parameters: Type.Object({
+        builtinId: Type.String({ description: "morning-review | evening-review | weekly-review | heartbeat" }),
+        enabled: Type.Optional(Type.Boolean({ description: "Optional enable or disable flag." })),
+        time: Type.Optional(Type.String({ description: "Optional HH:MM patch for review schedules." })),
+        weekday: Type.Optional(Type.String({ description: "Optional weekday patch for weekly-review." })),
+        intervalMin: Type.Optional(Type.Number({ description: "Optional heartbeat interval in minutes." })),
+        activeLookbackHours: Type.Optional(Type.Number({ description: "Optional heartbeat active lookback window in hours." })),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
       name: "propose_create_notion_agenda",
       label: "Propose Create Notion Agenda",
       description: "Propose creating a Notion agenda page. This does not execute the mutation.",
@@ -1016,6 +1180,7 @@ export function createManagerAgentTools(
     createPendingClarificationDecisionTool(),
     createQuerySnapshotTool(),
     ...createLinearReadTools(config),
+    ...createSchedulerReadTools(config),
     ...createNotionReadTools(config),
     ...createSlackContextTools(config),
     ...createWorkgraphReadTools(repositories),

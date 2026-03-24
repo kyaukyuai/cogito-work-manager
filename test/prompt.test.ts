@@ -59,6 +59,11 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
     expect(prompt).toContain("Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.");
+    expect(prompt).toContain("When the user asks about schedules, scheduler jobs, cron-style tasks, morning/evening/weekly review settings, or heartbeat settings, use the dedicated scheduler tools.");
+    expect(prompt).toContain("Use intent=query_schedule for schedule inspection, create_schedule for custom job creation, update_schedule for custom job updates or built-in disable/retime changes, and delete_schedule only for custom job deletion.");
+    expect(prompt).toContain("Built-in schedules are morning-review, evening-review, weekly-review, and heartbeat.");
+    expect(prompt).toContain("Treat a delete request on a built-in schedule as disable, not physical deletion.");
+    expect(prompt).toContain("If the user does not specify a channel for a custom scheduler job, default it to the control room channel.");
     expect(prompt).toContain("If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.");
     expect(prompt).toContain("Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.");
     expect(prompt).toContain("For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.");
@@ -96,6 +101,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed.");
     expect(prompt).toContain("When review facts include dueRelativeLabel or daysUntilDue, use that relative due wording verbatim");
     expect(prompt).toContain("For scheduled review or heartbeat replies, use only one short opening sentence and do not repeat the same improvement summary");
+    expect(prompt).toContain("For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables.");
+    expect(prompt).toContain("When the user says 毎日 9:00, 毎週火曜, or 30分ごと, convert that into a valid scheduler proposal instead of asking the manager layer to parse it later.");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
 

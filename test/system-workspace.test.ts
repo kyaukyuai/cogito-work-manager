@@ -2,7 +2,7 @@ import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ensureManagerStateFiles, loadManagerPolicy, loadOwnerMap } from "../src/lib/manager-state.js";
+import { ensureManagerStateFiles, loadManagerPolicy, loadOwnerMap, saveManagerPolicy } from "../src/lib/manager-state.js";
 import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace } from "../src/lib/system-workspace.js";
 
 describe("system workspace helpers", () => {
@@ -75,5 +75,25 @@ describe("system workspace helpers", () => {
     const heartbeatPrompt = await readFile(paths.heartbeatPromptFile, "utf8");
     expect(heartbeatPrompt).toContain("Return at most one issue-centric update.");
     expect(heartbeatPrompt).toContain("HEARTBEAT_OK");
+  });
+
+  it("removes disabled built-in review jobs when syncing manager state", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-slack-linear-builtins-"));
+    const paths = buildSystemPaths(workspaceDir);
+
+    await ensureManagerStateFiles(paths);
+    const policy = await loadManagerPolicy(paths);
+    policy.reviewCadence.eveningEnabled = false;
+    await saveManagerPolicy(paths, policy);
+    await ensureManagerStateFiles(paths);
+
+    const jobs = JSON.parse(await readFile(paths.jobsFile, "utf8")) as Array<{ id: string }>;
+    expect(jobs.find((job) => job.id === "manager-review-evening")).toBeUndefined();
+    expect(jobs.map((job) => job.id)).toEqual(
+      expect.arrayContaining([
+        "manager-review-morning",
+        "manager-review-weekly",
+      ]),
+    );
   });
 });

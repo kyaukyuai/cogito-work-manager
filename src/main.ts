@@ -122,7 +122,7 @@ async function main(): Promise<void> {
   await ensureManagerStateFiles(systemPaths);
   await verifyLinearCli(config.linearTeamKey);
   const managerRepositories = createFileBackedManagerRepositories(systemPaths);
-  const managerPolicy = await managerRepositories.policy.load();
+  let managerPolicy = await managerRepositories.policy.load();
   const ownerMap = await managerRepositories.ownerMap.load();
   const workgraphPolicy = {
     warnActiveLogEvents: config.workgraphHealthWarnActiveEvents,
@@ -231,6 +231,7 @@ async function main(): Promise<void> {
     LINEAR_WORKSPACE: config.linearWorkspace,
     LINEAR_TEAM_KEY: config.linearTeamKey,
   };
+  let heartbeatService: HeartbeatService | undefined;
 
   const executeManagerSystemTask = async (args: {
     paths: ReturnType<typeof buildThreadPaths>;
@@ -286,7 +287,9 @@ async function main(): Promise<void> {
     model: config.botModel,
     linearWorkspace: config.linearWorkspace,
     linearTeamKey: config.linearTeamKey,
+    heartbeatEnabled: managerPolicy.heartbeatEnabled,
     heartbeatIntervalMin: managerPolicy.heartbeatIntervalMin,
+    heartbeatActiveLookbackHours: managerPolicy.heartbeatActiveLookbackHours,
     schedulerPollSec: config.schedulerPollSec,
     controlRoomChannelId: managerPolicy.controlRoomChannelId,
     workgraphMaintenanceIntervalMin: config.workgraphMaintenanceIntervalMin,
@@ -391,6 +394,14 @@ async function main(): Promise<void> {
           }
         }
 
+        if (heartbeatService && managerResult.diagnostics?.agent?.committedCommands.includes("update_builtin_schedule")) {
+          managerPolicy = await managerRepositories.policy.load();
+          await heartbeatService.reconfigure({
+            intervalMin: managerPolicy.heartbeatEnabled ? managerPolicy.heartbeatIntervalMin : 0,
+            activeLookbackHours: managerPolicy.heartbeatActiveLookbackHours,
+          });
+        }
+
         const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
 
         const formattedReply = await postSlackReply(webClient, {
@@ -436,13 +447,13 @@ async function main(): Promise<void> {
     assistantName: managerPolicy.assistantName,
   });
 
-  const heartbeatService = new HeartbeatService({
+  heartbeatService = new HeartbeatService({
     logger,
     workspaceDir: config.workspaceDir,
     systemPaths,
     allowedChannelIds: config.slackAllowedChannelIds,
-    intervalMin: managerPolicy.heartbeatIntervalMin,
-    activeLookbackHours: config.heartbeatActiveLookbackHours,
+    intervalMin: managerPolicy.heartbeatEnabled ? managerPolicy.heartbeatIntervalMin : 0,
+    activeLookbackHours: managerPolicy.heartbeatActiveLookbackHours,
     executeHeartbeat: async ({ channelId, prompt }) => {
       const paths = buildHeartbeatPaths(config.workspaceDir, channelId);
       await ensureThreadWorkspace(paths);

@@ -17,6 +17,13 @@ import {
 } from "./linear.js";
 import { createNotionAgendaPage, type NotionCommandEnv } from "./notion.js";
 import { getSlackThreadContext } from "./slack-context.js";
+import { normalizeSchedulerJobs } from "./scheduler.js";
+import {
+  buildSystemPaths,
+  loadSchedulerJobs,
+  saveSchedulerJobs,
+  schedulerJobSchema,
+} from "./system-workspace.js";
 import type {
   FollowupLedgerEntry,
   ManagerPolicy,
@@ -53,6 +60,14 @@ import {
   upsertFollowup,
   type ReviewHelperDeps,
 } from "../orchestrators/review/review-helpers.js";
+import { ensureManagerStateFiles, loadManagerPolicy, saveManagerPolicy } from "./manager-state.js";
+import {
+  getUnifiedSchedule,
+  isReservedSchedulerId,
+  isBuiltInReviewJobId,
+  reviewJobIdForBuiltInScheduleId,
+  type BuiltInScheduleId,
+} from "./scheduler-management.js";
 
 const optionalDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional();
 const optionalStringSchema = z.string().trim().min(1).optional();
@@ -222,6 +237,52 @@ const reviewFollowupProposalSchema = proposalBaseSchema.extend({
   }).optional(),
 });
 
+const schedulerKindSchema = z.enum(["at", "every", "daily", "weekly"]);
+const schedulerWeekdaySchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+const schedulerTimeSchema = z.string().regex(/^\d{2}:\d{2}$/);
+const builtInScheduleIdSchema = z.enum(["morning-review", "evening-review", "weekly-review", "heartbeat"]);
+
+const createSchedulerJobProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("create_scheduler_job"),
+  jobId: z.string().trim().min(1),
+  channelId: optionalStringSchema,
+  prompt: z.string().trim().min(1),
+  kind: schedulerKindSchema,
+  at: z.string().datetime().optional(),
+  everySec: z.number().int().positive().optional(),
+  time: schedulerTimeSchema.optional(),
+  weekday: schedulerWeekdaySchema.optional(),
+  enabled: z.boolean().optional().default(true),
+});
+
+const updateSchedulerJobProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("update_scheduler_job"),
+  jobId: z.string().trim().min(1),
+  enabled: z.boolean().optional(),
+  channelId: optionalStringSchema,
+  prompt: optionalStringSchema,
+  kind: schedulerKindSchema.optional(),
+  at: z.string().datetime().optional(),
+  everySec: z.number().int().positive().optional(),
+  time: schedulerTimeSchema.optional(),
+  weekday: schedulerWeekdaySchema.optional(),
+});
+
+const deleteSchedulerJobProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("delete_scheduler_job"),
+  jobId: z.string().trim().min(1),
+});
+
+const updateBuiltinScheduleProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("update_builtin_schedule"),
+  builtinId: builtInScheduleIdSchema,
+  enabled: z.boolean().optional(),
+  time: schedulerTimeSchema.optional(),
+  weekday: schedulerWeekdaySchema.optional(),
+  intervalMin: z.number().int().positive().optional(),
+  activeLookbackHours: z.number().int().positive().optional(),
+});
+
 export const managerCommandProposalSchema = z.discriminatedUnion("commandType", [
   createIssueProposalSchema,
   createIssueBatchProposalSchema,
@@ -230,6 +291,10 @@ export const managerCommandProposalSchema = z.discriminatedUnion("commandType", 
   addCommentProposalSchema,
   addRelationProposalSchema,
   setIssueParentProposalSchema,
+  createSchedulerJobProposalSchema,
+  updateSchedulerJobProposalSchema,
+  deleteSchedulerJobProposalSchema,
+  updateBuiltinScheduleProposalSchema,
   createNotionAgendaProposalSchema,
   resolveFollowupProposalSchema,
   reviewFollowupProposalSchema,
@@ -241,10 +306,14 @@ export interface ManagerIntentReport {
   intent:
     | "conversation"
     | "query"
+    | "query_schedule"
     | "create_work"
+    | "create_schedule"
     | "update_progress"
     | "update_completed"
     | "update_blocked"
+    | "update_schedule"
+    | "delete_schedule"
     | "followup_resolution"
     | "review"
     | "heartbeat"
@@ -562,6 +631,96 @@ function buildReviewDeps(): Pick<ReviewHelperDeps, "nowIso"> {
   };
 }
 
+function schedulerChannelOrDefault(
+  channelId: string | undefined,
+  policy: ManagerPolicy,
+): string {
+  return channelId?.trim() || policy.controlRoomChannelId;
+}
+
+function builtInScheduleLabel(builtinId: BuiltInScheduleId): string {
+  if (builtinId === "morning-review") return "朝レビュー";
+  if (builtinId === "evening-review") return "夕方レビュー";
+  if (builtinId === "weekly-review") return "週次レビュー";
+  return "heartbeat";
+}
+
+function schedulerJobLabel(kind: z.infer<typeof schedulerKindSchema>, proposal: {
+  time?: string;
+  weekday?: z.infer<typeof schedulerWeekdaySchema>;
+  everySec?: number;
+  at?: string;
+}): string {
+  if (kind === "daily") {
+    return `毎日 ${proposal.time}`;
+  }
+  if (kind === "weekly") {
+    return `毎週 ${proposal.weekday} ${proposal.time}`;
+  }
+  if (kind === "every") {
+    return `${proposal.everySec}秒ごと`;
+  }
+  return proposal.at ?? "単発実行";
+}
+
+function validateSchedulerChannel(
+  channelId: string,
+  config: AppConfig,
+): string | undefined {
+  return config.slackAllowedChannelIds.has(channelId)
+    ? undefined
+    : `channel ${channelId} は許可された Slack channel ではありません。`;
+}
+
+function validateFutureAt(
+  at: string | undefined,
+  now: Date,
+): string | undefined {
+  if (!at) return undefined;
+  const parsed = Date.parse(at);
+  if (Number.isNaN(parsed)) {
+    return "at の日時を解釈できませんでした。";
+  }
+  if (parsed <= now.getTime()) {
+    return "at に指定された日時が過去です。未来の日時を指定してください。";
+  }
+  return undefined;
+}
+
+function sanitizeSchedulerJobForKind(
+  job: z.infer<typeof schedulerJobSchema>,
+): z.infer<typeof schedulerJobSchema> {
+  if (job.kind === "at") {
+    return {
+      ...job,
+      everySec: undefined,
+      time: undefined,
+      weekday: undefined,
+    };
+  }
+  if (job.kind === "every") {
+    return {
+      ...job,
+      at: undefined,
+      time: undefined,
+      weekday: undefined,
+    };
+  }
+  if (job.kind === "daily") {
+    return {
+      ...job,
+      at: undefined,
+      everySec: undefined,
+      weekday: undefined,
+    };
+  }
+  return {
+    ...job,
+    at: undefined,
+    everySec: undefined,
+  };
+}
+
 export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerIntentReport | undefined {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
     const details = toolCalls[index]?.details as { intentReport?: unknown } | undefined;
@@ -571,10 +730,14 @@ export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerI
       intent: z.enum([
         "conversation",
         "query",
+        "query_schedule",
         "create_work",
+        "create_schedule",
         "update_progress",
         "update_completed",
         "update_blocked",
+        "update_schedule",
+        "delete_schedule",
         "followup_resolution",
         "review",
         "heartbeat",
@@ -1163,6 +1326,265 @@ async function commitSetIssueParentProposal(
   };
 }
 
+async function commitCreateSchedulerJobProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof createSchedulerJobProposalSchema>,
+): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  if (isReservedSchedulerId(proposal.jobId)) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は built-in schedule 用の予約 ID です。別の jobId を使ってください。`,
+    };
+  }
+
+  const systemPaths = buildSystemPaths(args.config.workspaceDir);
+  const jobs = normalizeSchedulerJobs(await loadSchedulerJobs(systemPaths));
+  if (jobs.some((job) => job.id === proposal.jobId)) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は既に存在します。別の jobId を使うか既存 job を更新してください。`,
+    };
+  }
+
+  const channelId = schedulerChannelOrDefault(proposal.channelId, args.policy);
+  const invalidChannelReason = validateSchedulerChannel(channelId, args.config);
+  if (invalidChannelReason) {
+    return { proposal, reason: invalidChannelReason };
+  }
+
+  const invalidAtReason = validateFutureAt(proposal.at, args.now);
+  if (invalidAtReason) {
+    return { proposal, reason: invalidAtReason };
+  }
+
+  const parsedJob = schedulerJobSchema.safeParse(sanitizeSchedulerJobForKind({
+    id: proposal.jobId,
+    enabled: proposal.enabled ?? true,
+    channelId,
+    prompt: proposal.prompt,
+    kind: proposal.kind,
+    at: proposal.at,
+    everySec: proposal.everySec,
+    time: proposal.time,
+    weekday: proposal.weekday,
+  }));
+  if (!parsedJob.success) {
+    return {
+      proposal,
+      reason: parsedJob.error.issues.map((issue) => issue.message).join(" / "),
+    };
+  }
+
+  const nextJobs = normalizeSchedulerJobs([...jobs, parsedJob.data]);
+  await saveSchedulerJobs(systemPaths, nextJobs);
+  const saved = nextJobs.find((job) => job.id === proposal.jobId);
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [],
+    summary: `${proposal.jobId} を ${schedulerJobLabel(proposal.kind, proposal)} で登録しました。${saved?.nextRunAt ? `次回実行は ${saved.nextRunAt} です。` : ""}`.trim(),
+  };
+}
+
+async function commitUpdateSchedulerJobProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof updateSchedulerJobProposalSchema>,
+): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  if (
+    proposal.enabled === undefined
+    && !proposal.channelId
+    && !proposal.prompt
+    && !proposal.kind
+    && !proposal.at
+    && !proposal.everySec
+    && !proposal.time
+    && !proposal.weekday
+  ) {
+    return {
+      proposal,
+      reason: "更新する scheduler 項目がありません。時刻、enabled、prompt などの変更点を指定してください。",
+    };
+  }
+  if (isReservedSchedulerId(proposal.jobId)) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は built-in schedule です。更新は built-in schedule の更新 proposal を使ってください。`,
+    };
+  }
+
+  const systemPaths = buildSystemPaths(args.config.workspaceDir);
+  const jobs = normalizeSchedulerJobs(await loadSchedulerJobs(systemPaths));
+  const current = jobs.find((job) => job.id === proposal.jobId);
+  if (!current) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は見つかりませんでした。`,
+    };
+  }
+
+  const nextChannelId = proposal.channelId === undefined
+    ? current.channelId
+    : schedulerChannelOrDefault(proposal.channelId, args.policy);
+  const invalidChannelReason = validateSchedulerChannel(nextChannelId, args.config);
+  if (invalidChannelReason) {
+    return { proposal, reason: invalidChannelReason };
+  }
+
+  const nextKind = proposal.kind ?? current.kind;
+  const nextJobCandidate = sanitizeSchedulerJobForKind({
+    ...current,
+    enabled: proposal.enabled ?? current.enabled,
+    channelId: nextChannelId,
+    prompt: proposal.prompt ?? current.prompt,
+    kind: nextKind,
+    at: proposal.at ?? current.at,
+    everySec: proposal.everySec ?? current.everySec,
+    time: proposal.time ?? current.time,
+    weekday: proposal.weekday ?? current.weekday,
+  });
+  const invalidAtReason = validateFutureAt(nextJobCandidate.at, args.now);
+  if (invalidAtReason) {
+    return { proposal, reason: invalidAtReason };
+  }
+
+  const parsedJob = schedulerJobSchema.safeParse(nextJobCandidate);
+  if (!parsedJob.success) {
+    return {
+      proposal,
+      reason: parsedJob.error.issues.map((issue) => issue.message).join(" / "),
+    };
+  }
+
+  const nextJobs = normalizeSchedulerJobs(
+    jobs.map((job) => (job.id === proposal.jobId ? parsedJob.data : job)),
+  );
+  await saveSchedulerJobs(systemPaths, nextJobs);
+  const saved = nextJobs.find((job) => job.id === proposal.jobId);
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [],
+    summary: `${proposal.jobId} を更新しました。${saved ? `現在は ${schedulerJobLabel(saved.kind, saved)} です。` : ""}${saved?.nextRunAt ? `次回実行は ${saved.nextRunAt} です。` : ""}`.trim(),
+  };
+}
+
+async function commitDeleteSchedulerJobProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof deleteSchedulerJobProposalSchema>,
+): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  if (proposal.jobId === "heartbeat" || isBuiltInReviewJobId(proposal.jobId)) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は built-in schedule なので削除できません。停止したい場合は無効化してください。`,
+    };
+  }
+
+  const systemPaths = buildSystemPaths(args.config.workspaceDir);
+  const jobs = normalizeSchedulerJobs(await loadSchedulerJobs(systemPaths));
+  if (!jobs.some((job) => job.id === proposal.jobId)) {
+    return {
+      proposal,
+      reason: `${proposal.jobId} は見つかりませんでした。`,
+    };
+  }
+
+  const nextJobs = jobs.filter((job) => job.id !== proposal.jobId);
+  await saveSchedulerJobs(systemPaths, nextJobs);
+  return {
+    commandType: proposal.commandType,
+    issueIds: [],
+    summary: `${proposal.jobId} を削除しました。`,
+  };
+}
+
+async function commitUpdateBuiltinScheduleProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof updateBuiltinScheduleProposalSchema>,
+): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  if (
+    proposal.enabled === undefined
+    && !proposal.time
+    && !proposal.weekday
+    && proposal.intervalMin === undefined
+    && proposal.activeLookbackHours === undefined
+  ) {
+    return {
+      proposal,
+      reason: "更新する built-in schedule 項目がありません。enabled、time、weekday、interval を指定してください。",
+    };
+  }
+  if (proposal.builtinId === "heartbeat" && (proposal.time || proposal.weekday)) {
+    return {
+      proposal,
+      reason: "heartbeat では time や weekday は更新できません。intervalMin か activeLookbackHours を指定してください。",
+    };
+  }
+  if (
+    proposal.builtinId !== "heartbeat"
+    && (proposal.intervalMin !== undefined || proposal.activeLookbackHours !== undefined)
+  ) {
+    return {
+      proposal,
+      reason: "intervalMin と activeLookbackHours は heartbeat 専用です。",
+    };
+  }
+  if (proposal.builtinId !== "weekly-review" && proposal.weekday) {
+    return {
+      proposal,
+      reason: "weekday を変更できるのは weekly-review だけです。",
+    };
+  }
+  const systemPaths = buildSystemPaths(args.config.workspaceDir);
+  const nextPolicy = await loadManagerPolicy(systemPaths);
+
+  if (proposal.builtinId === "heartbeat") {
+    nextPolicy.heartbeatEnabled = proposal.enabled ?? nextPolicy.heartbeatEnabled;
+    nextPolicy.heartbeatIntervalMin = proposal.intervalMin ?? nextPolicy.heartbeatIntervalMin;
+    nextPolicy.heartbeatActiveLookbackHours = proposal.activeLookbackHours ?? nextPolicy.heartbeatActiveLookbackHours;
+  } else if (proposal.builtinId === "morning-review") {
+    nextPolicy.reviewCadence.morningEnabled = proposal.enabled ?? nextPolicy.reviewCadence.morningEnabled;
+    nextPolicy.reviewCadence.morning = proposal.time ?? nextPolicy.reviewCadence.morning;
+  } else if (proposal.builtinId === "evening-review") {
+    nextPolicy.reviewCadence.eveningEnabled = proposal.enabled ?? nextPolicy.reviewCadence.eveningEnabled;
+    nextPolicy.reviewCadence.evening = proposal.time ?? nextPolicy.reviewCadence.evening;
+  } else {
+    nextPolicy.reviewCadence.weeklyEnabled = proposal.enabled ?? nextPolicy.reviewCadence.weeklyEnabled;
+    nextPolicy.reviewCadence.weeklyTime = proposal.time ?? nextPolicy.reviewCadence.weeklyTime;
+    nextPolicy.reviewCadence.weeklyDay = proposal.weekday ?? nextPolicy.reviewCadence.weeklyDay;
+  }
+
+  await saveManagerPolicy(systemPaths, nextPolicy);
+  await ensureManagerStateFiles(systemPaths);
+
+  const targetId = proposal.builtinId === "heartbeat"
+    ? "heartbeat"
+    : reviewJobIdForBuiltInScheduleId(proposal.builtinId);
+  const schedule = await getUnifiedSchedule(systemPaths, nextPolicy, targetId);
+  const label = builtInScheduleLabel(proposal.builtinId);
+
+  if (proposal.enabled === false) {
+    return {
+      commandType: proposal.commandType,
+      issueIds: [],
+      summary: `${label}を停止しました。`,
+    };
+  }
+
+  if (proposal.builtinId === "heartbeat") {
+    return {
+      commandType: proposal.commandType,
+      issueIds: [],
+      summary: `${label} を ${nextPolicy.heartbeatIntervalMin}分ごとに更新しました。`,
+    };
+  }
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [],
+    summary: `${label} を更新しました。${schedule?.time ? `現在は ${schedule.time}` : ""}${schedule?.weekday ? ` (${schedule.weekday})` : ""}${schedule?.nextRunAt ? `。次回実行は ${schedule.nextRunAt} です。` : ""}`.replace(/^。/, ""),
+  };
+}
+
 async function commitCreateNotionAgendaProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof createNotionAgendaProposalSchema>,
@@ -1348,16 +1770,24 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
       ? await commitCreateIssueProposal(args, validatedProposal)
       : validatedProposal.commandType === "create_issue_batch"
         ? await commitCreateIssueBatchProposal(args, validatedProposal)
-        : validatedProposal.commandType === "update_issue_status"
+      : validatedProposal.commandType === "update_issue_status"
           ? await commitUpdateIssueStatusProposal(args, validatedProposal)
-          : validatedProposal.commandType === "assign_issue"
+        : validatedProposal.commandType === "assign_issue"
             ? await commitAssignIssueProposal(args, validatedProposal)
-            : validatedProposal.commandType === "add_comment"
+          : validatedProposal.commandType === "add_comment"
               ? await commitAddCommentProposal(args, validatedProposal)
-              : validatedProposal.commandType === "add_relation"
+            : validatedProposal.commandType === "add_relation"
                 ? await commitAddRelationProposal(args, validatedProposal)
-                : validatedProposal.commandType === "set_issue_parent"
+              : validatedProposal.commandType === "set_issue_parent"
                   ? await commitSetIssueParentProposal(args, validatedProposal)
+                : validatedProposal.commandType === "create_scheduler_job"
+                  ? await commitCreateSchedulerJobProposal(args, validatedProposal)
+                : validatedProposal.commandType === "update_scheduler_job"
+                  ? await commitUpdateSchedulerJobProposal(args, validatedProposal)
+                : validatedProposal.commandType === "delete_scheduler_job"
+                  ? await commitDeleteSchedulerJobProposal(args, validatedProposal)
+                : validatedProposal.commandType === "update_builtin_schedule"
+                  ? await commitUpdateBuiltinScheduleProposal(args, validatedProposal)
                   : validatedProposal.commandType === "create_notion_agenda"
                     ? await commitCreateNotionAgendaProposal(args, validatedProposal)
                   : validatedProposal.commandType === "resolve_followup"

@@ -225,6 +225,23 @@ docker compose down
 
 このうち、明示的に編集したくなるのは主に `policy.json`, `owner-map.json`, `HEARTBEAT.md` です。
 
+Slack から scheduler を操作する場合は、通常こちらを優先します。例:
+
+- `スケジュール一覧を見せて`
+- `manager-review-evening の設定を見せて`
+- `毎日 09:00 に AIC の期限近い task を確認する job を追加して`
+- `daily-task-check を 17:00 に変更して`
+- `daily-task-check を削除して`
+- `朝レビューを 08:30 に変更して`
+- `夕方レビューを止めて`
+- `heartbeat を 60分ごとにして`
+
+補足:
+
+- built-in review / heartbeat は `policy.json` が正です
+- custom job だけが `jobs.json` に直接保存されます
+- built-in の `削除` は内部的には `disable` として扱います
+
 ## 9. Workgraph maintenance
 
 現在の health を確認する場合:

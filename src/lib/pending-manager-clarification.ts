@@ -4,9 +4,12 @@ import type { ThreadPaths } from "./thread-workspace.js";
 
 export type PendingManagerClarificationIntent =
   | "create_work"
+  | "create_schedule"
   | "update_progress"
   | "update_completed"
   | "update_blocked"
+  | "update_schedule"
+  | "delete_schedule"
   | "followup_resolution";
 
 export interface PendingManagerClarification {
@@ -28,9 +31,12 @@ function buildPendingManagerClarificationPath(paths: ThreadPaths): string {
 
 function isPendingManagerClarificationIntent(value: unknown): value is PendingManagerClarificationIntent {
   return value === "create_work"
+    || value === "create_schedule"
     || value === "update_progress"
     || value === "update_completed"
     || value === "update_blocked"
+    || value === "update_schedule"
+    || value === "delete_schedule"
     || value === "followup_resolution";
 }
 

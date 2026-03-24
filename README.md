@@ -100,6 +100,19 @@ heartbeat は isolated session `heartbeat:<channel>` 相当で動き、返答が
 
 scheduler は `/workspace/system/jobs.json` を読み、`at`, `every`, `daily`, `weekly` の job を isolated session `cron:<jobId>` 相当で実行します。初回起動時に、control room 向けの manager review jobs が自動生成されます。
 
+Slack からも scheduler を管理できます。主な例:
+
+- `スケジュール一覧を見せて`
+- `manager-review-evening の設定を見せて`
+- `毎日 09:00 に AIC の期限近い task を確認する job を追加して`
+- `daily-task-check を 17:00 に変更して`
+- `daily-task-check を削除して`
+- `朝レビューを 08:30 に変更して`
+- `夕方レビューを止めて`
+- `heartbeat を 60分ごとにして`
+
+built-in schedules は `morning-review`, `evening-review`, `weekly-review`, `heartbeat` です。これらは `policy.json` が正で、Slack からの変更も内部的には policy update として反映されます。custom jobs だけが `jobs.json` に直接保存されます。
+
 `jobs.json` の最小例:
 
 ```json
@@ -137,6 +150,12 @@ scheduler は `/workspace/system/jobs.json` を読み、`at`, `every`, `daily`, 
 - `reviewExplicitFollowupCount`
 - `researchAutoPlanMinActions`
 - `researchAutoPlanMaxChildren`
+- `reviewCadence.morningEnabled`
+- `reviewCadence.eveningEnabled`
+- `reviewCadence.weeklyEnabled`
+- `heartbeatEnabled`
+- `heartbeatIntervalMin`
+- `heartbeatActiveLookbackHours`
 
 ## Slack App Setup
 
