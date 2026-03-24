@@ -13,6 +13,7 @@ import {
   normalizeLinearIssuePayload,
   normalizeRelationListPayload,
   normalizeTeamMembersPayload,
+  parseLinearBatchCreateFailure,
 } from "../src/lib/linear.js";
 
 describe("linear command builders", () => {
@@ -192,6 +193,45 @@ describe("linear command builders", () => {
         LINEAR_API_KEY: "lin_api_test",
       }),
     ).toEqual(["issue", "create-batch", "--file", "/tmp/issue-batch.json", "--json"]);
+  });
+
+  it("parses structured create-batch partial failures from linear-cli v2.8.0", () => {
+    const failure = parseLinearBatchCreateFailure(JSON.stringify({
+      success: false,
+      error: {
+        type: "cli_error",
+        message: "Issue batch creation failed while creating child 2 of 7",
+        suggestion: "Already created issues: AIC-201, AIC-202.",
+        context: "Failed to create issue batch",
+        details: {
+          command: "issue.create-batch",
+          createdIdentifiers: ["AIC-201", "AIC-202"],
+          createdCount: 2,
+          failedStep: {
+            stage: "child",
+            index: 2,
+            total: 7,
+            title: "千島さんとの契約・予算の詳細詰め",
+          },
+          retryHint: "Do not rerun the same batch file unchanged after a partial failure.",
+        },
+      },
+    }));
+
+    expect(failure).toEqual({
+      message: "Issue batch creation failed while creating child 2 of 7",
+      suggestion: "Already created issues: AIC-201, AIC-202.",
+      context: "Failed to create issue batch",
+      createdIdentifiers: ["AIC-201", "AIC-202"],
+      createdCount: 2,
+      failedStep: {
+        stage: "child",
+        index: 2,
+        total: 7,
+        title: "千島さんとの契約・予算の詳細詰め",
+      },
+      retryHint: "Do not rerun the same batch file unchanged after a partial failure.",
+    });
   });
 
   it("normalizes issue view payloads with hierarchy and relations", () => {

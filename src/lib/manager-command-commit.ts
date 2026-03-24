@@ -422,6 +422,61 @@ function fingerprintText(text: string): string {
     .trim();
 }
 
+interface LinearBatchCreateFailureLike {
+  message: string;
+  createdIdentifiers?: string[];
+  createdCount?: number;
+  failedStep?: {
+    stage?: string;
+    index?: number;
+    total?: number;
+    title?: string;
+  };
+  retryHint?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isLinearBatchCreateFailure(error: unknown): error is LinearBatchCreateFailureLike {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & Record<string, unknown>;
+  return Array.isArray(candidate.createdIdentifiers)
+    || typeof candidate.retryHint === "string"
+    || isRecord(candidate.failedStep);
+}
+
+function formatLinearBatchCreateFailureReason(error: LinearBatchCreateFailureLike): string {
+  const parts = ["一括起票の途中で失敗しました。"];
+
+  if (Array.isArray(error.createdIdentifiers) && error.createdIdentifiers.length > 0) {
+    parts.push(`作成済み issue: ${error.createdIdentifiers.join(", ")}。`);
+  } else if (typeof error.createdCount === "number" && error.createdCount > 0) {
+    parts.push(`作成済み issue: ${error.createdCount}件。`);
+  }
+
+  if (error.failedStep) {
+    const location: string[] = [];
+    if (error.failedStep.stage) location.push(error.failedStep.stage);
+    if (typeof error.failedStep.index === "number" && typeof error.failedStep.total === "number") {
+      location.push(`${error.failedStep.index}/${error.failedStep.total}`);
+    }
+    if (error.failedStep.title) location.push(`「${error.failedStep.title}」`);
+    if (location.length > 0) {
+      parts.push(`失敗箇所: ${location.join(" ")}。`);
+    }
+  }
+
+  if (error.retryHint?.trim()) {
+    parts.push("再試行時は作成済み issue を除いて残りだけを起票してください。");
+  } else if (error.message.trim()) {
+    parts.push(`${error.message.trim().replace(/[。.]$/u, "")}。`);
+  }
+
+  return parts.join(" ");
+}
+
 function dedupeProposalKey(proposal: ManagerCommandProposal): string {
   return proposal.dedupeKeyCandidate
     ?? JSON.stringify({
@@ -1070,29 +1125,40 @@ async function commitCreateIssueBatchProposal(
     };
   }
 
-  const batch = await createManagedLinearIssueBatch(
-    {
-      parent: {
-        title: proposal.parent.title,
-        description: proposal.parent.description,
-        state: proposal.parent.state,
-        dueDate: proposal.parent.dueDate,
-        assignee: proposal.parent.assignee,
-        parent: proposal.parent.parent,
-        priority: proposal.parent.priority,
+  let batch;
+  try {
+    batch = await createManagedLinearIssueBatch(
+      {
+        parent: {
+          title: proposal.parent.title,
+          description: proposal.parent.description,
+          state: proposal.parent.state,
+          dueDate: proposal.parent.dueDate,
+          assignee: proposal.parent.assignee,
+          parent: proposal.parent.parent,
+          priority: proposal.parent.priority,
+        },
+        children: proposal.children.map((child) => ({
+          title: child.title,
+          description: child.description,
+          state: child.state,
+          dueDate: child.dueDate,
+          assignee: child.assignee,
+          parent: child.parent,
+          priority: child.priority,
+        })),
       },
-      children: proposal.children.map((child) => ({
-        title: child.title,
-        description: child.description,
-        state: child.state,
-        dueDate: child.dueDate,
-        assignee: child.assignee,
-        parent: child.parent,
-        priority: child.priority,
-      })),
-    },
-    args.env,
-  );
+      args.env,
+    );
+  } catch (error) {
+    if (isLinearBatchCreateFailure(error)) {
+      return {
+        proposal,
+        reason: formatLinearBatchCreateFailureReason(error),
+      };
+    }
+    throw error;
+  }
 
   const parent = batch.parent;
   const children = compactLinearIssues(batch.children);

@@ -523,6 +523,77 @@ describe("manager command commit", () => {
     expect(result.replySummaries.join("\n")).not.toContain("duplicate intake already recorded for this thread");
   });
 
+  it("surfaces structured batch create partial failures with retry guidance", async () => {
+    linearMocks.createManagedLinearIssueBatch.mockRejectedValueOnce(Object.assign(
+      new Error("Issue batch creation failed while creating child 2 of 7"),
+      {
+        createdIdentifiers: ["AIC-201", "AIC-202"],
+        createdCount: 2,
+        failedStep: {
+          stage: "child",
+          index: 2,
+          total: 7,
+          title: "千島さんとの契約・予算の詳細詰め",
+        },
+        retryHint: "Do not rerun the same batch file unchanged after a partial failure.",
+      },
+    ));
+
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_issue_batch",
+          planningReason: "complex-request",
+          reasonSummary: "議事録から角井担当 task を作成します。",
+          parent: {
+            title: "議事録タスク：角井 勇哉（2026-03-24）",
+            description: "角井担当 task 群です。",
+            assigneeMode: "assign",
+            assignee: "y.kakui",
+          },
+          children: [
+            {
+              title: "3ヶ月後のゴールとスケジュールのポンチ絵資料作成",
+              description: "資料作成 task です。",
+              assigneeMode: "assign",
+              assignee: "y.kakui",
+            },
+            {
+              title: "千島さんとの契約・予算の詳細詰め",
+              description: "契約・予算 task です。",
+              assigneeMode: "assign",
+              assignee: "y.kakui",
+            },
+          ],
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-batch-create-partial-failure",
+        messageTs: "msg-batch-create-partial-failure-1",
+        userId: "U1",
+        text: "以下の議事録からタスクを作成して",
+      },
+      now: new Date("2026-03-24T02:49:59.833Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("一括起票の途中で失敗しました。");
+    expect(result.rejected[0]?.reason).toContain("作成済み issue: AIC-201, AIC-202。");
+    expect(result.rejected[0]?.reason).toContain("失敗箇所: child 2/7 「千島さんとの契約・予算の詳細詰め」。");
+    expect(result.rejected[0]?.reason).toContain("再試行時は作成済み issue を除いて残りだけを起票してください。");
+  });
+
   it("reuses and reparents an existing duplicate under the thread parent", async () => {
     await recordPlanningOutcome(repositories.workgraph, {
       occurredAt: "2026-03-23T00:00:00.000Z",

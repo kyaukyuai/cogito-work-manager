@@ -132,6 +132,23 @@ export interface ManagedCreateIssueBatchResult {
   children: LinearIssue[];
 }
 
+export interface LinearBatchCreateFailureStep {
+  stage?: string;
+  index?: number;
+  total?: number;
+  title?: string;
+}
+
+export interface LinearBatchCreateFailureDetails {
+  message: string;
+  suggestion?: string | null;
+  context?: string | null;
+  createdIdentifiers: string[];
+  createdCount?: number;
+  failedStep?: LinearBatchCreateFailureStep;
+  retryHint?: string;
+}
+
 export interface RiskPolicy {
   staleBusinessDays: number;
   urgentPriorityThreshold: number;
@@ -245,6 +262,17 @@ interface CliCommentPayload {
 interface CliBatchCreatePayload {
   parent?: CliIssuePayload;
   children?: CliIssuePayload[];
+}
+
+interface CliJsonErrorEnvelope {
+  success: false;
+  error?: {
+    type?: string;
+    message?: string;
+    suggestion?: string | null;
+    context?: string | null;
+    details?: Record<string, unknown>;
+  };
 }
 
 interface BatchIssueSpec {
@@ -556,6 +584,20 @@ function compareVersions(left: string, right: string): number {
   return 0;
 }
 
+class LinearCommandError extends Error {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly combined: string;
+
+  constructor(message: string, stdout: string, stderr: string, combined: string) {
+    super(message);
+    this.name = "LinearCommandError";
+    this.stdout = stdout;
+    this.stderr = stderr;
+    this.combined = combined;
+  }
+}
+
 async function execLinear(
   args: string[],
   env: LinearCommandEnv = process.env,
@@ -572,7 +614,7 @@ async function execLinear(
     const stderr = stripAnsi(String((error as { stderr?: string }).stderr ?? "")).trim();
     const message = error instanceof Error ? error.message : String(error);
     const combined = [stdout, stderr, message].filter(Boolean).join("\n").trim();
-    throw new Error(combined || `linear ${args.join(" ")} failed`);
+    throw new LinearCommandError(combined || `linear ${args.join(" ")} failed`, stdout, stderr, combined);
   }
 }
 
@@ -921,8 +963,8 @@ async function loadIssueRelations(
 export async function verifyLinearCli(teamKey: string): Promise<void> {
   const versionResult = await execLinear(["--version"], process.env);
   const version = versionResult.stdout || versionResult.stderr;
-  if (compareVersions(version, "2.7.0") < 0) {
-    throw new Error(`linear-cli v2.7.0 or newer is required. Current version: ${version || "unknown"}`);
+  if (compareVersions(version, "2.8.0") < 0) {
+    throw new Error(`linear-cli v2.8.0 or newer is required. Current version: ${version || "unknown"}`);
   }
 
   const whoami = await execLinear(["auth", "whoami"], process.env);
@@ -1073,7 +1115,25 @@ export async function createManagedLinearIssueBatch(
 
     await writeFile(batchFilePath, JSON.stringify(batchPayload, null, 2), "utf8");
 
-    const payload = await execLinearJson<CliBatchCreatePayload>(buildCreateBatchArgs(batchFilePath, env), env, signal);
+    let payload: CliBatchCreatePayload;
+    try {
+      const result = await execLinear(buildCreateBatchArgs(batchFilePath, env), env, signal);
+      const raw = result.stdout || result.stderr;
+      if (!raw) {
+        throw new Error("linear command returned empty JSON output");
+      }
+      payload = JSON.parse(raw) as CliBatchCreatePayload;
+    } catch (error) {
+      const raw = error instanceof LinearCommandError
+        ? (error.stdout || error.stderr || error.combined || error.message)
+        : (error instanceof Error ? error.message : String(error));
+      const failure = parseLinearBatchCreateFailure(raw);
+      if (failure) {
+        throw Object.assign(new Error(failure.message), failure);
+      }
+      throw error;
+    }
+
     const parent = normalizeLinearIssuePayload(payload.parent);
     if (!parent) {
       throw new Error("Linear issue batch creation returned no parent issue");
@@ -1261,4 +1321,48 @@ export async function listRiskyLinearIssues(
   signal?: AbortSignal,
 ): Promise<LinearIssue[]> {
   return listOpenLinearIssues(env, signal);
+}
+
+function normalizeLinearBatchFailureStep(raw: unknown): LinearBatchCreateFailureStep | undefined {
+  if (!isRecord(raw)) return undefined;
+  const stage = toStringOrUndefined(raw.stage);
+  const index = toNumberOrUndefined(raw.index);
+  const total = toNumberOrUndefined(raw.total);
+  const title = toStringOrUndefined(raw.title);
+  if (!stage && index == null && total == null && !title) {
+    return undefined;
+  }
+  return { stage, index, total, title };
+}
+
+export function parseLinearBatchCreateFailure(raw: string): LinearBatchCreateFailureDetails | undefined {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || parsed.success !== false) return undefined;
+
+    const envelope = parsed as unknown as CliJsonErrorEnvelope;
+    const error = isRecord(envelope.error) ? envelope.error : undefined;
+    const details = isRecord(error?.details) ? error.details : undefined;
+    const command = toStringOrUndefined(details?.command);
+    const context = toNullableString(error?.context);
+    if (command !== "issue.create-batch" && context !== "Failed to create issue batch") {
+      return undefined;
+    }
+
+    const createdIdentifiers = Array.isArray(details?.createdIdentifiers)
+      ? details.createdIdentifiers.map((value) => toStringOrUndefined(value)).filter(Boolean) as string[]
+      : [];
+
+    return {
+      message: toStringOrUndefined(error?.message) ?? "Failed to create issue batch",
+      suggestion: toNullableString(error?.suggestion) ?? null,
+      context,
+      createdIdentifiers,
+      createdCount: toNumberOrUndefined(details?.createdCount),
+      failedStep: normalizeLinearBatchFailureStep(details?.failedStep),
+      retryHint: toStringOrUndefined(details?.retryHint),
+    };
+  } catch {
+    return undefined;
+  }
 }
