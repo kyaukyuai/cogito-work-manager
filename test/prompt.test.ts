@@ -129,6 +129,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("When describing schedule status to the user, mention lastRunAt, lastStatus, lastResult, or lastError");
     expect(prompt).toContain("When the user says 毎日 9:00, 毎週火曜, or 30分ごと, convert that into a valid scheduler proposal instead of asking the manager layer to parse it later.");
     expect(prompt).toContain("Treat 〜を今すぐ実行して, 〜のテスト実行をして, and 〜を試しに一度動かして as scheduler immediate-run requests for custom jobs.");
+    expect(prompt).toContain("If the user asks what you can do, answer with 4-5 short bullets and a one-line closing invitation.");
+    expect(prompt).toContain("For a what-you-can-do reply, cover these implemented capabilities only: Linear task management, existing issue execution through run_task, Notion search/create/update/archive, scheduler inspection and custom-job execution, and review/heartbeat/webhook automation.");
+    expect(prompt).toContain("Do not mention unimplemented capabilities in a what-you-can-do reply.");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
 
