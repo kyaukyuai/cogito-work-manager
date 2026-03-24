@@ -81,6 +81,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Express that owner decision with assigneeMode=assign or leave-unassigned.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
     expect(prompt).toContain("When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.");
+    expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");
+    expect(prompt).toContain("If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn");
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
     expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");

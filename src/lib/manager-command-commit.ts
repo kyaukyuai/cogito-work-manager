@@ -39,6 +39,7 @@ import {
 } from "../state/workgraph/recorder.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
+  type ExistingThreadIntakeContext,
   findExistingThreadIntakeByFingerprint,
   getThreadPlanningContext,
 } from "../state/workgraph/queries.js";
@@ -393,6 +394,7 @@ export interface CommitManagerCommandArgs {
   now: Date;
   policy: ManagerPolicy;
   env: LinearCommandEnv;
+  existingThreadIntakeAtTurnStart?: ExistingThreadIntakeContext | null;
   runSchedulerJobNow?: (job: SchedulerJob) => Promise<{
     status: "ok" | "error";
     persistedSummary: string;
@@ -617,6 +619,24 @@ function buildPlanningEntry(sourceThread: string, parentIssueId: string | undefi
     createdAt: nowIso,
     updatedAt: nowIso,
   };
+}
+
+async function getExistingThreadIntakeAtTurnStart(
+  args: CommitManagerCommandArgs,
+  threadKey: string,
+  fingerprint: string,
+): Promise<ExistingThreadIntakeContext | undefined> {
+  if (args.existingThreadIntakeAtTurnStart !== undefined) {
+    if (
+      args.existingThreadIntakeAtTurnStart
+      && args.existingThreadIntakeAtTurnStart.threadKey === threadKey
+      && args.existingThreadIntakeAtTurnStart.messageFingerprint === fingerprint
+    ) {
+      return args.existingThreadIntakeAtTurnStart;
+    }
+    return undefined;
+  }
+  return findExistingThreadIntakeByFingerprint(args.repositories.workgraph, threadKey, fingerprint);
 }
 
 function buildStatusSourceComment(message: ManagerCommitMessageContext | ManagerCommitSystemContext, heading: string): string {
@@ -844,11 +864,7 @@ async function commitCreateIssueProposal(
       reason: "既存 issue を親 issue に紐づけ直す提案でしたが、親 issue を特定できませんでした。親 issue ID を明示してください。",
     };
   }
-  const existingThreadIntake = await findExistingThreadIntakeByFingerprint(
-    args.repositories.workgraph,
-    threadKey,
-    fingerprint,
-  );
+  const existingThreadIntake = await getExistingThreadIntakeAtTurnStart(args, threadKey, fingerprint);
 
   if (existingThreadIntake) {
     return {
@@ -1045,11 +1061,7 @@ async function commitCreateIssueBatchProposal(
   const occurredAt = buildOccurredAt(args.now);
   const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
   const fingerprint = fingerprintText(args.message.text);
-  const existingThreadIntake = await findExistingThreadIntakeByFingerprint(
-    args.repositories.workgraph,
-    threadKey,
-    fingerprint,
-  );
+  const existingThreadIntake = await getExistingThreadIntakeAtTurnStart(args, threadKey, fingerprint);
 
   if (existingThreadIntake) {
     return {
@@ -1812,6 +1824,20 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
     deduped.set(dedupeProposalKey(proposal), proposal);
   }
 
+  const needsIntakeDedupeCheck = Array.from(deduped.values()).some((proposal) => (
+    proposal.commandType === "create_issue" || proposal.commandType === "create_issue_batch"
+  ));
+  const commitArgs = needsIntakeDedupeCheck && !args.existingThreadIntakeAtTurnStart
+    ? {
+        ...args,
+        existingThreadIntakeAtTurnStart: await findExistingThreadIntakeByFingerprint(
+          args.repositories.workgraph,
+          buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs),
+          fingerprintText(args.message.text),
+        ) ?? null,
+      }
+    : args;
+
   const committed: ManagerCommittedCommand[] = [];
   const rejected: ManagerProposalRejection[] = [];
 
@@ -1833,34 +1859,34 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
 
     const validatedProposal = parsedProposal.data;
       const result = validatedProposal.commandType === "create_issue"
-      ? await commitCreateIssueProposal(args, validatedProposal)
+      ? await commitCreateIssueProposal(commitArgs, validatedProposal)
       : validatedProposal.commandType === "create_issue_batch"
-        ? await commitCreateIssueBatchProposal(args, validatedProposal)
+        ? await commitCreateIssueBatchProposal(commitArgs, validatedProposal)
       : validatedProposal.commandType === "update_issue_status"
-          ? await commitUpdateIssueStatusProposal(args, validatedProposal)
+          ? await commitUpdateIssueStatusProposal(commitArgs, validatedProposal)
         : validatedProposal.commandType === "assign_issue"
-            ? await commitAssignIssueProposal(args, validatedProposal)
+            ? await commitAssignIssueProposal(commitArgs, validatedProposal)
           : validatedProposal.commandType === "add_comment"
-              ? await commitAddCommentProposal(args, validatedProposal)
+              ? await commitAddCommentProposal(commitArgs, validatedProposal)
             : validatedProposal.commandType === "add_relation"
-                ? await commitAddRelationProposal(args, validatedProposal)
+                ? await commitAddRelationProposal(commitArgs, validatedProposal)
               : validatedProposal.commandType === "set_issue_parent"
-                  ? await commitSetIssueParentProposal(args, validatedProposal)
+                  ? await commitSetIssueParentProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "create_scheduler_job"
-                  ? await commitCreateSchedulerJobProposal(args, validatedProposal)
+                  ? await commitCreateSchedulerJobProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "update_scheduler_job"
-                  ? await commitUpdateSchedulerJobProposal(args, validatedProposal)
+                  ? await commitUpdateSchedulerJobProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "delete_scheduler_job"
-                  ? await commitDeleteSchedulerJobProposal(args, validatedProposal)
+                  ? await commitDeleteSchedulerJobProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "update_builtin_schedule"
-                  ? await commitUpdateBuiltinScheduleProposal(args, validatedProposal)
+                  ? await commitUpdateBuiltinScheduleProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "run_scheduler_job_now"
-                  ? await commitRunSchedulerJobNowProposal(args, validatedProposal)
+                  ? await commitRunSchedulerJobNowProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "create_notion_agenda"
-                  ? await commitCreateNotionAgendaProposal(args, validatedProposal)
+                  ? await commitCreateNotionAgendaProposal(commitArgs, validatedProposal)
                 : validatedProposal.commandType === "resolve_followup"
-                    ? await commitResolveFollowupProposal(args, validatedProposal)
-                    : await commitReviewFollowupProposal(args, validatedProposal);
+                  ? await commitResolveFollowupProposal(commitArgs, validatedProposal)
+                  : await commitReviewFollowupProposal(commitArgs, validatedProposal);
 
     if ("reason" in result) {
       rejected.push(result);

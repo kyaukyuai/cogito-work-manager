@@ -311,6 +311,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.",
     "When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.",
     "For larger requests, propose a parent issue and execution-sized child issues.",
+    "propose_create_issue_batch supports at most 8 child issues per proposal.",
+    "If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn instead of retrying after a schema failure.",
     "When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.",
     "If Notion tools are available, use Notion as reference material for specs, notes, and operating context. Do not treat Notion as the task system of record.",
     "When the user explicitly asks to create an agenda in Notion, use propose_create_notion_agenda instead of creating a Linear issue.",

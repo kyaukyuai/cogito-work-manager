@@ -402,6 +402,127 @@ describe("manager command commit", () => {
     expect(result.committed[0]?.summary).toContain("子 task として <https://linear.app/kyaukyuai/issue/AIC-40|AIC-40 コギトをシステム設定・プロンプトに命名として反映する> を追加しています。");
   });
 
+  it("commits multiple create_issue_batch proposals in the same turn without tripping thread dedupe", async () => {
+    linearMocks.createManagedLinearIssueBatch
+      .mockResolvedValueOnce({
+        parent: {
+          id: "issue-parent-1",
+          identifier: "AIC-201",
+          title: "議事録タスク：角井 勇哉（2026-03-24）",
+          url: "https://linear.app/kyaukyuai/issue/AIC-201",
+          relations: [],
+          inverseRelations: [],
+        },
+        children: [
+          {
+            id: "issue-child-1",
+            identifier: "AIC-202",
+            title: "3ヶ月後のゴールとスケジュールのポンチ絵資料作成",
+            url: "https://linear.app/kyaukyuai/issue/AIC-202",
+            relations: [],
+            inverseRelations: [],
+          },
+          {
+            id: "issue-child-2",
+            identifier: "AIC-203",
+            title: "千島さんとの契約・予算の詳細詰め",
+            url: "https://linear.app/kyaukyuai/issue/AIC-203",
+            relations: [],
+            inverseRelations: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        parent: {
+          id: "issue-parent-2",
+          identifier: "AIC-204",
+          title: "議事録タスク：田平 誠人（2026-03-24）",
+          url: "https://linear.app/kyaukyuai/issue/AIC-204",
+          relations: [],
+          inverseRelations: [],
+        },
+        children: [
+          {
+            id: "issue-child-3",
+            identifier: "AIC-205",
+            title: "金澤さんから定例ミーティング名の確認",
+            url: "https://linear.app/kyaukyuai/issue/AIC-205",
+            relations: [],
+            inverseRelations: [],
+          },
+        ],
+      });
+
+    const result = await commitManagerCommandProposals({
+      config: { ...config, workspaceDir },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_issue_batch",
+          planningReason: "complex-request",
+          reasonSummary: "議事録から角井担当 task を作成します。",
+          parent: {
+            title: "議事録タスク：角井 勇哉（2026-03-24）",
+            description: "角井担当 task 群です。",
+            assigneeMode: "assign",
+            assignee: "y.kakui",
+          },
+          children: [
+            {
+              title: "3ヶ月後のゴールとスケジュールのポンチ絵資料作成",
+              description: "資料作成 task です。",
+              assigneeMode: "assign",
+              assignee: "y.kakui",
+            },
+            {
+              title: "千島さんとの契約・予算の詳細詰め",
+              description: "契約・予算 task です。",
+              assigneeMode: "assign",
+              assignee: "y.kakui",
+            },
+          ],
+        },
+        {
+          commandType: "create_issue_batch",
+          planningReason: "complex-request",
+          reasonSummary: "議事録から田平担当 task を作成します。",
+          parent: {
+            title: "議事録タスク：田平 誠人（2026-03-24）",
+            description: "田平担当 task 群です。",
+            assigneeMode: "leave-unassigned",
+          },
+          children: [
+            {
+              title: "金澤さんから定例ミーティング名の確認",
+              description: "ミーティング名確認 task です。",
+              assigneeMode: "leave-unassigned",
+            },
+          ],
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-multi-batch-create",
+        messageTs: "msg-multi-batch-create-1",
+        userId: "U1",
+        text: "以下の議事録からタスクを作成して",
+      },
+      now: new Date("2026-03-24T02:49:59.833Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(2);
+    expect(linearMocks.createManagedLinearIssueBatch).toHaveBeenCalledTimes(2);
+    expect(result.replySummaries.join("\n")).not.toContain("duplicate intake already recorded for this thread");
+  });
+
   it("reuses and reparents an existing duplicate under the thread parent", async () => {
     await recordPlanningOutcome(repositories.workgraph, {
       occurredAt: "2026-03-23T00:00:00.000Z",

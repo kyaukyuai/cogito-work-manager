@@ -926,7 +926,7 @@ function createProposalTools(): ToolDefinition[] {
       name: "propose_create_issue_batch",
       label: "Propose Create Issue Batch",
       description: "Propose creating a parent issue plus child issues. This does not execute the mutation.",
-      promptSnippet: "Use this when a request should be broken into a parent and execution-sized child tasks.",
+      promptSnippet: "Use this when a request should be broken into a parent and execution-sized child tasks. Each batch may contain at most 8 children; split larger sets into multiple create_issue_batch proposals in the same turn.",
       commandType: "create_issue_batch",
       parameters: Type.Object({
         planningReason: Type.String({ description: "Usually complex-request or research-first." }),
