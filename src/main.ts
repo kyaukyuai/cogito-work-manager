@@ -13,7 +13,7 @@ import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runManagerSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
-import { buildSlackMessagePayload } from "./lib/slack-format.js";
+import { postSlackProcessingNotice, sendSlackReply } from "./lib/slack-replies.js";
 import { mergeSystemReply } from "./lib/system-slack-reply.js";
 import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "./lib/slack.js";
 import { buildHeartbeatPaths, buildSchedulerPaths, buildSystemPaths, ensureSystemWorkspace, type SchedulerJob } from "./lib/system-workspace.js";
@@ -42,25 +42,6 @@ class ThreadQueue {
 
     this.jobs.set(key, current);
   }
-}
-
-async function postSlackReply(
-  webClient: WebClient,
-  args: {
-    channel: string;
-    reply: string;
-    threadTs?: string;
-    linearWorkspace: string;
-  },
-): Promise<string> {
-  const payload = buildSlackMessagePayload(args.reply, { linearWorkspace: args.linearWorkspace });
-  await webClient.chat.postMessage({
-    channel: args.channel,
-    thread_ts: args.threadTs,
-    text: payload.text,
-    blocks: payload.blocks,
-  });
-  return payload.text;
 }
 
 function extractSchedulerRunCommitSummary(rawReply: string, postedReply: string): string | undefined {
@@ -354,7 +335,7 @@ async function main(): Promise<void> {
       fallback: async () => "処理に失敗しました。設定や連携を確認してください。",
     });
 
-    const postedReply = await postSlackReply(webClient, {
+    const postedReply = await sendSlackReply(webClient, {
       channel: job.channelId,
       reply: rawReply,
       linearWorkspace: config.linearWorkspace,
@@ -403,6 +384,17 @@ async function main(): Promise<void> {
 
     const message = normalizeSlackMessage(rawEvent);
     const threadKey = `${message.channelId}:${message.rootThreadTs}`;
+    const pendingReplyTsPromise = postSlackProcessingNotice(webClient, {
+      channel: message.channelId,
+      threadTs: message.rootThreadTs,
+    }).catch((error) => {
+      logger.warn("Failed to post Slack processing notice", {
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    });
 
     queue.enqueue(threadKey, async () => {
       const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
@@ -516,12 +508,14 @@ async function main(): Promise<void> {
         }
 
         const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
+        const pendingReplyTs = await pendingReplyTsPromise;
 
-        const formattedReply = await postSlackReply(webClient, {
+        const formattedReply = await sendSlackReply(webClient, {
           channel: message.channelId,
           threadTs: message.rootThreadTs,
           reply,
           linearWorkspace: config.linearWorkspace,
+          updateTs: pendingReplyTs,
         });
 
         await appendThreadLog(paths, {
@@ -537,12 +531,14 @@ async function main(): Promise<void> {
           threadTs: message.rootThreadTs,
           error: errorMessage,
         });
+        const pendingReplyTs = await pendingReplyTsPromise;
 
-        const reply = await postSlackReply(webClient, {
+        const reply = await sendSlackReply(webClient, {
           channel: message.channelId,
           threadTs: message.rootThreadTs,
           reply: `処理に失敗しました。設定や Linear 連携を確認してください。\n\n${errorMessage}`,
           linearWorkspace: config.linearWorkspace,
+          updateTs: pendingReplyTs,
         });
 
         await appendThreadLog(paths, {
@@ -607,7 +603,7 @@ async function main(): Promise<void> {
         });
         return { reply, status: "noop", reason };
       }
-      const postedReply = await postSlackReply(webClient, {
+      const postedReply = await sendSlackReply(webClient, {
         channel: channelId,
         reply,
         linearWorkspace: config.linearWorkspace,
@@ -665,7 +661,7 @@ async function main(): Promise<void> {
           };
         }
 
-        const postedReply = await postSlackReply(webClient, {
+        const postedReply = await sendSlackReply(webClient, {
           channel: job.channelId,
           reply,
           linearWorkspace: config.linearWorkspace,
