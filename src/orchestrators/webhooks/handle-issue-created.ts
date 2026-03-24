@@ -41,6 +41,11 @@ export interface HandleIssueCreatedWebhookResult {
 }
 
 function summarizeIssue(issue: LinearIssue): string {
+  const creator = issue.creator?.displayName ?? issue.creator?.name;
+  const assignee = issue.assignee?.displayName ?? issue.assignee?.name;
+  const labelNames = (issue.labels ?? []).map((label) => label.name?.trim()).filter(Boolean) as string[];
+  const relationCount = (issue.relations?.length ?? 0) + (issue.inverseRelations?.length ?? 0);
+  const description = issue.description?.trim() || "";
   const lines = [
     "Linear issue created webhook context:",
     `- identifier: ${issue.identifier}`,
@@ -49,22 +54,29 @@ function summarizeIssue(issue: LinearIssue): string {
   ];
 
   if (issue.url) lines.push(`- url: ${issue.url}`);
+  if (issue.createdAt) lines.push(`- createdAt: ${issue.createdAt}`);
   if (issue.state?.name) lines.push(`- stateName: ${issue.state.name}`);
   if (issue.state?.type) lines.push(`- stateType: ${issue.state.type}`);
-  if (issue.assignee?.displayName || issue.assignee?.name) {
-    lines.push(`- assignee: ${issue.assignee?.displayName ?? issue.assignee?.name}`);
-  }
+  if (creator) lines.push(`- creator: ${creator}`);
+  if (assignee) lines.push(`- assignee: ${assignee}`);
   if (issue.dueDate) lines.push(`- dueDate: ${issue.dueDate}`);
   if (issue.priorityLabel) lines.push(`- priorityLabel: ${issue.priorityLabel}`);
   if (issue.parent?.identifier) lines.push(`- parent: ${issue.parent.identifier}`);
+  if (labelNames.length > 0) lines.push(`- labels: ${labelNames.join(", ")}`);
+  lines.push(`- childCount: ${issue.children?.length ?? 0}`);
+  lines.push(`- relationCount: ${relationCount}`);
+  lines.push(`- descriptionPresent: ${description ? "yes" : "no"}`);
+  if (description) lines.push(`- descriptionLength: ${description.length}`);
 
   lines.push("");
   lines.push("Task:");
-  lines.push("Decide whether this newly created issue needs immediate AI action through the existing proposal tools.");
-  lines.push("If no immediate value exists, do nothing.");
+  lines.push("Decide whether there is any clear action you can execute now through existing proposal tools.");
+  lines.push("If yes, do the smallest safe action set needed to satisfy the issue.");
+  lines.push("If no executable action is available, do nothing.");
+  lines.push("Do not ask follow-up questions in webhook mode.");
   lines.push("");
   lines.push("Issue description:");
-  lines.push(issue.description?.trim() || "(none)");
+  lines.push(description || "(none)");
   return lines.join("\n");
 }
 
@@ -146,6 +158,7 @@ export async function handleIssueCreatedWebhook(
       agentResult,
       commitResult,
       createdIssueIds,
+      reason: agentResult.taskExecutionDecision?.summary ?? "no executable manager action",
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

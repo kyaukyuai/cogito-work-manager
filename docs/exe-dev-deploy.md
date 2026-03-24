@@ -112,7 +112,7 @@ NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 - 既存 Notion page への title 更新、append-only の追記、archive/trash も Slack から扱えます。database row の更新・削除は未対応です。
 - `LINEAR_WEBHOOK_ENABLED=true` の場合は、`LINEAR_WEBHOOK_PUBLIC_URL` と `LINEAR_WEBHOOK_SECRET` が必須です。
 - webhook listener は `LINEAR_WEBHOOK_PORT` / `LINEAR_WEBHOOK_PATH` で待ち受けます。Compose では同 port を host に公開します。
-- Linear webhook の対象は `Issue create` のみです。no-op は silent で、action/failed のみ control room に通知します。
+- Linear webhook の対象は `Issue create` のみです。判定基準は「AI にできる action があるか」で、no-op は silent、action/failed のみ control room に通知します。
 - headless 運用では `ANTHROPIC_API_KEY` を推奨します。
 - manager review と heartbeat を既定で使うなら `HEARTBEAT_INTERVAL_MIN=30` のままにします。
 - `WORKGRAPH_MAINTENANCE_INTERVAL_MIN=15` なら 15 分ごとに health check と auto compaction 判定を行います。

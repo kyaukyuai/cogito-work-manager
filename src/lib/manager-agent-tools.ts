@@ -466,13 +466,13 @@ function createTaskExecutionDecisionTool(): ToolDefinition {
   return {
     name: "report_task_execution_decision",
     label: "Report Task Execution Decision",
-    description: "Record whether an imperative issue-execution request should execute now or no-op.",
-    promptSnippet: "Use this for run_task turns after you inspect the target issue.",
+    description: "Record whether an imperative issue-execution request should execute now or no-op, and why it is executable or not executable.",
+    promptSnippet: "Use this after you inspect the target issue. The summary should explain why there is a clear executable action now, or why no executable manager action exists.",
     parameters: Type.Object({
       decision: Type.String({ description: "execute | noop" }),
       targetIssueId: Type.Optional(Type.String({ description: "Resolved target issue id when known." })),
       targetIssueIdentifier: Type.Optional(Type.String({ description: "Resolved target issue identifier like AIC-123 when known." })),
-      summary: Type.Optional(Type.String({ description: "One short sentence explaining the decision." })),
+      summary: Type.Optional(Type.String({ description: "One short sentence explaining why this is executable or not executable." })),
     }),
     async execute(_toolCallId, params) {
       const typed = params as TaskExecutionDecisionReport;

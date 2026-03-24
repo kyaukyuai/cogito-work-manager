@@ -45,6 +45,11 @@ export interface LinearUser {
   email?: string | null;
 }
 
+export interface LinearLabel {
+  id?: string | null;
+  name?: string | null;
+}
+
 export interface LinearWorkflowState {
   id: string;
   name: string;
@@ -65,13 +70,16 @@ export interface LinearIssue {
   title: string;
   url?: string | null;
   description?: string | null;
+  createdAt?: string | null;
   completedAt?: string | null;
   dueDate?: string | null;
   priority?: number | null;
   priorityLabel?: string | null;
   cycle?: LinearCycle | null;
   updatedAt?: string | null;
+  creator?: LinearUser | null;
   assignee?: LinearUser | null;
+  labels?: LinearLabel[];
   state?: LinearWorkflowState | null;
   parent?: Pick<LinearIssue, "id" | "identifier" | "title" | "url"> | null;
   children?: Array<Pick<LinearIssue, "id" | "identifier" | "title" | "url">>;
@@ -220,6 +228,11 @@ interface CliIssueUser {
   isAssignable?: boolean;
 }
 
+interface CliIssueLabel {
+  id?: string | null;
+  name?: string | null;
+}
+
 interface CliIssueRef {
   id?: string;
   identifier?: string;
@@ -231,11 +244,14 @@ interface CliIssueRef {
 
 interface CliIssuePayload extends CliIssueRef {
   description?: string | null;
+  createdAt?: string | null;
   completedAt?: string | null;
   priority?: number | null;
   priorityLabel?: string | null;
   updatedAt?: string | null;
+  creator?: CliIssueUser | null;
   assignee?: CliIssueUser | null;
+  labels?: CliIssueLabel[] | null;
   cycle?: {
     id?: string;
     number?: number | null;
@@ -461,6 +477,14 @@ function normalizeLinearComment(raw: unknown): NonNullable<LinearIssue["comments
   };
 }
 
+function normalizeLinearLabel(raw: unknown): LinearLabel | undefined {
+  if (!isRecord(raw)) return undefined;
+  const id = toNullableString(raw.id);
+  const name = toNullableString(raw.name);
+  if (!id && !name) return undefined;
+  return { id, name };
+}
+
 function deriveLatestActionKind(body: string): LinearIssue["latestActionKind"] {
   const trimmed = body.trim();
   if (trimmed.startsWith("## Progress update")) return "progress";
@@ -620,13 +644,18 @@ export function normalizeLinearIssuePayload(raw: unknown): LinearIssue | undefin
     title,
     url: toNullableString(raw.url),
     description: toNullableString(raw.description),
+    createdAt: toNullableString(raw.createdAt),
     completedAt: toNullableString(raw.completedAt),
     dueDate: toNullableString(raw.dueDate),
     priority: toNumberOrUndefined(raw.priority),
     priorityLabel: toNullableString(raw.priorityLabel),
     cycle: normalizeLinearCycle(raw.cycle) ?? null,
     updatedAt: toNullableString(raw.updatedAt),
+    creator: normalizeLinearUser(raw.creator) ?? null,
     assignee: normalizeLinearUser(raw.assignee) ?? null,
+    labels: Array.isArray(raw.labels)
+      ? raw.labels.map((label) => normalizeLinearLabel(label)).filter(Boolean) as LinearLabel[]
+      : [],
     state: normalizeLinearState(raw.state) ?? null,
     parent: toIssueRef(raw.parent) ?? null,
     children,

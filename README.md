@@ -92,7 +92,7 @@ Optional:
 
 `LINEAR_WORKSPACE` は固定先の説明用です。`LINEAR_API_KEY` がある場合、`linear-cli v2.8.0` でも `-w/--workspace` と併用しないようにしています。
 
-`LINEAR_WEBHOOK_ENABLED=true` にすると、同一プロセスで issue create webhook listener を起動します。受信対象は `LINEAR_TEAM_KEY` の新規 issue だけで、署名検証と delivery dedupe を行ったうえで、agent-first / strict tools / manager commit の system workflow に載せます。no-op は silent で、action 実行時と failed 時だけ control room に通知します。
+`LINEAR_WEBHOOK_ENABLED=true` にすると、同一プロセスで issue create webhook listener を起動します。受信対象は `LINEAR_TEAM_KEY` の新規 issue だけで、署名検証と delivery dedupe を行ったうえで、agent-first / strict tools / manager commit の system workflow に載せます。判定基準は「価値があるか」ではなく「既存 proposal surface で今すぐ安全に実行できる action があるか」です。no-op は silent で、action 実行時と failed 時だけ control room に通知します。
 
 webhook を有効にする場合は以下も必要です。
 

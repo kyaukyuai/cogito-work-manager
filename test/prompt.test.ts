@@ -64,9 +64,12 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Slack thread is the primary operator surface for day-to-day work.");
     expect(prompt).toContain("Only use the control room for proactive reviews, urgent follow-ups, and fallback-owner notices.");
     expect(prompt).toContain("Use read tools to inspect Linear, workgraph, Slack context, optional Notion reference material, and lightweight web results.");
-    expect(prompt).toContain("When runKind=webhook-issue-created, inspect the freshly created Linear issue and decide whether immediate AI action has clear value.");
+    expect(prompt).toContain("When runKind=webhook-issue-created, inspect the freshly created Linear issue and decide whether there is any clear, safe action you can execute now through the existing proposal tools.");
+    expect(prompt).toContain("For webhook-issue-created system tasks, use actionability-first reasoning: execute only when a concrete manager-operable action is available now, and otherwise choose no-op.");
+    expect(prompt).toContain("Webhook issue-created processing has no Slack thread context. Use the issue facts you are given plus normal read tools, assume the control room is the only operator surface, and do not ask follow-up questions in webhook mode.");
     expect(prompt).toContain("For webhook-issue-created system tasks, prefer no-op over speculative or low-confidence changes.");
-    expect(prompt).toContain("Webhook issue-created processing has no Slack thread context.");
+    expect(prompt).toContain("For webhook-issue-created system tasks, if you decide execute, do the smallest safe action set needed to satisfy the issue instead of adding extra side effects.");
+    expect(prompt).toContain("For webhook-issue-created system tasks, treat human work items, design tasks, implementation tasks, and ambiguous requests as no-op unless they map cleanly onto an existing proposal tool.");
     expect(prompt).toContain("Use intent=run_task for imperative execution requests on an existing issue such as AIC-123 を進めて, この issue を実行して, or このタスクを進めて.");
     expect(prompt).toContain("For run_task turns, call report_task_execution_decision once with decision=execute or noop");
     expect(prompt).toContain("Do not downgrade an explicit imperative issue execution request such as AIC-123 を実行して or AIC-123 を進めて into intent=query");

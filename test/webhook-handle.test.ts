@@ -98,6 +98,12 @@ describe("handleIssueCreatedWebhook", () => {
       proposals: [],
       invalidProposalCount: 0,
       intentReport: { intent: "scheduler" },
+      taskExecutionDecision: {
+        decision: "noop",
+        targetIssueId: "issue-uuid-1",
+        targetIssueIdentifier: "AIC-123",
+        summary: "human implementation task",
+      },
     });
     mocks.commitManagerCommandProposals.mockResolvedValue({
       committed: [],
@@ -107,6 +113,7 @@ describe("handleIssueCreatedWebhook", () => {
 
     await expect(handleIssueCreatedWebhook(args)).resolves.toMatchObject({
       status: "noop",
+      reason: "human implementation task",
       createdIssueIds: [],
     });
   });

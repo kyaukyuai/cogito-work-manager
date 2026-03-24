@@ -513,6 +513,8 @@ async function main(): Promise<void> {
         intent: result.agentResult.intentReport?.intent,
         queryKind: result.agentResult.intentReport?.queryKind,
         queryScope: result.agentResult.intentReport?.queryScope,
+        taskExecutionDecision: result.agentResult.taskExecutionDecision?.decision,
+        taskExecutionSummary: result.agentResult.taskExecutionDecision?.summary,
         toolCalls: result.agentResult.toolCalls.map((call) => call.toolName),
         proposalCount: result.agentResult.proposals.length,
         invalidProposalCount: result.agentResult.invalidProposalCount,
@@ -527,6 +529,7 @@ async function main(): Promise<void> {
       logger.info("Webhook issue create resulted in no-op", {
         deliveryId: event.deliveryId,
         issueIdentifier: issue.identifier,
+        reason: result.reason,
       });
       return;
     }
