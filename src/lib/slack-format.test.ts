@@ -83,4 +83,39 @@ describe("formatSlackMessageText", () => {
       },
     });
   });
+
+  it("renders inline code inside bullet lists without leaving literal backticks", () => {
+    const payload = buildSlackMessagePayload([
+      "現在5件のスケジュールが登録されています。",
+      "",
+      "- `heartbeat` — 30分ごと（有効）",
+      "- `weekly-notion-agenda-ai-clone` — 毎週木曜 09:00（有効、前回実行: 今日 ok）",
+    ].join("\n"));
+
+    expect(payload.text).not.toContain("`heartbeat`");
+    expect(payload.text).toContain("heartbeat");
+    expect(payload.blocks[1]).toMatchObject({
+      type: "rich_text",
+      elements: [{
+        type: "rich_text_list",
+        style: "bullet",
+      }],
+    });
+    const richList = payload.blocks[1] as {
+      elements: Array<{
+        elements: Array<{
+          elements: Array<{ type: string; text?: string; style?: { code?: boolean } }>;
+        }>;
+      }>;
+    };
+    expect(richList.elements[0]?.elements[0]?.elements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "text",
+          text: "heartbeat",
+          style: expect.objectContaining({ code: true }),
+        }),
+      ]),
+    );
+  });
 });

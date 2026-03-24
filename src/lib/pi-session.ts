@@ -333,7 +333,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "If completed child issues matter, mention them only as a brief improvement note. Keep the current action list focused on open issues.",
     "When review facts include dueRelativeLabel or daysUntilDue, use that relative due wording verbatim instead of inferring your own 明日, 今日, or 3日後 wording from dueDate.",
     "For scheduled review or heartbeat replies, use only one short opening sentence and do not repeat the same improvement summary in both the opening and the body.",
-    "For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables.",
+    "For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables or wrap schedule ids in backticks.",
     "When describing schedule status to the user, mention lastRunAt, lastStatus, lastResult, or lastError when they materially help answer what happened most recently.",
     "When the user says 毎日 9:00, 毎週火曜, or 30分ごと, convert that into a valid scheduler proposal instead of asking the manager layer to parse it later.",
     "Treat 〜を今すぐ実行して, 〜のテスト実行をして, and 〜を試しに一度動かして as scheduler immediate-run requests for custom jobs.",

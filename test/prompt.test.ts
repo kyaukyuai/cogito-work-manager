@@ -104,7 +104,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed.");
     expect(prompt).toContain("When review facts include dueRelativeLabel or daysUntilDue, use that relative due wording verbatim");
     expect(prompt).toContain("For scheduled review or heartbeat replies, use only one short opening sentence and do not repeat the same improvement summary");
-    expect(prompt).toContain("For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables.");
+    expect(prompt).toContain("For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables or wrap schedule ids in backticks.");
     expect(prompt).toContain("When describing schedule status to the user, mention lastRunAt, lastStatus, lastResult, or lastError");
     expect(prompt).toContain("When the user says 毎日 9:00, 毎週火曜, or 30分ごと, convert that into a valid scheduler proposal instead of asking the manager layer to parse it later.");
     expect(prompt).toContain("Treat 〜を今すぐ実行して, 〜のテスト実行をして, and 〜を試しに一度動かして as scheduler immediate-run requests for custom jobs.");

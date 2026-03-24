@@ -10,6 +10,7 @@ type SlackMrkdwnBlock = {
 
 type SlackRichTextStyle = {
   bold?: boolean;
+  code?: boolean;
 };
 
 type SlackRichTextTextElement = {
@@ -162,6 +163,19 @@ function parseRichTextElements(
   let index = 0;
 
   while (index < text.length) {
+    if (text[index] === "`") {
+      const closingIndex = text.indexOf("`", index + 1);
+      if (closingIndex > index + 1) {
+        elements.push({
+          type: "text",
+          text: text.slice(index + 1, closingIndex),
+          style: mergeRichTextStyle(inheritedStyle, { code: true }),
+        });
+        index = closingIndex + 1;
+        continue;
+      }
+    }
+
     if (text[index] === "*") {
       const closingIndex = text.indexOf("*", index + 1);
       if (closingIndex > index + 1) {
@@ -193,9 +207,10 @@ function parseRichTextElements(
       }
     }
 
+    const nextCode = text.indexOf("`", index);
     const nextBold = text.indexOf("*", index);
     const nextLink = text.indexOf("<", index);
-    const candidateIndexes = [nextBold, nextLink].filter((value) => value >= 0);
+    const candidateIndexes = [nextCode, nextBold, nextLink].filter((value) => value >= 0);
     const nextSpecialIndex = candidateIndexes.length > 0
       ? Math.min(...candidateIndexes)
       : text.length;
