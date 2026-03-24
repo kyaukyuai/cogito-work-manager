@@ -27,6 +27,10 @@ const slackContextMocks = vi.hoisted(() => ({
   getSlackThreadContext: vi.fn(),
 }));
 
+const notionMocks = vi.hoisted(() => ({
+  createNotionAgendaPage: vi.fn(),
+}));
+
 vi.mock("../src/lib/linear.js", () => ({
   addLinearComment: linearMocks.addLinearComment,
   addLinearProgressComment: linearMocks.addLinearProgressComment,
@@ -45,6 +49,14 @@ vi.mock("../src/lib/linear.js", () => ({
 vi.mock("../src/lib/slack-context.js", () => ({
   getSlackThreadContext: slackContextMocks.getSlackThreadContext,
 }));
+
+vi.mock("../src/lib/notion.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/lib/notion.js")>("../src/lib/notion.js");
+  return {
+    ...actual,
+    createNotionAgendaPage: notionMocks.createNotionAgendaPage,
+  };
+});
 
 describe("manager command commit", () => {
   let workspaceDir: string;
@@ -86,6 +98,7 @@ describe("manager command commit", () => {
     linearMocks.updateManagedLinearIssue.mockReset();
     linearMocks.updateLinearIssueState.mockReset();
     linearMocks.updateLinearIssueStateWithComment.mockReset();
+    notionMocks.createNotionAgendaPage.mockReset();
     slackContextMocks.getSlackThreadContext.mockReset().mockResolvedValue({
       channelId: "C0ALAMDRB9V",
       rootThreadTs: "thread-default",
@@ -580,5 +593,107 @@ describe("manager command commit", () => {
     expect(result.rejected[0]?.reason).toContain("判断に必要な項目が不足");
     expect(result.rejected[0]?.reason).toContain("threadParentHandling");
     expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+  });
+
+  it("creates a Notion agenda under the configured parent page", async () => {
+    notionMocks.createNotionAgendaPage.mockResolvedValueOnce({
+      id: "notion-page-1",
+      object: "page",
+      title: "AIクローン会議アジェンダ",
+      url: "https://www.notion.so/notion-page-1",
+      createdTime: "2026-03-24T00:00:00.000Z",
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: {
+        ...config,
+        workspaceDir,
+        notionApiToken: "secret_test",
+        notionAgendaParentPageId: "parent-page-1",
+      },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_notion_agenda",
+          title: "AIクローン会議アジェンダ",
+          summary: "キックオフ用の論点整理です。",
+          sections: [
+            {
+              heading: "議題",
+              bullets: ["PoC 対象範囲", "役割分担"],
+            },
+          ],
+          reasonSummary: "Notion に会議用アジェンダを作る依頼です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-notion-agenda",
+        messageTs: "msg-notion-agenda-1",
+        userId: "U1",
+        text: "Notion にアジェンダを作って",
+      },
+      now: new Date("2026-03-24T00:05:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(notionMocks.createNotionAgendaPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "AIクローン会議アジェンダ",
+        parentPageId: "parent-page-1",
+        summary: "キックオフ用の論点整理です。",
+      }),
+      expect.objectContaining({
+        NOTION_API_TOKEN: "secret_test",
+      }),
+    );
+    expect(result.committed[0]?.summary).toContain("Notion にアジェンダを作成しました。");
+    expect(result.committed[0]?.summary).toContain("<https://www.notion.so/notion-page-1|AIクローン会議アジェンダ>");
+  });
+
+  it("rejects a Notion agenda proposal when no parent page is configured", async () => {
+    const result = await commitManagerCommandProposals({
+      config: {
+        ...config,
+        workspaceDir,
+        notionApiToken: "secret_test",
+        notionAgendaParentPageId: undefined,
+      },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_notion_agenda",
+          title: "AIクローン会議アジェンダ",
+          reasonSummary: "Notion に会議用アジェンダを作る依頼です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-notion-agenda-missing-parent",
+        messageTs: "msg-notion-agenda-2",
+        userId: "U1",
+        text: "Notion にアジェンダを作って",
+      },
+      now: new Date("2026-03-24T00:06:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("NOTION_AGENDA_PARENT_PAGE_ID");
+    expect(notionMocks.createNotionAgendaPage).not.toHaveBeenCalled();
   });
 });

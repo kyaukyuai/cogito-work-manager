@@ -91,6 +91,23 @@ export interface NotionDatabaseQueryResult extends NotionDatabaseSummary {
   rows: NotionDatabaseRowSummary[];
 }
 
+export interface CreateNotionAgendaSectionInput {
+  heading: string;
+  paragraph?: string;
+  bullets?: string[];
+}
+
+export interface CreateNotionAgendaInput {
+  title: string;
+  parentPageId: string;
+  summary?: string;
+  sections?: CreateNotionAgendaSectionInput[];
+}
+
+export interface NotionCreatedPage extends NotionPageSummary {
+  createdTime?: string | null;
+}
+
 function ensureNotionAuthConfigured(env: NotionCommandEnv = process.env): void {
   if (!env.NOTION_API_TOKEN?.trim()) {
     throw new Error("NOTION_API_TOKEN is required for Notion API access");
@@ -102,6 +119,45 @@ function shellEscape(value: string): string {
     return value;
   }
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function buildRichText(value: string): Array<Record<string, unknown>> {
+  return [{
+    type: "text",
+    text: {
+      content: value,
+    },
+  }];
+}
+
+function buildParagraphBlock(text: string): Record<string, unknown> {
+  return {
+    object: "block",
+    type: "paragraph",
+    paragraph: {
+      rich_text: buildRichText(text),
+    },
+  };
+}
+
+function buildHeadingBlock(text: string): Record<string, unknown> {
+  return {
+    object: "block",
+    type: "heading_2",
+    heading_2: {
+      rich_text: buildRichText(text),
+    },
+  };
+}
+
+function buildBulletedListBlock(text: string): Record<string, unknown> {
+  return {
+    object: "block",
+    type: "bulleted_list_item",
+    bulleted_list_item: {
+      rich_text: buildRichText(text),
+    },
+  };
 }
 
 export function buildNotionShellCommand(args: string[]): string {
@@ -312,6 +368,73 @@ function buildExcerpt(lines: NotionPageContentLine[], maxLines = 4, maxLength = 
   return `${joined.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
 }
 
+function buildDefaultAgendaSections(summary?: string): CreateNotionAgendaSectionInput[] {
+  return [
+    {
+      heading: "目的",
+      paragraph: summary?.trim() || "目的を記入してください。",
+    },
+    {
+      heading: "議題",
+      bullets: ["議題を追加してください。"],
+    },
+    {
+      heading: "確認事項",
+      bullets: ["確認事項を追加してください。"],
+    },
+    {
+      heading: "次のアクション",
+      bullets: ["次のアクションを追加してください。"],
+    },
+  ];
+}
+
+function normalizeAgendaSections(input: CreateNotionAgendaInput): CreateNotionAgendaSectionInput[] {
+  const sections = input.sections?.filter((section) => section.heading.trim()) ?? [];
+  if (sections.length === 0) {
+    return buildDefaultAgendaSections(input.summary);
+  }
+  return sections;
+}
+
+function buildCreateNotionAgendaPayload(input: CreateNotionAgendaInput): Record<string, unknown> {
+  const title = input.title.trim();
+  if (!title) throw new Error("Notion agenda title is required");
+  const parentPageId = input.parentPageId.trim();
+  if (!parentPageId) throw new Error("Notion agenda parent page ID is required");
+
+  const sections = normalizeAgendaSections(input);
+  const children: Record<string, unknown>[] = [];
+
+  if (input.summary?.trim() && input.sections && input.sections.length > 0) {
+    children.push(buildParagraphBlock(input.summary.trim()));
+  }
+
+  for (const section of sections) {
+    children.push(buildHeadingBlock(section.heading.trim()));
+    if (section.paragraph?.trim()) {
+      children.push(buildParagraphBlock(section.paragraph.trim()));
+    }
+    for (const bullet of section.bullets ?? []) {
+      if (!bullet.trim()) continue;
+      children.push(buildBulletedListBlock(bullet.trim()));
+    }
+  }
+
+  return {
+    parent: {
+      type: "page_id",
+      page_id: parentPageId,
+    },
+    properties: {
+      title: {
+        title: buildRichText(title),
+      },
+    },
+    children,
+  };
+}
+
 export function buildSearchNotionArgs(input: SearchNotionInput): string[] {
   const query = input.query.trim();
   if (!query) throw new Error("Search query is required");
@@ -376,6 +499,10 @@ export function buildGetNotionDatabaseArgs(databaseId: string): string[] {
   const trimmed = databaseId.trim();
   if (!trimmed) throw new Error("Notion database ID is required");
   return ["api", `/v1/data_sources/${trimmed}`];
+}
+
+export function buildCreateNotionAgendaArgs(input: CreateNotionAgendaInput): string[] {
+  return ["api", "/v1/pages", "--data", JSON.stringify(buildCreateNotionAgendaPayload(input))];
 }
 
 function coerceNotionFilterValue(
@@ -757,5 +884,21 @@ export async function queryNotionDatabase(
     rows: (payload.results ?? [])
       .filter((item) => item.object === "page")
       .map((item) => normalizeDatabaseRowSummary(item)),
+  };
+}
+
+export async function createNotionAgendaPage(
+  input: CreateNotionAgendaInput,
+  env: NotionCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<NotionCreatedPage> {
+  const payload = await execNotionJson<Record<string, unknown>>(
+    buildCreateNotionAgendaArgs(input),
+    env,
+    signal,
+  );
+  return {
+    ...normalizePageSummary(payload),
+    createdTime: typeof payload.created_time === "string" ? payload.created_time : null,
   };
 }

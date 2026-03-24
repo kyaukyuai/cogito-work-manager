@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCreateNotionAgendaArgs,
   buildGetNotionDatabaseArgs,
   buildGetNotionPageArgs,
   buildListNotionDatabasesArgs,
@@ -133,6 +134,132 @@ describe("notion command builders", () => {
     ]);
   });
 
+  it("builds create args for a Notion agenda page", () => {
+    const args = buildCreateNotionAgendaArgs({
+      title: "AIクローン会議アジェンダ",
+      parentPageId: "parent-page-1",
+      summary: "キックオフ前に確認する論点をまとめます。",
+      sections: [
+        {
+          heading: "議題",
+          bullets: ["PoC 対象範囲", "役割分担"],
+        },
+        {
+          heading: "確認事項",
+          paragraph: "未確定事項を事前に洗い出します。",
+        },
+      ],
+    });
+
+    expect(args[0]).toBe("api");
+    expect(args[1]).toBe("/v1/pages");
+    expect(args[2]).toBe("--data");
+    expect(JSON.parse(args[3] ?? "")).toEqual({
+      parent: {
+        type: "page_id",
+        page_id: "parent-page-1",
+      },
+      properties: {
+        title: {
+          title: [
+            {
+              type: "text",
+              text: {
+                content: "AIクローン会議アジェンダ",
+              },
+            },
+          ],
+        },
+      },
+      children: [
+        {
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "キックオフ前に確認する論点をまとめます。",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "heading_2",
+          heading_2: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "議題",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "bulleted_list_item",
+          bulleted_list_item: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "PoC 対象範囲",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "bulleted_list_item",
+          bulleted_list_item: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "役割分担",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "heading_2",
+          heading_2: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "確認事項",
+                },
+              },
+            ],
+          },
+        },
+        {
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "未確定事項を事前に洗い出します。",
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
   it("builds a shell-safe ntn command", () => {
     const command = buildNotionShellCommand(buildSearchNotionArgs({
       query: "AIC 仕様",
@@ -150,5 +277,7 @@ describe("notion command builders", () => {
     expect(() => buildGetNotionDatabaseArgs("   ")).toThrow("Notion database ID is required");
     expect(() => buildListNotionBlockChildrenArgs("   ")).toThrow("Notion page ID is required");
     expect(() => buildQueryNotionDatabaseArgs({ databaseId: "   " })).toThrow("Notion database ID is required");
+    expect(() => buildCreateNotionAgendaArgs({ title: "   ", parentPageId: "page-1" })).toThrow("Notion agenda title is required");
+    expect(() => buildCreateNotionAgendaArgs({ title: "アジェンダ", parentPageId: "   " })).toThrow("Notion agenda parent page ID is required");
   });
 });

@@ -892,6 +892,26 @@ function createProposalTools(): ToolDefinition[] {
       }),
     }),
     createProposalTool({
+      name: "propose_create_notion_agenda",
+      label: "Propose Create Notion Agenda",
+      description: "Propose creating a Notion agenda page. This does not execute the mutation.",
+      promptSnippet: "Use this when the user explicitly asks to create an agenda in Notion.",
+      commandType: "create_notion_agenda",
+      parameters: Type.Object({
+        title: Type.String({ description: "Agenda page title." }),
+        summary: Type.Optional(Type.String({ description: "Optional short summary or purpose shown near the top of the page." })),
+        parentPageId: Type.Optional(Type.String({ description: "Optional Notion parent page ID. Omit this to use the configured default agenda parent." })),
+        sections: Type.Optional(Type.Array(Type.Object({
+          heading: Type.String({ description: "Section heading such as 目的 or 議題." }),
+          paragraph: Type.Optional(Type.String({ description: "Optional paragraph body for the section." })),
+          bullets: Type.Optional(Type.Array(Type.String({ description: "Optional bullet items for the section." }))),
+        }))),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
       name: "propose_followup_resolution",
       label: "Propose Followup Resolution",
       description: "Propose resolving an outstanding follow-up. This does not execute the mutation.",

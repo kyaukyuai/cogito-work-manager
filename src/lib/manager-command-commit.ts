@@ -15,6 +15,7 @@ import {
   type LinearCommandEnv,
   type LinearIssue,
 } from "./linear.js";
+import { createNotionAgendaPage, type NotionCommandEnv } from "./notion.js";
 import { getSlackThreadContext } from "./slack-context.js";
 import type {
   FollowupLedgerEntry,
@@ -168,6 +169,28 @@ const setIssueParentProposalSchema = proposalBaseSchema.extend({
   parentIssueId: z.string().trim().min(1),
 });
 
+const notionAgendaSectionSchema = z.object({
+  heading: z.string().trim().min(1),
+  paragraph: optionalStringSchema,
+  bullets: z.array(z.string().trim().min(1)).max(10).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.paragraph && (!value.bullets || value.bullets.length === 0)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["paragraph"],
+      message: "section needs paragraph or bullets",
+    });
+  }
+});
+
+const createNotionAgendaProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("create_notion_agenda"),
+  title: z.string().trim().min(1),
+  summary: optionalStringSchema,
+  parentPageId: optionalStringSchema,
+  sections: z.array(notionAgendaSectionSchema).max(8).optional(),
+});
+
 const followupExtractedFieldsSchema = z.record(z.string(), z.string()).default({});
 
 const resolveFollowupProposalSchema = proposalBaseSchema.extend({
@@ -207,6 +230,7 @@ export const managerCommandProposalSchema = z.discriminatedUnion("commandType", 
   addCommentProposalSchema,
   addRelationProposalSchema,
   setIssueParentProposalSchema,
+  createNotionAgendaProposalSchema,
   resolveFollowupProposalSchema,
   reviewFollowupProposalSchema,
 ]);
@@ -235,6 +259,13 @@ export interface PendingClarificationDecisionReport {
   decision: "continue_pending" | "status_question" | "new_request" | "clear_pending";
   persistence: "keep" | "replace" | "clear";
   summary?: string;
+}
+
+function buildNotionEnv(config: AppConfig): NotionCommandEnv {
+  return {
+    ...process.env,
+    NOTION_API_TOKEN: config.notionApiToken,
+  };
 }
 
 export interface ManagerAgentToolCall {
@@ -1132,6 +1163,46 @@ async function commitSetIssueParentProposal(
   };
 }
 
+async function commitCreateNotionAgendaProposal(
+  args: CommitManagerCommandArgs,
+  proposal: z.infer<typeof createNotionAgendaProposalSchema>,
+): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  if (!args.config.notionApiToken?.trim()) {
+    return {
+      proposal,
+      reason: "Notion へのアジェンダ作成には NOTION_API_TOKEN の設定が必要です。",
+    };
+  }
+
+  const parentPageId = proposal.parentPageId ?? args.config.notionAgendaParentPageId;
+  if (!parentPageId?.trim()) {
+    return {
+      proposal,
+      reason: "Notion へのアジェンダ作成先が未設定です。NOTION_AGENDA_PARENT_PAGE_ID を設定するか、親 page ID を明示してください。",
+    };
+  }
+
+  const page = await createNotionAgendaPage(
+    {
+      title: proposal.title,
+      parentPageId,
+      summary: proposal.summary,
+      sections: proposal.sections,
+    },
+    buildNotionEnv(args.config),
+  );
+
+  const linkedTitle = page.url
+    ? `<${page.url}|${page.title ?? proposal.title}>`
+    : (page.title ?? proposal.title);
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [],
+    summary: `Notion にアジェンダを作成しました。${linkedTitle} を確認してください。`,
+  };
+}
+
 async function commitResolveFollowupProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof resolveFollowupProposalSchema>,
@@ -1273,7 +1344,7 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
     }
 
     const validatedProposal = parsedProposal.data;
-    const result = validatedProposal.commandType === "create_issue"
+      const result = validatedProposal.commandType === "create_issue"
       ? await commitCreateIssueProposal(args, validatedProposal)
       : validatedProposal.commandType === "create_issue_batch"
         ? await commitCreateIssueBatchProposal(args, validatedProposal)
@@ -1287,9 +1358,11 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
                 ? await commitAddRelationProposal(args, validatedProposal)
                 : validatedProposal.commandType === "set_issue_parent"
                   ? await commitSetIssueParentProposal(args, validatedProposal)
-                : validatedProposal.commandType === "resolve_followup"
-                  ? await commitResolveFollowupProposal(args, validatedProposal)
-                  : await commitReviewFollowupProposal(args, validatedProposal);
+                  : validatedProposal.commandType === "create_notion_agenda"
+                    ? await commitCreateNotionAgendaProposal(args, validatedProposal)
+                  : validatedProposal.commandType === "resolve_followup"
+                    ? await commitResolveFollowupProposal(args, validatedProposal)
+                    : await commitReviewFollowupProposal(args, validatedProposal);
 
     if ("reason" in result) {
       rejected.push(result);

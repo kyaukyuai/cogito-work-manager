@@ -30,6 +30,7 @@
   - `LINEAR_TEAM_KEY`
 - Optional: Notion
   - `NOTION_API_TOKEN`
+  - `NOTION_AGENDA_PARENT_PAGE_ID`
 - Anthropic
   - 推奨: `ANTHROPIC_API_KEY`
   - 代替: `~/.pi/agent/auth.json`
@@ -87,13 +88,15 @@ WORKGRAPH_HEALTH_WARN_ACTIVE_EVENTS=200
 WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS=500
 LOG_LEVEL=info
 NOTION_API_TOKEN=secret_...
+NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 ```
 
 補足:
 
 - `SLACK_ALLOWED_CHANNEL_IDS` はカンマ区切りで複数指定できます。
 - `LINEAR_TEAM_KEY` は UUID ではなく `AIC`, `KYA` のような team key を使います。
-- `NOTION_API_TOKEN` を入れると bundled `ntn v0.4.0` で Notion page search / page facts / page content excerpt / database search / database query の read-only tool が使えます。
+- `NOTION_API_TOKEN` を入れると bundled `ntn v0.4.0` で Notion page search / page facts / page content excerpt / database search / database query が使えます。
+- `NOTION_AGENDA_PARENT_PAGE_ID` を追加すると、その parent page 配下に agenda page を作成できます。
 - headless 運用では `ANTHROPIC_API_KEY` を推奨します。
 - manager review と heartbeat を既定で使うなら `HEARTBEAT_INTERVAL_MIN=30` のままにします。
 - `WORKGRAPH_MAINTENANCE_INTERVAL_MIN=15` なら 15 分ごとに health check と auto compaction 判定を行います。
@@ -127,7 +130,7 @@ Compose で起動します。
 docker compose up -d --build
 ```
 
-この image は `linear-cli v2.7.0` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json` を前提に動きます。Notion は page search / page facts / page content excerpt / database search / database query の read-only reference fetch に限定しています。
+この image は `linear-cli v2.7.0` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json` を前提に動きます。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成をサポートします。
 
 ログ確認:
 

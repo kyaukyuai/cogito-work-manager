@@ -9,6 +9,7 @@ const envSchema = z.object({
   LINEAR_WORKSPACE: z.string().min(1),
   LINEAR_TEAM_KEY: z.string().min(1),
   NOTION_API_TOKEN: z.string().min(1).optional(),
+  NOTION_AGENDA_PARENT_PAGE_ID: z.string().min(1).optional(),
   BOT_MODEL: z.string().default("claude-sonnet-4-5"),
   WORKSPACE_DIR: z.string().default("/workspace"),
   HEARTBEAT_INTERVAL_MIN: z.coerce.number().int().min(0).default(30),
@@ -29,6 +30,7 @@ export interface AppConfig {
   linearWorkspace: string;
   linearTeamKey: string;
   notionApiToken?: string;
+  notionAgendaParentPageId?: string;
   botModel: string;
   workspaceDir: string;
   heartbeatIntervalMin: number;
@@ -54,6 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     linearWorkspace: parsed.LINEAR_WORKSPACE,
     linearTeamKey: parsed.LINEAR_TEAM_KEY,
     notionApiToken: parsed.NOTION_API_TOKEN,
+    notionAgendaParentPageId: parsed.NOTION_AGENDA_PARENT_PAGE_ID,
     botModel: parsed.BOT_MODEL,
     workspaceDir: parsed.WORKSPACE_DIR,
     heartbeatIntervalMin: parsed.HEARTBEAT_INTERVAL_MIN,

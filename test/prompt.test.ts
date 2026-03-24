@@ -33,6 +33,7 @@ const config: AppConfig = {
   linearWorkspace: "kyaukyuai",
   linearTeamKey: "AIC",
   notionApiToken: "secret_test",
+  notionAgendaParentPageId: "parent-page-1",
   botModel: "claude-sonnet-4-6",
   workspaceDir: "/tmp/pi-slack-linear",
   heartbeatIntervalMin: 30,
@@ -75,7 +76,10 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
     expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
-    expect(prompt).toContain("If Notion tools are available, use them as read-only reference material for specs, notes, and operating context.");
+    expect(prompt).toContain("If Notion tools are available, use Notion as reference material for specs, notes, and operating context.");
+    expect(prompt).toContain("When the user explicitly asks to create an agenda in Notion, use propose_create_notion_agenda instead of creating a Linear issue.");
+    expect(prompt).toContain("For Notion agenda creation, use the configured default parent page unless the user clearly specifies a different Notion parent page.");
+    expect(prompt).toContain("A minimal Notion agenda should have a short title and practical sections like 目的, 議題, 確認事項, and 次のアクション.");
     expect(prompt).toContain("For reference-material replies that mention multiple Notion pages, documents, or databases, use short bullet lines and include markdown links when URLs are available.");
     expect(prompt).toContain("When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.");
     expect(prompt).toContain("If the user explicitly says database or データベース, treat it as a database-only request unless they also ask for pages.");
