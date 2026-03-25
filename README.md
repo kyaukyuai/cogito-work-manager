@@ -205,6 +205,9 @@ Slack から既存 issue の実行依頼もできます。主な例:
 - `autoStatusUpdate`
 - `followupCooldownHours`
 - `reviewExplicitFollowupCount`
+- `mentionOnFirstFollowupCategories`
+- `mentionOnRepingCategories`
+- `mentionAfterRepingCount`
 - `researchAutoPlanMinActions`
 - `researchAutoPlanMaxChildren`
 - `reviewCadence.morningEnabled`

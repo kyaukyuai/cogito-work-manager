@@ -16,6 +16,7 @@ import {
   needsResearchTask,
 } from "../src/lib/manager.js";
 import type { ManagerPolicy, OwnerMap } from "../src/lib/manager-state.js";
+import { buildReviewFollowup } from "../src/orchestrators/review/review-helpers.js";
 
 const policy: ManagerPolicy = {
   controlRoomChannelId: "C0ALAMDRB9V",
@@ -42,6 +43,9 @@ const policy: ManagerPolicy = {
   autoAssign: true,
   autoPlan: true,
   reviewExplicitFollowupCount: 1,
+  mentionOnFirstFollowupCategories: ["blocked", "overdue", "due_today", "due_soon"],
+  mentionOnRepingCategories: ["stale", "owner_missing"],
+  mentionAfterRepingCount: 1,
   researchAutoPlanMinActions: 2,
   researchAutoPlanMaxChildren: 3,
   urgentPriorityThreshold: 2,
@@ -254,6 +258,66 @@ describe("manager helpers", () => {
       riskCategory: "due_missing",
       shouldMention: false,
     }, "https://slack.example/thread")).not.toContain("<@");
+  });
+
+  it("uses policy-driven mention thresholds for initial and re-ping review follow-ups", () => {
+    const baseItem = {
+      issue: {
+        identifier: "AIC-10",
+        title: "stale issue",
+        url: "https://linear.app/kyaukyuai/issue/AIC-10",
+        assignee: { displayName: "y.kakui" },
+      },
+      riskCategories: ["stale"],
+      ownerMissing: false,
+      dueMissing: false,
+      blocked: false,
+      businessDaysSinceUpdate: 4,
+    };
+
+    const initial = buildReviewFollowup(
+      baseItem,
+      policy,
+      ownerMap,
+      undefined,
+      {},
+      { normalizeText: (text) => text.toLowerCase() },
+    );
+    expect(initial.shouldMention).toBe(false);
+
+    const rePing = buildReviewFollowup(
+      baseItem,
+      policy,
+      ownerMap,
+      {
+        issueId: "AIC-10",
+        status: "awaiting-response",
+        lastPublicFollowupAt: "2026-03-24T01:00:00.000Z",
+        rePingCount: 1,
+      },
+      {},
+      { normalizeText: (text) => text.toLowerCase() },
+    );
+    expect(rePing.shouldMention).toBe(true);
+    expect(rePing.slackUserId).toBeUndefined();
+
+    const dueSoon = buildReviewFollowup(
+      {
+        ...baseItem,
+        riskCategories: ["due_soon"],
+        issue: {
+          ...baseItem.issue,
+          identifier: "AIC-11",
+          title: "tomorrow issue",
+        },
+      },
+      policy,
+      ownerMap,
+      undefined,
+      {},
+      { normalizeText: (text) => text.toLowerCase() },
+    );
+    expect(dueSoon.shouldMention).toBe(true);
   });
 
   it("formats control room reviews with a heading, at most three issue lines, and one follow-up", () => {

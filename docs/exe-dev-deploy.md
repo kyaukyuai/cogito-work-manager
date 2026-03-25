@@ -260,6 +260,8 @@ docker compose down
 
 このうち、明示的に編集したくなるのは主に `policy.json`, `owner-map.json`, `HEARTBEAT.md`, runtime `AGENTS.md`, `MEMORY.md`, `AGENDA_TEMPLATE.md` です。`personalization-ledger.json` は観測用で、通常は直接編集しません。
 
+`policy.json` では follow-up mention 条件も調整できます。既定では `blocked / overdue / due_today / due_soon` を初回から mention し、`stale / owner_missing` は 1 回 unresolved の再通知から mention します。
+
 Slack から scheduler を操作する場合は、通常こちらを優先します。例:
 
 - `スケジュール一覧を見せて`

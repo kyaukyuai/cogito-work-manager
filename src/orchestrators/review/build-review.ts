@@ -34,6 +34,7 @@ export interface ReviewHelpers {
   ): boolean;
   buildReviewFollowup(
     item: RiskAssessment,
+    policy: ManagerPolicy,
     ownerMap: OwnerMap,
     existingFollowup: FollowupLedgerEntry | undefined,
     issueSources: ManagerReviewData["issueSources"],
@@ -105,7 +106,7 @@ export async function buildHeartbeatReviewDecision({
 
   const top = available[0];
   const existingFollowup = followups.find((entry) => entry.issueId === top.issue.identifier);
-  const followup = helpers.buildReviewFollowup(top, ownerMap, existingFollowup, issueSources);
+  const followup = helpers.buildReviewFollowup(top, policy, ownerMap, existingFollowup, issueSources);
   const nextFollowups = helpers.upsertFollowup(
     followups,
     helpers.buildAwaitingFollowupPatch(
@@ -196,7 +197,7 @@ export async function buildManagerReview({
     let followup: ManagerReviewFollowup | undefined;
     if (followupItem) {
       const existingFollowup = followups.find((entry) => entry.issueId === followupItem.issue.identifier);
-      followup = helpers.buildReviewFollowup(followupItem, ownerMap, existingFollowup, issueSources);
+      followup = helpers.buildReviewFollowup(followupItem, policy, ownerMap, existingFollowup, issueSources);
       const nextFollowups = helpers.upsertFollowup(
         followups,
         helpers.buildAwaitingFollowupPatch(
@@ -252,7 +253,7 @@ export async function buildManagerReview({
     let followup: ManagerReviewFollowup | undefined;
     if (followupItem) {
       const existingFollowup = followups.find((entry) => entry.issueId === followupItem.issue.identifier);
-      followup = helpers.buildReviewFollowup(followupItem, ownerMap, existingFollowup, issueSources);
+      followup = helpers.buildReviewFollowup(followupItem, policy, ownerMap, existingFollowup, issueSources);
       const nextFollowups = helpers.upsertFollowup(
         followups,
         helpers.buildAwaitingFollowupPatch(
@@ -306,7 +307,7 @@ export async function buildManagerReview({
   let followup: ManagerReviewFollowup | undefined;
   if (followupItem) {
     const existingFollowup = followups.find((entry) => entry.issueId === followupItem.issue.identifier);
-    followup = helpers.buildReviewFollowup(followupItem, ownerMap, existingFollowup, issueSources);
+    followup = helpers.buildReviewFollowup(followupItem, policy, ownerMap, existingFollowup, issueSources);
     const nextFollowups = helpers.upsertFollowup(
       followups,
       helpers.buildAwaitingFollowupPatch(

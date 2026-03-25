@@ -90,17 +90,21 @@ function resolveSlackUserIdForReview(
 }
 
 function shouldMentionReviewFollowup(
+  policy: ManagerPolicy,
   category: string,
   existingFollowup?: FollowupLedgerEntry,
 ): boolean {
-  if (["blocked", "overdue", "due_today"].includes(category)) {
+  if (policy.mentionOnFirstFollowupCategories.includes(category)) {
     return true;
   }
-  return existingFollowup?.status === "awaiting-response" && Boolean(existingFollowup.lastPublicFollowupAt);
+  return existingFollowup?.status === "awaiting-response"
+    && (existingFollowup.rePingCount ?? 0) >= policy.mentionAfterRepingCount
+    && policy.mentionOnRepingCategories.includes(category);
 }
 
 export function buildReviewFollowup(
   item: RiskAssessment,
+  policy: ManagerPolicy,
   ownerMap: OwnerMap,
   existingFollowup: FollowupLedgerEntry | undefined,
   issueSources: Record<string, ManagerReviewFollowup["source"]>,
@@ -123,7 +127,7 @@ export function buildReviewFollowup(
     assigneeDisplayName,
     slackUserId: resolveSlackUserIdForReview(ownerMap, assigneeDisplayName, deps),
     riskCategory,
-    shouldMention: shouldMentionReviewFollowup(riskCategory, existingFollowup),
+    shouldMention: shouldMentionReviewFollowup(policy, riskCategory, existingFollowup),
     source: existingFollowup?.sourceChannelId && existingFollowup?.sourceThreadTs && existingFollowup?.sourceMessageTs
       ? {
           channelId: existingFollowup.sourceChannelId,

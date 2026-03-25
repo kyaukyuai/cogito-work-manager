@@ -1162,8 +1162,9 @@ export async function buildHeartbeatReviewDecision(
       sortRiskyIssues,
       isUrgentRisk,
       shouldSuppressFollowup,
-      buildReviewFollowup: (item, ownerMap, existingFollowup, issueSources) => buildReviewFollowup(
+      buildReviewFollowup: (item, policy, ownerMap, existingFollowup, issueSources) => buildReviewFollowup(
         item,
+        policy,
         ownerMap,
         existingFollowup,
         issueSources,
@@ -1729,8 +1730,9 @@ export async function buildManagerReview(
       sortRiskyIssues,
       isUrgentRisk,
       shouldSuppressFollowup,
-      buildReviewFollowup: (item, ownerMap, existingFollowup, issueSources) => buildReviewFollowup(
+      buildReviewFollowup: (item, policy, ownerMap, existingFollowup, issueSources) => buildReviewFollowup(
         item,
+        policy,
         ownerMap,
         existingFollowup,
         issueSources,
