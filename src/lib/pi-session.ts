@@ -138,7 +138,7 @@ function shouldTreatAsNotionRecheck(messageText: string, lastQueryContext?: Thre
   if (lastQueryContext?.kind !== "reference-material" || !hasStoredNotionPageReference(lastQueryContext)) {
     return false;
   }
-  return /(?:詳しく|詳細|項目|内容|範囲|確認|見て|読んで|教えて|保存|メモリ|memory)/i.test(messageText);
+  return /(?:詳しく|詳細|項目|内容|範囲|確認|見て|読んで|教えて|保存|メモリ|memory|全て|全文|全体|最後まで|残りも|全部)/i.test(messageText);
 }
 
 export {
@@ -382,6 +382,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When the user explicitly asks to update, append to, retitle, archive, or delete a Notion page, use the dedicated Notion page proposal tools instead of creating or updating a Linear issue.",
     "When the user explicitly asks to save durable knowledge into MEMORY or workspace memory, use propose_update_workspace_memory with a small set of stable facts instead of relying only on silent personalization.",
     "For Notion-based MEMORY save requests, call notion_get_page_content first and extract durable project facts, terminology, preferences, or context from the page content.",
+    "When the user asks to read an entire Notion page or save its overall content into MEMORY, continue calling notion_get_page_content with later startLine values if the current window says more lines are available.",
     "Do not copy an entire document into MEMORY. Save only stable facts that should persist across future turns.",
     "For Notion agenda creation, use the configured default parent page unless the user clearly specifies a different Notion parent page.",
     "A minimal Notion agenda should have a short title and practical sections like 目的, 議題, 確認事項, and 次のアクション.",
@@ -392,7 +393,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Do not apply Notion page update or archive proposals to notion-database reference items. Database row mutation is out of scope.",
     "For reference-material replies that mention multiple Notion pages, documents, or databases, use short bullet lines and include markdown links when URLs are available.",
     "When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.",
-    "A notion_get_page_content page-lines preview may show only the first visible lines. Do not misstate that as a retrieval limit if headings and multiple sections are already visible.",
+    "notion_get_page_content returns a display window over the extracted page lines, not a hard retrieval limit. If the tool says more lines are available, call it again with a later startLine when you need broader coverage.",
     "Do not use web_fetch_url as the primary read path for notion.so links when Notion tools are available. Prefer Notion page or database tools first.",
     "If the user re-checks a Notion page or sends the same notion.so URL again, ignore stale earlier summaries about truncated content and re-read it with Notion tools.",
     "If the user explicitly says database or データベース, treat it as a database-only request unless they also ask for pages.",
@@ -769,6 +770,9 @@ function buildManagerReplyStyleHints(
   if (notionRecheck) {
     hints.push("For notion.so links or same-page Notion re-checks, prefer Notion page/database tools over web_fetch_url.");
     hints.push("If an older reply summary says the Notion content was limited or only a few lines were visible, treat that summary as stale and re-read the current page with Notion tools.");
+    if (/(?:全て|全文|全体|最後まで|残りも|全部)/.test(normalized)) {
+      hints.push("If the current notion_get_page_content window says more lines are available, call it again with a later startLine instead of claiming the rest is unreadable.");
+    }
   }
 
   if (/(?:notion|ノーション).*(?:database|データベース)|(?:database|データベース).*(?:notion|ノーション)/i.test(normalized)) {

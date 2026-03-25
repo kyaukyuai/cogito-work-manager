@@ -117,25 +117,38 @@ function formatNotionPageFactsText(page: {
   ].filter(Boolean).join("\n");
 }
 
+const DEFAULT_NOTION_PAGE_WINDOW_LINES = 80;
+const MAX_NOTION_PAGE_WINDOW_LINES = 120;
+
 function formatNotionPageContentText(page: {
   title?: string;
   url?: string | null;
   excerpt?: string;
   lines?: Array<{ text?: string }>;
-}): string {
+}, options?: { startLine?: number; maxLines?: number }): string {
   const allBodyLines = (page.lines ?? [])
     .map((line) => line.text?.trim())
     .filter((line): line is string => Boolean(line));
-  const previewLines = allBodyLines.slice(0, 20);
+  const requestedStartLine = Number.isFinite(options?.startLine) ? Math.trunc(options!.startLine!) : 1;
+  const requestedMaxLines = Number.isFinite(options?.maxLines) ? Math.trunc(options!.maxLines!) : DEFAULT_NOTION_PAGE_WINDOW_LINES;
+  const safeStartLine = Math.max(1, requestedStartLine);
+  const safeMaxLines = Math.min(MAX_NOTION_PAGE_WINDOW_LINES, Math.max(1, requestedMaxLines));
+  const startIndex = Math.min(allBodyLines.length, safeStartLine - 1);
+  const windowLines = allBodyLines.slice(startIndex, startIndex + safeMaxLines);
+  const startLabel = windowLines.length > 0 ? startIndex + 1 : 0;
+  const endLabel = startIndex + windowLines.length;
   return [
     `Title: ${formatNotionPageLabel(page)}`,
     page.excerpt ? `Excerpt: ${page.excerpt}` : undefined,
-    ...(previewLines.length > 0
+    allBodyLines.length > 0
+      ? `Extracted page lines: ${allBodyLines.length} total. The lines below are the current display window, not a hard retrieval limit.`
+      : undefined,
+    ...(windowLines.length > 0
       ? [
-          `Page lines preview (${previewLines.length}/${allBodyLines.length} shown):`,
-          ...previewLines.map((line) => `- ${line}`),
-          ...(allBodyLines.length > previewLines.length
-            ? [`- ... ${allBodyLines.length - previewLines.length} more lines omitted from this preview`]
+          `Page lines (${startLabel}-${endLabel} of ${allBodyLines.length}):`,
+          ...windowLines.map((line) => `- ${line}`),
+          ...(allBodyLines.length > endLabel
+            ? [`More lines are available. Call notion_get_page_content again with startLine=${endLabel + 1} to continue reading this page.`]
             : []),
         ]
       : []),
@@ -740,11 +753,14 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
       promptSnippet: "Use this when metadata is not enough and you need the actual Notion page contents.",
       parameters: Type.Object({
         pageId: Type.String({ description: "Notion page ID." }),
+        startLine: Type.Optional(Type.Number({ description: "Optional 1-based line number to start from when continuing through a longer page." })),
+        maxLines: Type.Optional(Type.Number({ description: "Optional number of lines to show in this window. Defaults to 80 and caps at 120." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const page = await getNotionPageContent((params as { pageId: string }).pageId, env, signal);
+        const typedParams = params as { pageId: string; startLine?: number; maxLines?: number };
+        const page = await getNotionPageContent(typedParams.pageId, env, signal);
         return {
-          content: [{ type: "text", text: formatNotionPageContentText(page) }],
+          content: [{ type: "text", text: formatNotionPageContentText(page, typedParams) }],
           details: page,
         };
       },

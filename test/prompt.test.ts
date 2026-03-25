@@ -125,6 +125,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("When the user explicitly asks to update, append to, retitle, archive, or delete a Notion page, use the dedicated Notion page proposal tools instead of creating or updating a Linear issue.");
     expect(prompt).toContain("When the user explicitly asks to save durable knowledge into MEMORY or workspace memory, use propose_update_workspace_memory with a small set of stable facts instead of relying only on silent personalization.");
     expect(prompt).toContain("For Notion-based MEMORY save requests, call notion_get_page_content first and extract durable project facts, terminology, preferences, or context from the page content.");
+    expect(prompt).toContain("When the user asks to read an entire Notion page or save its overall content into MEMORY, continue calling notion_get_page_content with later startLine values if the current window says more lines are available.");
     expect(prompt).toContain("Do not copy an entire document into MEMORY. Save only stable facts that should persist across future turns.");
     expect(prompt).toContain("For Notion agenda creation, use the configured default parent page unless the user clearly specifies a different Notion parent page.");
     expect(prompt).toContain("A minimal Notion agenda should have a short title and practical sections like 目的, 議題, 確認事項, and 次のアクション.");
@@ -135,7 +136,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Do not apply Notion page update or archive proposals to notion-database reference items.");
     expect(prompt).toContain("For reference-material replies that mention multiple Notion pages, documents, or databases, use short bullet lines and include markdown links when URLs are available.");
     expect(prompt).toContain("When notion_get_page_content succeeds, summarize the relevant excerpt or page lines instead of saying the content is unavailable.");
-    expect(prompt).toContain("A notion_get_page_content page-lines preview may show only the first visible lines. Do not misstate that as a retrieval limit if headings and multiple sections are already visible.");
+    expect(prompt).toContain("notion_get_page_content returns a display window over the extracted page lines, not a hard retrieval limit.");
     expect(prompt).toContain("Do not use web_fetch_url as the primary read path for notion.so links when Notion tools are available.");
     expect(prompt).toContain("If the user re-checks a Notion page or sends the same notion.so URL again, ignore stale earlier summaries about truncated content and re-read it with Notion tools.");
     expect(prompt).toContain("If the user explicitly says database or データベース, treat it as a database-only request unless they also ask for pages.");
@@ -400,6 +401,39 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For notion.so links or same-page Notion re-checks, prefer Notion page/database tools over web_fetch_url.");
     expect(prompt).toContain("If an older reply summary says the Notion content was limited or only a few lines were visible, treat that summary as stale and re-read the current page with Notion tools.");
     expect(prompt).toContain("- previousReplySummaryHandling: ignore stale prior summary for this Notion re-check; use Notion tools as the source of truth.");
+  });
+
+  it("adds continuation guidance when the user asks to read the full Notion page", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.680",
+      userId: "U123",
+      text: "全てを読み取って",
+      currentDate: "2026-03-25",
+      lastQueryContext: {
+        kind: "reference-material",
+        scope: "team",
+        userMessage: "https://www.notion.so/notion-page-1 を確認して",
+        replySummary: "Notionページを再読み込みして内容を確認した。",
+        issueIds: [],
+        shownIssueIds: [],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+        referenceItems: [
+          {
+            id: "notion-page-1",
+            title: "2026.03.10 | AIクローンプラットフォーム 初回会議共有資料",
+            url: "https://www.notion.so/notion-page-1",
+            source: "notion",
+          },
+        ],
+        recordedAt: "2026-03-25T01:56:00.000Z",
+      },
+    });
+
+    expect(prompt).toContain("If the current notion_get_page_content window says more lines are available, call it again with a later startLine instead of claiming the rest is unreadable.");
   });
 
   it("keeps Notion page update follow-ups anchored to stored page reference items", () => {

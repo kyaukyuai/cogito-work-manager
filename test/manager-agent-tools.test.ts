@@ -231,7 +231,7 @@ describe("manager agent tools", () => {
     );
   });
 
-  it("shows more than five Notion page lines in the content preview when available", async () => {
+  it("shows full Notion page lines in the default content window when they fit", async () => {
     notionMocks.getNotionPageContent.mockResolvedValueOnce({
       id: "notion-page-1",
       title: "AIクローンプラットフォーム 初回会議共有資料",
@@ -258,9 +258,36 @@ describe("manager agent tools", () => {
     const result = await tool!.execute("tool-call-notion-content", { pageId: "notion-page-1" });
     const text = result.content[0]?.text ?? "";
 
-    expect(text).toContain("Page lines preview (7/7 shown):");
+    expect(text).toContain("Extracted page lines: 7 total.");
+    expect(text).toContain("Page lines (1-7 of 7):");
     expect(text).toContain("6. 3ヶ月の進め方");
     expect(text).toContain("7. 本日合意したいこと");
+  });
+
+  it("supports continuing through a longer Notion page with startLine", async () => {
+    notionMocks.getNotionPageContent.mockResolvedValueOnce({
+      id: "notion-page-1",
+      title: "AIクローンプラットフォーム 初回会議共有資料",
+      url: "https://www.notion.so/notion-page-1",
+      excerpt: "初回会議の概要",
+      lines: Array.from({ length: 61 }, (_, index) => ({ text: `Line ${index + 1}` })),
+    });
+
+    const tools = createManagerAgentTools(config, {
+      policy: { load: vi.fn() },
+      workgraph: {} as never,
+    });
+    const tool = tools.find((entry) => entry.name === "notion_get_page_content");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-notion-content", { pageId: "notion-page-1", startLine: 21, maxLines: 20 });
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("Extracted page lines: 61 total.");
+    expect(text).toContain("Page lines (21-40 of 61):");
+    expect(text).toContain("Line 21");
+    expect(text).toContain("Line 40");
+    expect(text).toContain("Call notion_get_page_content again with startLine=41");
   });
 
   it("includes a dedicated workspace memory proposal tool", async () => {
