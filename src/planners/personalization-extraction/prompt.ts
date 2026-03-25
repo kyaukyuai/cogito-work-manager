@@ -25,6 +25,7 @@ export function buildPersonalizationExtractionPrompt(input: PersonalizationExtra
     "If there is nothing worth learning, return observations with a single ignore item.",
     "Broad auto-inference is allowed, but inferred items must be conservative and high-confidence.",
     "Prefer concise canonicalText written as a durable rule or fact in Japanese.",
+    "Never emit operating_rule or preference_or_fact with blank canonicalText. If you cannot write a durable sentence, return ignore instead.",
     `turnKind: ${input.turnKind}`,
     `currentDateJst: ${input.currentDate}`,
     "",

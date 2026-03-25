@@ -29,6 +29,10 @@ export interface HandlePersonalizationResult {
   updatedFiles: Array<"agents" | "memory">;
 }
 
+function hasNonEmptyText(value: string | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isObservationUseful(observation: {
   kind: "operating_rule" | "preference_or_fact" | "ignore";
   source?: "explicit" | "inferred";
@@ -40,7 +44,12 @@ function isObservationUseful(observation: {
   if (observation.kind === "ignore") {
     return false;
   }
-  if (!observation.source || !observation.category || !observation.summary || !observation.canonicalText) {
+  if (
+    !observation.source
+    || !observation.category
+    || !hasNonEmptyText(observation.summary)
+    || !hasNonEmptyText(observation.canonicalText)
+  ) {
     return false;
   }
   if (typeof observation.confidence !== "number") {

@@ -19,6 +19,7 @@ import {
   parseResearchSynthesisReply,
   runResearchSynthesisTurnWithExecutor,
 } from "../src/planners/research-synthesis/index.js";
+import { buildPersonalizationExtractionPrompt } from "../src/planners/personalization-extraction/index.js";
 import { buildTaskPlanningPrompt, parseTaskPlanningReply, runTaskPlanningTurnWithExecutor } from "../src/planners/task-intake/index.js";
 import type { AppConfig } from "../src/lib/config.js";
 import { DEFAULT_HEARTBEAT_PROMPT } from "../src/lib/heartbeat.js";
@@ -949,5 +950,19 @@ describe("prompt helpers", () => {
       },
       reasoningSummary: "要求された blocked 詳細を満たしています。",
     });
+  });
+
+  it("tightens personalization extraction guidance for blank canonicalText", () => {
+    const prompt = buildPersonalizationExtractionPrompt({
+      turnKind: "manager-system",
+      latestUserMessage: "heartbeat noop",
+      latestAssistantReply: "HEARTBEAT_OK",
+      committedCommands: [],
+      rejectedReasons: [],
+      currentDate: "2026-03-25",
+    });
+
+    expect(prompt).toContain("If there is nothing worth learning, return observations with a single ignore item.");
+    expect(prompt).toContain("Never emit operating_rule or preference_or_fact with blank canonicalText. If you cannot write a durable sentence, return ignore instead.");
   });
 });
