@@ -4964,7 +4964,10 @@ describe("handleManagerMessage clarification flow", () => {
     });
 
     await expect(
-      loadPendingManagerClarification(buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-run-task-clarify")),
+      loadPendingManagerClarification(
+        buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-run-task-clarify"),
+        new Date("2026-03-24T02:13:00.000Z"),
+      ),
     ).resolves.toMatchObject({
       intent: "run_task",
       missingDecisionSummary: "run_task の対象 issue を確認するため、issue ID の補足待ちです。",
@@ -5007,7 +5010,10 @@ describe("handleManagerMessage clarification flow", () => {
     });
 
     await expect(
-      loadPendingManagerClarification(buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-run-task-misclassified")),
+      loadPendingManagerClarification(
+        buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-run-task-misclassified"),
+        new Date("2026-03-24T08:40:00.000Z"),
+      ),
     ).resolves.toMatchObject({
       intent: "run_task",
       lastUserMessage: "AIC-52 を実行して",
