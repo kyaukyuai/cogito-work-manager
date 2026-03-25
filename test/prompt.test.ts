@@ -142,6 +142,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
     expect(prompt).toContain("For scheduled review or heartbeat replies, never use markdown tables, pipe tables, separator lines, or report-style section headings.");
     expect(prompt).toContain("For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed.");
+    expect(prompt).toContain("In review and heartbeat turns, treat workgraph awaiting followups as historical context and source-thread hints only.");
+    expect(prompt).toContain("If workgraph awaiting followups conflicts with current Linear review facts, trust the current Linear facts");
     expect(prompt).toContain("When review facts include dueRelativeLabel or daysUntilDue, use that relative due wording verbatim");
     expect(prompt).toContain("For scheduled review or heartbeat replies, use only one short opening sentence and do not repeat the same improvement summary");
     expect(prompt).toContain("For schedule-list replies, use short bullets with schedule ids and timing. Do not use markdown tables or wrap schedule ids in backticks.");

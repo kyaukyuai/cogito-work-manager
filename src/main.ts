@@ -23,6 +23,7 @@ import { ensureManagerStateFiles } from "./lib/manager-state.js";
 import { analyzeOwnerMap } from "./lib/owner-map-diagnostics.js";
 import { handleIssueCreatedWebhook } from "./orchestrators/webhooks/handle-issue-created.js";
 import { handlePersonalizationUpdate } from "./orchestrators/personalization/handle-personalization.js";
+import { reconcileAwaitingFollowupsWithCurrentLinear } from "./orchestrators/review/review-data.js";
 import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes, runManagerSystemTurn } from "./lib/pi-session.js";
 import { SchedulerService } from "./lib/scheduler.js";
 import { postSlackProcessingNotice, sendSlackReply } from "./lib/slack-replies.js";
@@ -270,6 +271,24 @@ async function main(): Promise<void> {
     fallback: () => Promise<string>;
   }): Promise<string> => {
     try {
+      if (
+        args.input.kind === "heartbeat"
+        || args.input.kind === "morning-review"
+        || args.input.kind === "evening-review"
+        || args.input.kind === "weekly-review"
+      ) {
+        try {
+          await reconcileAwaitingFollowupsWithCurrentLinear(config, managerRepositories, new Date());
+        } catch (error) {
+          logger.warn("Review followup reconcile failed before manager system task", {
+            kind: args.input.kind,
+            channelId: args.input.channelId,
+            threadTs: args.input.rootThreadTs,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       const agentResult = await runManagerSystemTurn(config, args.paths, args.input);
       const commitResult = await commitManagerCommandProposals({
         config,

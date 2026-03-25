@@ -381,6 +381,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
     "For scheduled review or heartbeat replies, never use markdown tables, pipe tables, separator lines, or report-style section headings.",
     "For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed. Do not describe it as currently in progress or currently risky.",
+    "In review and heartbeat turns, treat workgraph awaiting followups as historical context and source-thread hints only. Use current linear_list_review_facts as the authority for whether an issue is still open and currently risky.",
+    "If workgraph awaiting followups conflicts with current Linear review facts, trust the current Linear facts and do not propose a new follow-up for a closed or absent issue.",
     "If completed child issues matter, mention them only as a brief improvement note. Keep the current action list focused on open issues.",
     "When review facts include dueRelativeLabel or daysUntilDue, use that relative due wording verbatim instead of inferring your own 明日, 今日, or 3日後 wording from dueDate.",
     "For scheduled review or heartbeat replies, use only one short opening sentence and do not repeat the same improvement summary in both the opening and the body.",

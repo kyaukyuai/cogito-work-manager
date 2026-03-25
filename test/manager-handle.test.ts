@@ -17,6 +17,7 @@ import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { buildThreadPaths } from "../src/lib/thread-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 import { recordPlanningOutcome } from "../src/state/workgraph/recorder.js";
+import { listAwaitingFollowups } from "../src/state/workgraph/queries.js";
 import { createDefaultTestManagerAgentTurn } from "./helpers/default-manager-agent-mock.js";
 
 const linearMocks = vi.hoisted(() => ({
@@ -488,15 +489,16 @@ describe("handleManagerMessage clarification flow", () => {
     linearMocks.addLinearComment.mockReset().mockResolvedValue(undefined);
     linearMocks.addLinearProgressComment.mockReset().mockResolvedValue({ id: "comment-1", body: "ok" });
     linearMocks.addLinearRelation.mockReset().mockResolvedValue(undefined);
-    linearMocks.getLinearIssue.mockReset().mockResolvedValue({
-      id: "issue-1",
-      identifier: "AIC-110",
-      title: "ログイン画面の不具合修正",
-      url: "https://linear.app/kyaukyuai/issue/AIC-110",
+    linearMocks.getLinearIssue.mockReset().mockImplementation(async (issueId: string) => ({
+      id: `issue-${issueId}`,
+      identifier: issueId,
+      title: issueId === "AIC-110" ? "ログイン画面の不具合修正" : issueId,
+      url: `https://linear.app/kyaukyuai/issue/${issueId}`,
       assignee: { id: "user-1", displayName: "y.kakui" },
+      state: { id: "state-1", name: "Started", type: "started" },
       relations: [],
       inverseRelations: [],
-    });
+    }));
     linearMocks.markLinearIssueBlocked.mockReset().mockResolvedValue({
       issue: { id: "issue-1", identifier: "AIC-100", title: "blocked" },
       blockedStateApplied: true,
@@ -3536,6 +3538,67 @@ describe("handleManagerMessage clarification flow", () => {
         resolvedReason: "risk-cleared",
       }),
     ]));
+  });
+
+  it("marks stale completed follow-ups as resolved and removes them from the workgraph awaiting list", async () => {
+    linearMocks.listRiskyLinearIssues.mockResolvedValue([]);
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-39",
+      identifier: "AIC-39",
+      title: "AIマネージャーを実用レベルへ引き上げる（〜3/26）",
+      url: "https://linear.app/kyaukyuai/issue/AIC-39",
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      state: { id: "state-done", name: "Done", type: "completed" },
+      relations: [],
+      inverseRelations: [],
+    });
+    await writeFile(systemPaths.followupsFile, `${JSON.stringify([
+      {
+        issueId: "AIC-39",
+        lastPublicFollowupAt: "2026-03-24T00:00:47.615Z",
+        lastCategory: "due-soon",
+        requestKind: "status",
+        requestText: "本日中にクローズできる見込みはありますか？",
+        status: "awaiting-response",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "manager-review-morning",
+        sourceMessageTs: "manager-review-morning",
+      },
+    ], null, 2)}\n`);
+    await createFileBackedManagerRepositories(systemPaths).workgraph.append([
+      {
+        type: "followup.requested",
+        occurredAt: "2026-03-24T00:00:47.615Z",
+        threadKey: "C0ALAMDRB9V:manager-review-morning",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "manager-review-morning",
+        sourceMessageTs: "manager-review-morning",
+        issueId: "AIC-39",
+        category: "due-soon",
+        requestKind: "status",
+      },
+    ]);
+
+    const review = await buildManagerReview(
+      { ...config, workspaceDir },
+      systemPaths,
+      "morning-review",
+      new Date("2026-03-25T00:00:00.000Z"),
+    );
+
+    expect(review?.text).not.toContain("AIC-39");
+
+    const followups = await loadFollowupsLedger(systemPaths);
+    expect(followups).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        issueId: "AIC-39",
+        status: "resolved",
+        resolvedReason: "completed",
+      }),
+    ]));
+
+    const awaiting = await listAwaitingFollowups(createFileBackedManagerRepositories(systemPaths).workgraph);
+    expect(awaiting.find((entry) => entry.issueId === "AIC-39")).toBeUndefined();
   });
 
   it("marks due-missing follow-ups as resolved only when a due date is set", async () => {

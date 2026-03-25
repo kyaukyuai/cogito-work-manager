@@ -1,5 +1,5 @@
 import type { AppConfig } from "../../lib/config.js";
-import { listRiskyLinearIssues } from "../../lib/linear.js";
+import { getLinearIssue, listRiskyLinearIssues } from "../../lib/linear.js";
 import {
   type FollowupLedgerEntry,
   type ManagerPolicy,
@@ -28,6 +28,8 @@ export interface ManagerReviewData {
   risky: RiskAssessment[];
 }
 
+type ReviewRepositories = Pick<ManagerRepositories, "policy" | "followups" | "workgraph">;
+
 function resolveFollowupEntry(
   entry: FollowupLedgerEntry,
   now: Date,
@@ -39,6 +41,67 @@ function resolveFollowupEntry(
     resolvedAt: now.toISOString(),
     resolvedReason: reason,
   };
+}
+
+function followupStillNeedsResponse(
+  entry: FollowupLedgerEntry,
+  current: RiskAssessment,
+): boolean {
+  if (entry.lastCategory === "owner_missing") {
+    return current.ownerMissing;
+  }
+  if (entry.lastCategory === "due_missing") {
+    return current.dueMissing;
+  }
+  if (entry.lastCategory === "blocked") {
+    return current.blocked;
+  }
+
+  const statusCategories = new Set(["overdue", "due_today", "due_soon", "stale"]);
+  if (entry.lastCategory && statusCategories.has(entry.lastCategory)) {
+    return current.riskCategories.some((category) => statusCategories.has(category));
+  }
+
+  if (!entry.lastCategory) {
+    return current.riskCategories.length > 0;
+  }
+
+  return current.riskCategories.includes(entry.lastCategory);
+}
+
+async function reconcileFollowupsWithCurrentLinearState(
+  followups: FollowupLedgerEntry[],
+  policy: ManagerPolicy,
+  env: Record<string, string | undefined>,
+  now: Date,
+): Promise<{ changed: boolean; followups: FollowupLedgerEntry[] }> {
+  let changed = false;
+
+  const next = await Promise.all(followups.map(async (entry) => {
+    if (entry.status !== "awaiting-response") {
+      return entry;
+    }
+
+    try {
+      const currentIssue = await getLinearIssue(entry.issueId, env);
+      if (issueMatchesCompletedState(currentIssue)) {
+        changed = true;
+        return resolveFollowupEntry(entry, now, "completed");
+      }
+
+      const currentRisk = assessRisk(currentIssue, policy, now);
+      if (!followupStillNeedsResponse(entry, currentRisk)) {
+        changed = true;
+        return resolveFollowupEntry(entry, now, "risk-cleared");
+      }
+    } catch {
+      return entry;
+    }
+
+    return entry;
+  }));
+
+  return { changed, followups: next };
 }
 
 function reconcileFollowupsWithRiskyIssues(
@@ -85,18 +148,13 @@ function reconcileFollowupsWithRiskyIssues(
   return { changed, followups: next };
 }
 
-export async function loadManagerReviewData(
+export async function reconcileAwaitingFollowupsWithCurrentLinear(
   config: AppConfig,
-  repositories: Pick<ManagerRepositories, "policy" | "ownerMap" | "followups" | "planning" | "workgraph">,
+  repositories: ReviewRepositories,
   now: Date,
-): Promise<ManagerReviewData> {
+): Promise<{ changed: boolean; followups: FollowupLedgerEntry[] }> {
   const policy = await repositories.policy.load();
-  const ownerMap = await repositories.ownerMap.load();
   const followups = await repositories.followups.load();
-  const planningLedger = await repositories.planning.load();
-  const pendingClarificationCount = (await listPendingClarifications(repositories.workgraph)).length;
-  const awaitingFollowupCount = (await listAwaitingFollowups(repositories.workgraph)).length;
-  const issueSources = await buildIssueSourceIndex(repositories.workgraph);
   const env = {
     ...process.env,
     LINEAR_API_KEY: config.linearApiKey,
@@ -104,21 +162,71 @@ export async function loadManagerReviewData(
     LINEAR_TEAM_KEY: config.linearTeamKey,
   };
 
-  const risky = (await listRiskyLinearIssues(
-    {
-      staleBusinessDays: policy.staleBusinessDays,
-      urgentPriorityThreshold: policy.urgentPriorityThreshold,
-    },
+  const reconciled = await reconcileFollowupsWithCurrentLinearState(
+    followups,
+    policy,
     env,
-  )).map((issue) => assessRisk(issue, policy, now)).filter((item) => item.riskCategories.length > 0);
+    now,
+  );
 
-  const reconciled = reconcileFollowupsWithRiskyIssues(followups, risky, now);
   if (reconciled.changed) {
     await repositories.followups.save(reconciled.followups);
     await recordFollowupTransitions(repositories.workgraph, followups, reconciled.followups, {
       occurredAt: now.toISOString(),
     });
   }
+
+  return reconciled;
+}
+
+export async function loadManagerReviewData(
+  config: AppConfig,
+  repositories: Pick<ManagerRepositories, "policy" | "ownerMap" | "followups" | "planning" | "workgraph">,
+  now: Date,
+): Promise<ManagerReviewData> {
+  const initialPolicy = await repositories.policy.load();
+  const ownerMap = await repositories.ownerMap.load();
+  const planningLedger = await repositories.planning.load();
+  const pendingClarificationCount = (await listPendingClarifications(repositories.workgraph)).length;
+  const env = {
+    ...process.env,
+    LINEAR_API_KEY: config.linearApiKey,
+    LINEAR_WORKSPACE: config.linearWorkspace,
+    LINEAR_TEAM_KEY: config.linearTeamKey,
+  };
+
+  const reconciledWithLinear = await reconcileFollowupsWithCurrentLinearState(
+    await repositories.followups.load(),
+    initialPolicy,
+    env,
+    now,
+  );
+  if (reconciledWithLinear.changed) {
+    const previousFollowups = await repositories.followups.load();
+    await repositories.followups.save(reconciledWithLinear.followups);
+    await recordFollowupTransitions(repositories.workgraph, previousFollowups, reconciledWithLinear.followups, {
+      occurredAt: now.toISOString(),
+    });
+  }
+
+  const risky = (await listRiskyLinearIssues(
+    {
+      staleBusinessDays: initialPolicy.staleBusinessDays,
+      urgentPriorityThreshold: initialPolicy.urgentPriorityThreshold,
+    },
+    env,
+  )).map((issue) => assessRisk(issue, initialPolicy, now)).filter((item) => item.riskCategories.length > 0);
+
+  const reconciled = reconcileFollowupsWithRiskyIssues(reconciledWithLinear.followups, risky, now);
+  if (reconciled.changed) {
+    await repositories.followups.save(reconciled.followups);
+    await recordFollowupTransitions(repositories.workgraph, reconciledWithLinear.followups, reconciled.followups, {
+      occurredAt: now.toISOString(),
+    });
+  }
+  const policy = await repositories.policy.load();
+  const issueSources = await buildIssueSourceIndex(repositories.workgraph);
+  const awaitingFollowupCount = (await listAwaitingFollowups(repositories.workgraph)).length;
 
   return {
     policy,
