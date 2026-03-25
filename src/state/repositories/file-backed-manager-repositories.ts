@@ -7,12 +7,14 @@ import {
   DEFAULT_POLICY,
   followupsLedgerSchema,
   managerPolicySchema,
+  notionManagedPagesSchema,
   ownerMapSchema,
   planningLedgerSchema,
   personalizationLedgerSchema,
   webhookDeliveriesSchema,
   type FollowupLedgerEntry,
   type ManagerPolicy,
+  type NotionManagedPageEntry,
   type OwnerMap,
   type PersonalizationLedgerEntry,
   type PlanningLedgerEntry,
@@ -34,6 +36,7 @@ export type FollowupRepository = MutableRepository<FollowupLedgerEntry[]>;
 export type PlanningRepository = MutableRepository<PlanningLedgerEntry[]>;
 export type WebhookDeliveryRepository = MutableRepository<WebhookDeliveryEntry[]>;
 export type PersonalizationRepository = MutableRepository<PersonalizationLedgerEntry[]>;
+export type NotionManagedPagesRepository = MutableRepository<NotionManagedPageEntry[]>;
 
 export interface ManagerRepositories {
   policy: PolicyRepository;
@@ -41,6 +44,7 @@ export interface ManagerRepositories {
   followups: FollowupRepository;
   planning: PlanningRepository;
   personalization: PersonalizationRepository;
+  notionPages: NotionManagedPagesRepository;
   webhookDeliveries: WebhookDeliveryRepository;
   workgraph: WorkgraphRepository;
 }
@@ -95,6 +99,7 @@ export function createFileBackedManagerRepositories(paths: SystemPaths): Manager
     followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, []),
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
     personalization: createMutableJsonRepository(paths.personalizationLedgerFile, personalizationLedgerSchema, []),
+    notionPages: createMutableJsonRepository(paths.notionPagesFile, notionManagedPagesSchema, []),
     webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, []),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };

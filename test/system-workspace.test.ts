@@ -25,6 +25,7 @@ describe("system workspace helpers", () => {
     expect(paths.workspaceAgentsFile).toBe("/workspace/system/AGENTS.md");
     expect(paths.memoryFile).toBe("/workspace/system/MEMORY.md");
     expect(paths.agendaTemplateFile).toBe("/workspace/system/AGENDA_TEMPLATE.md");
+    expect(paths.notionPagesFile).toBe("/workspace/system/notion-pages.json");
     expect(paths.policyFile).toBe("/workspace/system/policy.json");
     expect(paths.ownerMapFile).toBe("/workspace/system/owner-map.json");
     expect(paths.personalizationLedgerFile).toBe("/workspace/system/personalization-ledger.json");
@@ -64,12 +65,14 @@ describe("system workspace helpers", () => {
     const ownerMap = await loadOwnerMap(paths);
     const jobs = JSON.parse(await readFile(paths.jobsFile, "utf8")) as Array<{ id: string }>;
     const personalization = JSON.parse(await readFile(paths.personalizationLedgerFile, "utf8")) as unknown[];
+    const notionPages = JSON.parse(await readFile(paths.notionPagesFile, "utf8")) as unknown[];
     const deliveries = JSON.parse(await readFile(paths.webhookDeliveriesFile, "utf8")) as unknown[];
 
     expect(policy.controlRoomChannelId).toBe("C0ALAMDRB9V");
     expect(policy.assistantName).toBe("コギト");
     expect(ownerMap.defaultOwner).toBe("kyaukyuai");
     expect(personalization).toEqual([]);
+    expect(notionPages).toEqual([]);
     expect(deliveries).toEqual([]);
     expect(jobs.map((job) => job.id)).toEqual(
       expect.arrayContaining([

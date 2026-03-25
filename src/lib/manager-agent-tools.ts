@@ -1205,10 +1205,11 @@ function createProposalTools(): ToolDefinition[] {
       name: "propose_update_notion_page",
       label: "Propose Update Notion Page",
       description: "Propose updating one existing Notion page. This does not execute the mutation.",
-      promptSnippet: "Use this when the user asks to update a Notion page, retitle it, or append notes to the current page.",
+      promptSnippet: "Use this when the user asks to update a Notion page, retitle it, append notes, or replace one named section on a Cogito-managed page.",
       commandType: "update_notion_page",
       parameters: Type.Object({
         pageId: Type.String({ description: "Target Notion page ID." }),
+        mode: Type.String({ description: "append | replace_section" }),
         title: Type.Optional(Type.String({ description: "Optional new page title." })),
         summary: Type.Optional(Type.String({ description: "Optional summary paragraph to append near the end of the page." })),
         sections: Type.Optional(Type.Array(Type.Object({
@@ -1216,7 +1217,9 @@ function createProposalTools(): ToolDefinition[] {
           paragraph: Type.Optional(Type.String({ description: "Optional paragraph body for the section." })),
           bullets: Type.Optional(Type.Array(Type.String({ description: "Optional bullet items for the section." }))),
         }))),
-        appendMode: Type.String({ description: "Always use append for this scope." }),
+        sectionHeading: Type.Optional(Type.String({ description: "Required for replace_section. Exact top-level heading_2 label to replace, such as 議題 or 次のアクション." })),
+        paragraph: Type.Optional(Type.String({ description: "Optional replacement paragraph for replace_section." })),
+        bullets: Type.Optional(Type.Array(Type.String({ description: "Optional replacement bullet items for replace_section." }))),
         reasonSummary: Type.String({ description: "Short reason for this proposal." }),
         evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
         dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),

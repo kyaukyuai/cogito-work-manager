@@ -130,7 +130,11 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For Notion agenda creation, use the configured default parent page unless the user clearly specifies a different Notion parent page.");
     expect(prompt).toContain("A minimal Notion agenda should have a short title and practical sections like 目的, 議題, 確認事項, and 次のアクション.");
     expect(prompt).toContain("For Notion page updates in this scope, use propose_update_notion_page with an explicit pageId");
-    expect(prompt).toContain("Notion page updates in this scope are append-only plus optional title updates.");
+    expect(prompt).toContain("mode=append or mode=replace_section");
+    expect(prompt).toContain("Use mode=append for requests like 追記して");
+    expect(prompt).toContain("Use mode=replace_section for requests like 「議題」を更新して");
+    expect(prompt).toContain("replace_section is allowed only for Cogito-managed Notion pages.");
+    expect(prompt).toContain("Do not propose full content replacement or arbitrary block edits for Notion pages in this scope.");
     expect(prompt).toContain("For Notion page delete requests, use propose_archive_notion_page.");
     expect(prompt).toContain("When the last query context contains Notion page referenceItems and the user says そのページを更新して");
     expect(prompt).toContain("Do not apply Notion page update or archive proposals to notion-database reference items.");

@@ -109,6 +109,10 @@ export interface UpdateNotionPageInput {
   title?: string;
   summary?: string;
   sections?: CreateNotionAgendaSectionInput[];
+  mode?: "append" | "replace_section";
+  sectionHeading?: string;
+  paragraph?: string;
+  bullets?: string[];
 }
 
 export interface NotionCreatedPage extends NotionPageSummary {
@@ -165,6 +169,10 @@ function buildBulletedListBlock(text: string): Record<string, unknown> {
       rich_text: buildRichText(text),
     },
   };
+}
+
+function normalizeSectionHeadingLabel(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
 }
 
 export function buildNotionShellCommand(args: string[]): string {
@@ -428,6 +436,23 @@ function buildPageAppendChildren(
   return children;
 }
 
+function buildSectionReplacementChildren(
+  input: Pick<UpdateNotionPageInput, "paragraph" | "bullets">,
+): Record<string, unknown>[] {
+  const children: Record<string, unknown>[] = [];
+
+  if (input.paragraph?.trim()) {
+    children.push(buildParagraphBlock(input.paragraph.trim()));
+  }
+
+  for (const bullet of input.bullets ?? []) {
+    if (!bullet.trim()) continue;
+    children.push(buildBulletedListBlock(bullet.trim()));
+  }
+
+  return children;
+}
+
 function buildCreateNotionAgendaPayload(input: CreateNotionAgendaInput): Record<string, unknown> {
   const title = input.title.trim();
   if (!title) throw new Error("Notion agenda title is required");
@@ -482,15 +507,78 @@ function buildUpdateNotionPagePayload(input: Pick<UpdateNotionPageInput, "title"
 }
 
 function buildAppendNotionPageBlocksPayload(
-  input: Pick<UpdateNotionPageInput, "summary" | "sections">,
+  children: Record<string, unknown>[],
+  after?: string,
 ): Record<string, unknown> {
-  const children = buildPageAppendChildren(input);
   if (children.length === 0) {
     throw new Error("Notion page append content is required");
   }
 
-  return {
+  const payload: Record<string, unknown> = {
     children,
+  };
+  if (after?.trim()) {
+    payload.after = after.trim();
+  }
+  return payload;
+}
+
+function extractHeading2Text(raw: Record<string, unknown>): string | undefined {
+  if (raw.type !== "heading_2") {
+    return undefined;
+  }
+  const block = getBlockData(raw);
+  return block ? firstRichTextPlainText(block.rich_text) : undefined;
+}
+
+export interface NotionSectionReplacementPlan {
+  headingBlockId: string;
+  archivedBlockIds: string[];
+  availableHeadings: string[];
+}
+
+export function planNotionSectionReplacement(
+  blocks: Array<Record<string, unknown>>,
+  sectionHeading: string,
+): NotionSectionReplacementPlan {
+  const normalizedTargetHeading = normalizeSectionHeadingLabel(sectionHeading);
+  if (!normalizedTargetHeading) {
+    throw new Error("Notion section heading is required");
+  }
+
+  const headings = blocks
+    .map((block, index) => ({
+      block,
+      index,
+      heading: extractHeading2Text(block),
+    }))
+    .filter((entry): entry is { block: Record<string, unknown>; index: number; heading: string } => Boolean(entry.heading?.trim()));
+
+  const availableHeadings = headings.map((entry) => entry.heading);
+  const matches = headings.filter((entry) => normalizeSectionHeadingLabel(entry.heading) === normalizedTargetHeading);
+
+  if (matches.length === 0) {
+    throw new Error(
+      availableHeadings.length > 0
+        ? `Notion section "${sectionHeading}" was not found. Available headings: ${availableHeadings.join(", ")}`
+        : `Notion section "${sectionHeading}" was not found because the page has no top-level heading_2 sections.`,
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(`Notion section "${sectionHeading}" is ambiguous because multiple top-level heading_2 blocks match it.`);
+  }
+
+  const target = matches[0]!;
+  const nextHeadingIndex = headings.find((entry) => entry.index > target.index)?.index;
+  const archivedBlockIds = blocks
+    .slice(target.index + 1, nextHeadingIndex)
+    .map((block) => (typeof block.id === "string" ? block.id : ""))
+    .filter(Boolean);
+
+  return {
+    headingBlockId: String(target.block.id ?? ""),
+    archivedBlockIds,
+    availableHeadings,
   };
 }
 
@@ -573,7 +661,44 @@ export function buildUpdateNotionPageArgs(input: UpdateNotionPageInput): string[
 export function buildAppendNotionPageBlocksArgs(input: UpdateNotionPageInput): string[] {
   const pageId = input.pageId.trim();
   if (!pageId) throw new Error("Notion page ID is required");
-  return ["api", `/v1/blocks/${pageId}/children`, "--method", "PATCH", "--data", JSON.stringify(buildAppendNotionPageBlocksPayload(input))];
+  return [
+    "api",
+    `/v1/blocks/${pageId}/children`,
+    "--method",
+    "PATCH",
+    "--data",
+    JSON.stringify(buildAppendNotionPageBlocksPayload(buildPageAppendChildren(input))),
+  ];
+}
+
+export function buildAppendNotionBlockChildrenArgs(
+  blockId: string,
+  children: Record<string, unknown>[],
+  after?: string,
+): string[] {
+  const trimmed = blockId.trim();
+  if (!trimmed) throw new Error("Notion block ID is required");
+  return [
+    "api",
+    `/v1/blocks/${trimmed}/children`,
+    "--method",
+    "PATCH",
+    "--data",
+    JSON.stringify(buildAppendNotionPageBlocksPayload(children, after)),
+  ];
+}
+
+export function buildArchiveNotionBlockArgs(blockId: string): string[] {
+  const trimmed = blockId.trim();
+  if (!trimmed) throw new Error("Notion block ID is required");
+  return [
+    "api",
+    `/v1/blocks/${trimmed}`,
+    "--method",
+    "PATCH",
+    "--data",
+    JSON.stringify({ archived: true }),
+  ];
 }
 
 export function buildArchiveNotionPageArgs(pageId: string): string[] {
@@ -989,6 +1114,7 @@ export async function updateNotionPage(
   if (!pageId) {
     throw new Error("Notion page ID is required");
   }
+  const mode = input.mode ?? "append";
 
   if (input.title?.trim()) {
     await execNotionJson<Record<string, unknown>>(
@@ -998,7 +1124,33 @@ export async function updateNotionPage(
     );
   }
 
-  if (buildPageAppendChildren(input).length > 0) {
+  if (mode === "replace_section") {
+    const sectionHeading = input.sectionHeading?.trim();
+    if (!sectionHeading) {
+      throw new Error("Notion section heading is required for replace_section updates");
+    }
+    const replacementChildren = buildSectionReplacementChildren(input);
+    if (replacementChildren.length === 0) {
+      throw new Error("Notion section replacement content is required");
+    }
+
+    const blocks = await listNotionBlockChildren(pageId, env, signal);
+    const replacementPlan = planNotionSectionReplacement(blocks, sectionHeading);
+
+    for (const blockId of replacementPlan.archivedBlockIds) {
+      await execNotionJson<Record<string, unknown>>(
+        buildArchiveNotionBlockArgs(blockId),
+        env,
+        signal,
+      );
+    }
+
+    await execNotionJson<Record<string, unknown>>(
+      buildAppendNotionBlockChildrenArgs(pageId, replacementChildren, replacementPlan.headingBlockId),
+      env,
+      signal,
+    );
+  } else if (buildPageAppendChildren(input).length > 0) {
     await execNotionJson<Record<string, unknown>>(
       buildAppendNotionPageBlocksArgs(input),
       env,

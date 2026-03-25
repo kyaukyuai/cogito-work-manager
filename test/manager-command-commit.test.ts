@@ -1321,6 +1321,7 @@ describe("manager command commit", () => {
         {
           commandType: "update_notion_page",
           pageId: "notion-page-2",
+          mode: "append",
           title: "更新後の議事録",
           summary: "会議後の補足です。",
           sections: [
@@ -1329,7 +1330,6 @@ describe("manager command commit", () => {
               bullets: ["担当を確認する"],
             },
           ],
-          appendMode: "append",
           reasonSummary: "直前の Notion ページに追記する依頼です。",
         },
       ],
@@ -1354,6 +1354,7 @@ describe("manager command commit", () => {
     expect(notionMocks.updateNotionPage).toHaveBeenCalledWith(
       expect.objectContaining({
         pageId: "notion-page-2",
+        mode: "append",
         title: "更新後の議事録",
         summary: "会議後の補足です。",
         sections: [
@@ -1369,6 +1370,169 @@ describe("manager command commit", () => {
     );
     expect(result.committed[0]?.summary).toContain("Notion page updated:");
     expect(result.committed[0]?.summary).toContain("<https://www.notion.so/notion-page-2|更新後の議事録>");
+  });
+
+  it("registers created Notion agenda pages as managed pages", async () => {
+    notionMocks.createNotionAgendaPage.mockResolvedValueOnce({
+      id: "notion-page-managed",
+      object: "page",
+      title: "会議アジェンダ",
+      url: "https://www.notion.so/notion-page-managed",
+      createdTime: "2026-03-24T01:05:00.000Z",
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: {
+        ...config,
+        workspaceDir,
+        notionApiToken: "secret_test",
+        notionAgendaParentPageId: "parent-page-1",
+      },
+      repositories,
+      proposals: [
+        {
+          commandType: "create_notion_agenda",
+          title: "会議アジェンダ",
+          reasonSummary: "Notion に agenda を作る依頼です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-notion-managed",
+        messageTs: "msg-notion-managed-1",
+        userId: "U1",
+        text: "Notion に agenda を作って",
+      },
+      now: new Date("2026-03-24T01:05:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    await expect(repositories.notionPages.load()).resolves.toEqual([
+      expect.objectContaining({
+        pageId: "notion-page-managed",
+        pageKind: "agenda",
+        title: "会議アジェンダ",
+        url: "https://www.notion.so/notion-page-managed",
+        managedBy: "cogito",
+      }),
+    ]);
+  });
+
+  it("replaces one managed Notion section by heading", async () => {
+    await repositories.notionPages.save([
+      {
+        pageId: "notion-page-managed",
+        pageKind: "agenda",
+        title: "管理ページ",
+        url: "https://www.notion.so/notion-page-managed",
+        createdAt: "2026-03-24T01:00:00.000Z",
+        managedBy: "cogito",
+      },
+    ]);
+    notionMocks.updateNotionPage.mockResolvedValueOnce({
+      id: "notion-page-managed",
+      object: "page",
+      title: "管理ページ",
+      url: "https://www.notion.so/notion-page-managed",
+      lastEditedTime: "2026-03-24T01:06:00.000Z",
+      raw: {},
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: {
+        ...config,
+        workspaceDir,
+        notionApiToken: "secret_test",
+      },
+      repositories,
+      proposals: [
+        {
+          commandType: "update_notion_page",
+          pageId: "notion-page-managed",
+          mode: "replace_section",
+          sectionHeading: "議題",
+          bullets: ["優先順位を更新する"],
+          reasonSummary: "議題セクションを置き換える依頼です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-notion-replace",
+        messageTs: "msg-notion-replace-1",
+        userId: "U1",
+        text: "議題を更新して",
+      },
+      now: new Date("2026-03-24T01:06:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(notionMocks.updateNotionPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pageId: "notion-page-managed",
+        mode: "replace_section",
+        sectionHeading: "議題",
+        bullets: ["優先順位を更新する"],
+      }),
+      expect.objectContaining({
+        NOTION_API_TOKEN: "secret_test",
+      }),
+    );
+    expect(result.committed[0]?.summary).toContain("Notion section updated:");
+  });
+
+  it("rejects replace_section updates for unregistered pages", async () => {
+    const result = await commitManagerCommandProposals({
+      config: {
+        ...config,
+        workspaceDir,
+        notionApiToken: "secret_test",
+      },
+      repositories,
+      proposals: [
+        {
+          commandType: "update_notion_page",
+          pageId: "notion-page-unmanaged",
+          mode: "replace_section",
+          sectionHeading: "議題",
+          paragraph: "更新内容です。",
+          reasonSummary: "未登録ページを更新したい依頼です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-notion-replace-reject",
+        messageTs: "msg-notion-replace-reject-1",
+        userId: "U1",
+        text: "議題を更新して",
+      },
+      now: new Date("2026-03-24T01:07:00.000Z"),
+      policy: await repositories.policy.load(),
+      env: {
+        ...process.env,
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_WORKSPACE: "kyaukyuai",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("コギト管理ページのみ");
+    expect(notionMocks.updateNotionPage).not.toHaveBeenCalled();
   });
 
   it("archives a Notion page for a delete request", async () => {

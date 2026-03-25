@@ -109,7 +109,7 @@ NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 - `LINEAR_TEAM_KEY` は UUID ではなく `AIC`, `KYA` のような team key を使います。
 - `NOTION_API_TOKEN` を入れると bundled `ntn v0.4.0` で Notion page search / page facts / page content excerpt / database search / database query が使えます。
 - `NOTION_AGENDA_PARENT_PAGE_ID` を追加すると、その parent page 配下に agenda page を作成できます。
-- 既存 Notion page への title 更新、append-only の追記、archive/trash も Slack から扱えます。database row の更新・削除は未対応です。
+- 既存 Notion page への title 更新、append の追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash も Slack から扱えます。database row の更新・削除は未対応です。
 - `/workspace/system/AGENTS.md` には安定した進め方や返信方針のような operating rules を書けます。manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。ただし schema や safety rule は上書きしません。
 - `/workspace/system/MEMORY.md` には業務の進め方、用語、背景知識、個別の好みを書けます。これも manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。
 - `/workspace/system/AGENDA_TEMPLATE.md` に agenda の既定構成を書いておくと、Notion agenda 作成・更新に関係する manager/system turn だけに注入されます。
@@ -151,7 +151,7 @@ Compose で起動します。
 docker compose up -d --build
 ```
 
-この image は `linear-cli v2.8.0` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append-only の追記、archive/trash をサポートします。
+この image は `linear-cli v2.8.0` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。
 
 ログ確認:
 

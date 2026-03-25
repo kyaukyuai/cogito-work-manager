@@ -37,6 +37,7 @@ import {
 import type {
   FollowupLedgerEntry,
   ManagerPolicy,
+  NotionManagedPageEntry,
 } from "../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import {
@@ -224,7 +225,11 @@ const updateNotionPageProposalSchema = proposalBaseSchema.extend({
   title: optionalStringSchema,
   summary: optionalStringSchema,
   sections: z.array(notionAgendaSectionSchema).max(8).optional(),
-  appendMode: z.literal("append"),
+  mode: z.enum(["append", "replace_section"]).optional(),
+  appendMode: z.literal("append").optional(),
+  sectionHeading: optionalStringSchema,
+  paragraph: optionalStringSchema,
+  bullets: z.array(z.string().trim().min(1)).max(20).optional(),
 });
 
 const archiveNotionPageProposalSchema = proposalBaseSchema.extend({
@@ -439,7 +444,7 @@ export interface ManagerCommitResult {
 
 export interface CommitManagerCommandArgs {
   config: AppConfig;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "personalization" | "workgraph">;
+  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "personalization" | "notionPages" | "workgraph">;
   proposals: ManagerCommandProposal[];
   message: ManagerCommitMessageContext | ManagerCommitSystemContext;
   now: Date;
@@ -452,6 +457,45 @@ export interface CommitManagerCommandArgs {
     commitSummary?: string;
     executedAt?: string;
   }>;
+}
+
+function resolveNotionUpdateMode(
+  proposal: z.infer<typeof updateNotionPageProposalSchema>,
+): "append" | "replace_section" {
+  return proposal.mode ?? (proposal.appendMode ? "append" : "append");
+}
+
+function validateUpdateNotionPageProposal(
+  proposal: z.infer<typeof updateNotionPageProposalSchema>,
+): string | undefined {
+  const mode = resolveNotionUpdateMode(proposal);
+  if (mode === "append") {
+    if (!proposal.title && !proposal.summary && (!proposal.sections || proposal.sections.length === 0)) {
+      return "Notion page の更新内容が不足しています。title か追記内容を明示してください。";
+    }
+    return undefined;
+  }
+
+  if (!proposal.sectionHeading) {
+    return "replace_section では sectionHeading が必要です。";
+  }
+  if (!proposal.paragraph && (!proposal.bullets || proposal.bullets.length === 0)) {
+    return "Notion section の更新内容が不足しています。paragraph か bullets を明示してください。";
+  }
+  if (proposal.summary || (proposal.sections && proposal.sections.length > 0)) {
+    return "replace_section では summary や sections は使えません。sectionHeading と paragraph/bullets を使ってください。";
+  }
+  return undefined;
+}
+
+function upsertManagedNotionPage(
+  pages: NotionManagedPageEntry[],
+  entry: NotionManagedPageEntry,
+): NotionManagedPageEntry[] {
+  const nextPages = pages.filter((page) => page.pageId !== entry.pageId);
+  nextPages.push(entry);
+  nextPages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return nextPages;
 }
 
 function normalizeTitle(title: string | undefined): string {
@@ -1862,6 +1906,16 @@ async function commitCreateNotionAgendaProposal(
     buildNotionEnv(args.config),
   );
 
+  const managedPages = await args.repositories.notionPages.load();
+  await args.repositories.notionPages.save(upsertManagedNotionPage(managedPages, {
+    pageId: page.id,
+    pageKind: "agenda",
+    title: page.title ?? proposal.title,
+    url: page.url ?? undefined,
+    createdAt: buildOccurredAt(args.now),
+    managedBy: "cogito",
+  }));
+
   const linkedTitle = page.url
     ? `<${page.url}|${page.title ?? proposal.title}>`
     : (page.title ?? proposal.title);
@@ -1877,28 +1931,63 @@ async function commitUpdateNotionPageProposal(
   args: CommitManagerCommandArgs,
   proposal: z.infer<typeof updateNotionPageProposalSchema>,
 ): Promise<ManagerCommittedCommand | ManagerProposalRejection> {
+  const mode = resolveNotionUpdateMode(proposal);
   if (!args.config.notionApiToken?.trim()) {
     return {
       proposal,
       reason: "Notion page の更新には NOTION_API_TOKEN の設定が必要です。",
     };
   }
-  if (!proposal.title && !proposal.summary && (!proposal.sections || proposal.sections.length === 0)) {
+  const validationError = validateUpdateNotionPageProposal(proposal);
+  if (validationError) {
     return {
       proposal,
-      reason: "Notion page の更新内容が不足しています。title か追記内容を明示してください。",
+      reason: validationError,
     };
   }
 
-  const page = await updateNotionPage(
-    {
-      pageId: proposal.pageId,
-      title: proposal.title,
-      summary: proposal.summary,
-      sections: proposal.sections,
-    },
-    buildNotionEnv(args.config),
-  );
+  const managedPages = await args.repositories.notionPages.load();
+  if (mode === "replace_section" && !managedPages.some((page) => page.pageId === proposal.pageId)) {
+    return {
+      proposal,
+      reason: "replace_section で更新できるのはコギト管理ページのみです。対象 page は notion-pages.json に登録されていません。",
+    };
+  }
+
+  let page;
+  try {
+    page = await updateNotionPage(
+      {
+        pageId: proposal.pageId,
+        mode,
+        title: proposal.title,
+        summary: proposal.summary,
+        sections: proposal.sections,
+        sectionHeading: proposal.sectionHeading,
+        paragraph: proposal.paragraph,
+        bullets: proposal.bullets,
+      },
+      buildNotionEnv(args.config),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (mode === "replace_section" && message.toLowerCase().includes("notion section")) {
+      return {
+        proposal,
+        reason: message,
+      };
+    }
+    throw error;
+  }
+
+  const existingManagedPage = managedPages.find((managedPage) => managedPage.pageId === page.id);
+  if (existingManagedPage) {
+    await args.repositories.notionPages.save(upsertManagedNotionPage(managedPages, {
+      ...existingManagedPage,
+      title: page.title ?? existingManagedPage.title,
+      url: page.url ?? existingManagedPage.url,
+    }));
+  }
 
   const linkedTitle = page.url
     ? `<${page.url}|${page.title ?? proposal.title ?? proposal.pageId}>`
@@ -1907,7 +1996,9 @@ async function commitUpdateNotionPageProposal(
   return {
     commandType: proposal.commandType,
     issueIds: [],
-    summary: `Notion page updated: ${linkedTitle}`,
+    summary: mode === "replace_section"
+      ? `Notion section updated: ${linkedTitle}`
+      : `Notion page updated: ${linkedTitle}`,
   };
 }
 

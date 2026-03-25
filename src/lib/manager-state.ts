@@ -6,6 +6,7 @@ import {
   DEFAULT_POLICY,
   type FollowupLedgerEntry,
   type ManagerPolicy,
+  type NotionManagedPageEntry,
   type OwnerMap,
   type OwnerMapEntry,
   type PersonalizationLedgerEntry,
@@ -21,6 +22,7 @@ import { syncBuiltInReviewJobs } from "./scheduler-management.js";
 export type {
   FollowupLedgerEntry,
   ManagerPolicy,
+  NotionManagedPageEntry,
   OwnerMap,
   OwnerMapEntry,
   PlanningLedgerEntry,
@@ -62,6 +64,7 @@ export async function ensureManagerStateFiles(paths: SystemPaths): Promise<void>
   await ensureJsonFile(paths.followupsFile, []);
   await ensureJsonFile(paths.planningLedgerFile, []);
   await ensureJsonFile(paths.personalizationLedgerFile, []);
+  await ensureJsonFile(paths.notionPagesFile, []);
   await ensureJsonFile(paths.webhookDeliveriesFile, []);
   await ensureTextFile(paths.workgraphEventsFile, "");
   await ensureJsonFile(paths.workgraphSnapshotFile, EMPTY_WORKGRAPH_SNAPSHOT);
@@ -118,4 +121,12 @@ export async function loadPersonalizationLedger(paths: SystemPaths): Promise<Per
 
 export async function savePersonalizationLedger(paths: SystemPaths, ledger: PersonalizationLedgerEntry[]): Promise<void> {
   await createFileBackedManagerRepositories(paths).personalization.save(ledger);
+}
+
+export async function loadManagedNotionPages(paths: SystemPaths): Promise<NotionManagedPageEntry[]> {
+  return createFileBackedManagerRepositories(paths).notionPages.load();
+}
+
+export async function saveManagedNotionPages(paths: SystemPaths, pages: NotionManagedPageEntry[]): Promise<void> {
+  await createFileBackedManagerRepositories(paths).notionPages.save(pages);
 }

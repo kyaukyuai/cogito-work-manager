@@ -116,6 +116,17 @@ export const webhookDeliveryEntrySchema = z.object({
 
 export const webhookDeliveriesSchema = z.array(webhookDeliveryEntrySchema);
 
+export const notionManagedPageEntrySchema = z.object({
+  pageId: z.string().min(1),
+  pageKind: z.string().min(1),
+  title: z.string().min(1).optional(),
+  url: z.string().min(1).optional(),
+  createdAt: z.string().datetime(),
+  managedBy: z.literal("cogito"),
+});
+
+export const notionManagedPagesSchema = z.array(notionManagedPageEntrySchema);
+
 export const personalizationKindSchema = z.enum(["operating_rule", "preference_or_fact"]);
 export const personalizationSourceSchema = z.enum(["explicit", "inferred"]);
 export const personalizationStatusSchema = z.enum(["candidate", "promoted", "rejected", "superseded"]);
@@ -181,6 +192,7 @@ export type OwnerMapEntry = z.infer<typeof ownerMapEntrySchema>;
 export type FollowupLedgerEntry = z.infer<typeof followupLedgerEntrySchema>;
 export type PlanningLedgerEntry = z.infer<typeof planningLedgerEntrySchema>;
 export type WebhookDeliveryEntry = z.infer<typeof webhookDeliveryEntrySchema>;
+export type NotionManagedPageEntry = z.infer<typeof notionManagedPageEntrySchema>;
 export type PersonalizationLedgerEntry = z.infer<typeof personalizationLedgerEntrySchema>;
 
 export const DEFAULT_POLICY: ManagerPolicy = {

@@ -4535,8 +4535,8 @@ describe("handleManagerMessage clarification flow", () => {
         {
           commandType: "update_notion_page",
           pageId: "notion-page-1",
+          mode: "append",
           summary: "プロジェクトの進め方を追記しました。",
-          appendMode: "append",
           reasonSummary: "直前の Notion ページを更新する依頼です。",
         },
       ],
@@ -4567,6 +4567,7 @@ describe("handleManagerMessage clarification flow", () => {
     expect(notionMocks.updateNotionPage).toHaveBeenCalledWith(
       expect.objectContaining({
         pageId: "notion-page-1",
+        mode: "append",
         summary: "プロジェクトの進め方を追記しました。",
       }),
       expect.any(Object),

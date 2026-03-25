@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAppendNotionBlockChildrenArgs,
   buildAppendNotionPageBlocksArgs,
+  buildArchiveNotionBlockArgs,
   buildArchiveNotionPageArgs,
   buildCreateNotionAgendaArgs,
   buildGetNotionDatabaseArgs,
@@ -12,6 +14,7 @@ import {
   buildSearchNotionDatabasesArgs,
   buildSearchNotionArgs,
   buildUpdateNotionPageArgs,
+  planNotionSectionReplacement,
 } from "../src/lib/notion.js";
 
 describe("notion command builders", () => {
@@ -373,6 +376,125 @@ describe("notion command builders", () => {
     ]);
   });
 
+  it("builds append args for block children after a target block", () => {
+    const args = buildAppendNotionBlockChildrenArgs(
+      "page-1234",
+      [
+        {
+          object: "block",
+          type: "paragraph",
+          paragraph: {
+            rich_text: [
+              {
+                type: "text",
+                text: {
+                  content: "更新後の段落です。",
+                },
+              },
+            ],
+          },
+        },
+      ],
+      "heading-2",
+    );
+
+    expect(args).toEqual([
+      "api",
+      "/v1/blocks/page-1234/children",
+      "--method",
+      "PATCH",
+      "--data",
+      JSON.stringify({
+        children: [
+          {
+            object: "block",
+            type: "paragraph",
+            paragraph: {
+              rich_text: [
+                {
+                  type: "text",
+                  text: {
+                    content: "更新後の段落です。",
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        after: "heading-2",
+      }),
+    ]);
+  });
+
+  it("builds archive args for a Notion block", () => {
+    expect(buildArchiveNotionBlockArgs("block-1234")).toEqual([
+      "api",
+      "/v1/blocks/block-1234",
+      "--method",
+      "PATCH",
+      "--data",
+      JSON.stringify({ archived: true }),
+    ]);
+  });
+
+  it("plans a top-level heading_2 section replacement", () => {
+    const plan = planNotionSectionReplacement([
+      {
+        id: "heading-purpose",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [{ plain_text: "目的" }],
+        },
+      },
+      {
+        id: "purpose-body",
+        type: "paragraph",
+        paragraph: {
+          rich_text: [{ plain_text: "背景" }],
+        },
+      },
+      {
+        id: "heading-agenda",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [{ plain_text: "議題" }],
+        },
+      },
+      {
+        id: "agenda-body",
+        type: "bulleted_list_item",
+        bulleted_list_item: {
+          rich_text: [{ plain_text: "確認事項" }],
+        },
+      },
+      {
+        id: "heading-next",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [{ plain_text: "次のアクション" }],
+        },
+      },
+    ], "議題");
+
+    expect(plan).toEqual({
+      headingBlockId: "heading-agenda",
+      archivedBlockIds: ["agenda-body"],
+      availableHeadings: ["目的", "議題", "次のアクション"],
+    });
+  });
+
+  it("rejects a missing heading_2 section with available candidates", () => {
+    expect(() => planNotionSectionReplacement([
+      {
+        id: "heading-purpose",
+        type: "heading_2",
+        heading_2: {
+          rich_text: [{ plain_text: "目的" }],
+        },
+      },
+    ], "議題")).toThrow('Available headings: 目的');
+  });
+
   it("builds archive args for a Notion page", () => {
     expect(buildArchiveNotionPageArgs("page-1234")).toEqual([
       "api",
@@ -405,6 +527,8 @@ describe("notion command builders", () => {
     expect(() => buildCreateNotionAgendaArgs({ title: "アジェンダ", parentPageId: "   " })).toThrow("Notion agenda parent page ID is required");
     expect(() => buildUpdateNotionPageArgs({ pageId: "   ", title: "更新" })).toThrow("Notion page ID is required");
     expect(() => buildAppendNotionPageBlocksArgs({ pageId: "page-1" })).toThrow("Notion page append content is required");
+    expect(() => buildAppendNotionBlockChildrenArgs("   ", [])).toThrow("Notion block ID is required");
+    expect(() => buildArchiveNotionBlockArgs("   ")).toThrow("Notion block ID is required");
     expect(() => buildArchiveNotionPageArgs("   ")).toThrow("Notion page ID is required");
   });
 });

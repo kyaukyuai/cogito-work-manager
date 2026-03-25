@@ -11,6 +11,7 @@ export interface SystemPaths {
   workspaceAgentsFile: string;
   memoryFile: string;
   agendaTemplateFile: string;
+  notionPagesFile: string;
   policyFile: string;
   ownerMapFile: string;
   followupsFile: string;
@@ -114,6 +115,7 @@ export function buildSystemPaths(workspaceDir: string): SystemPaths {
     workspaceAgentsFile: join(rootDir, "AGENTS.md"),
     memoryFile: join(rootDir, "MEMORY.md"),
     agendaTemplateFile: join(rootDir, "AGENDA_TEMPLATE.md"),
+    notionPagesFile: join(rootDir, "notion-pages.json"),
     policyFile: join(rootDir, "policy.json"),
     ownerMapFile: join(rootDir, "owner-map.json"),
     followupsFile: join(rootDir, "followups.json"),
@@ -210,6 +212,16 @@ export async function ensureSystemWorkspace(paths: SystemPaths): Promise<void> {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       await writeFile(paths.agendaTemplateFile, "\n", "utf8");
+    } else {
+      throw error;
+    }
+  }
+
+  try {
+    await stat(paths.notionPagesFile);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await writeFile(paths.notionPagesFile, "[]\n", "utf8");
     } else {
       throw error;
     }

@@ -92,7 +92,7 @@ Optional:
 
 この bot は `linear-cli v2.8.0` 以上を前提にしています。実行時の Linear 取得・更新は `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json` を使います。
 
-`NOTION_API_TOKEN` を設定すると、bundled `ntn v0.4.0` を使って Notion を参照できます。現状のスコープでは page search、page facts、page content 抜粋、database search、database query の読み出しに加えて、`NOTION_AGENDA_PARENT_PAGE_ID` を設定すると指定 parent page 配下に agenda page を作成できます。また、既存 page に対しては title 更新と append-only の追記、archive/trash までサポートします。database row の更新・削除はまだ扱いません。Notion は task system of record にはしません。
+`NOTION_API_TOKEN` を設定すると、bundled `ntn v0.4.0` を使って Notion を参照できます。現状のスコープでは page search、page facts、page content 抜粋、database search、database query の読み出しに加えて、`NOTION_AGENDA_PARENT_PAGE_ID` を設定すると指定 parent page 配下に agenda page を作成できます。また、既存 page に対しては title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash までサポートします。管理対象ページは `workspace/system/notion-pages.json` に登録された page です。database row の更新・削除はまだ扱いません。Notion は task system of record にはしません。
 
 `/workspace/system/AGENTS.md`, `/workspace/system/MEMORY.md`, `/workspace/system/AGENDA_TEMPLATE.md` は利用者ごとの runtime customization 用です。`AGENTS.md` には安定した進め方、返信方針、優先順位のような operating rules を置き、`MEMORY.md` には用語、背景知識、個別の好み、人物や案件のメモを置きます。`AGENTS.md` と `MEMORY.md` は manager/system turn に加えて reply/router/intake/research/follow-up planner にも毎 turn 注入されます。ただし schema、supported actions、parser contract、safety rule は上書きしません。`AGENDA_TEMPLATE.md` は Notion アジェンダの既定構成専用で、Notion agenda の作成・更新に関係する manager/system turn にだけ注入されます。repo ルートの `AGENTS.md` は開発ルール用であり、runtime customization には使いません。
 

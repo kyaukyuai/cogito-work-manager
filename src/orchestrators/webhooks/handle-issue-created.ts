@@ -16,7 +16,7 @@ import type { ThreadPaths } from "../../lib/thread-workspace.js";
 export interface HandleIssueCreatedWebhookArgs {
   config: AppConfig;
   paths: ThreadPaths;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "workgraph" | "personalization">;
+  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "workgraph" | "personalization" | "notionPages">;
   policy: ManagerPolicy;
   issue: LinearIssue;
   deliveryId: string;
