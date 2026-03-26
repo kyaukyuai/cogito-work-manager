@@ -147,6 +147,32 @@ describe("handleIssueCreatedWebhook", () => {
     });
   });
 
+  it("keeps webhook notifications mention-free", async () => {
+    mocks.runManagerSystemTurn.mockResolvedValue({
+      reply: "AIC-123 には自動対応しません。チームで確認してください。",
+      toolCalls: [],
+      proposals: [{ commandType: "create_issue_batch" }],
+      invalidProposalCount: 0,
+      intentReport: { intent: "create_work" },
+    });
+    mocks.commitManagerCommandProposals.mockResolvedValue({
+      committed: [
+        {
+          commandType: "create_issue_batch",
+          issueIds: ["AIC-200"],
+          summary: "AIC-200 を作成しました。",
+        },
+      ],
+      rejected: [],
+      replySummaries: ["AIC-200 を作成しました。"],
+    });
+
+    const result = await handleIssueCreatedWebhook(args);
+
+    expect(result.reply).toBeDefined();
+    expect(result.reply).not.toContain("<@");
+  });
+
   it("returns failed when proposals are rejected", async () => {
     mocks.runManagerSystemTurn.mockResolvedValue({
       reply: "確認したいです。",

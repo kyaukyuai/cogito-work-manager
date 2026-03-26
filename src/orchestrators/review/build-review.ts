@@ -136,6 +136,7 @@ export async function buildHeartbeatReviewDecision({
         "気になっている点があります。優先して確認してください。",
         helpers.formatRiskLine(top),
       ].join("\n"),
+      summaryNotification: { kind: "summary", mentionLevel: "none" },
       summaryLines: ["blocked / overdue / due today を優先して確認してください。"],
       issueLines: [{
         issueId: top.issue.identifier,
@@ -188,6 +189,7 @@ export async function buildManagerReview({
       return {
         kind,
         text: "おはようございます。今朝の確認では、今日すぐに共有が必要なリスクはありません。",
+        summaryNotification: { kind: "summary", mentionLevel: "none" },
         summaryLines: ["今日すぐに共有すべきリスクはありません。"],
       };
     }
@@ -223,6 +225,7 @@ export async function buildManagerReview({
     return {
       kind,
       text: lines.join("\n"),
+      summaryNotification: { kind: "summary", mentionLevel: "none" },
       summaryLines: ["今日やるべきこと、期限リスク、stale を優先して見ています。"],
       issueLines: items.map((item) => ({
         issueId: item.issue.identifier,
@@ -244,6 +247,7 @@ export async function buildManagerReview({
       return {
         kind,
         text: "夕方時点では、今日の残タスクに強いリスクは見当たりません。",
+        summaryNotification: { kind: "summary", mentionLevel: "none" },
         summaryLines: ["今日の残タスクで強いリスクは見当たりません。"],
       };
     }
@@ -279,6 +283,7 @@ export async function buildManagerReview({
     return {
       kind,
       text: lines.join("\n"),
+      summaryNotification: { kind: "summary", mentionLevel: "none" },
       summaryLines: ["今日の残タスクでは、blocked・期限超過・本日期限を優先して見ています。"],
       issueLines: items.map((item) => ({
         issueId: item.issue.identifier,
@@ -333,6 +338,7 @@ export async function buildManagerReview({
   return {
     kind,
     text: lines.join("\n"),
+    summaryNotification: { kind: "summary", mentionLevel: "none" },
     summaryLines: [
       `未整備の issue は ${sorted.filter((item) => item.ownerMissing || item.dueMissing).length} 件です。`,
       `長期 stale は ${staleItems.length} 件です。`,

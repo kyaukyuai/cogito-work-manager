@@ -2559,6 +2559,11 @@ async function commitReviewFollowupProposal(
       slackUserId: proposal.slackUserId,
       riskCategory: proposal.riskCategory,
       shouldMention: true,
+      notification: {
+        kind: "followup",
+        mentionLevel: proposal.slackUserId ? "direct" : "none",
+        targetSlackUserId: proposal.slackUserId,
+      },
       source: proposal.source,
     },
     proposal.riskCategory,

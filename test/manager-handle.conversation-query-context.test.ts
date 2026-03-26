@@ -487,7 +487,8 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("kyaukyuai へのメンション付きメッセージ送信");
     expect(result.reply).toContain("限定的に対応しています");
-    expect(result.reply).toContain("owner-map に slackUserId がある相手");
+    expect(result.reply).toContain("明示依頼なら、owner-map に slackUserId がある相手");
+    expect(result.reply).toContain("review / heartbeat の follow-up");
     expect(result.reply).toContain("DM");
     expect(result.diagnostics?.router).toMatchObject({
       source: "fallback",

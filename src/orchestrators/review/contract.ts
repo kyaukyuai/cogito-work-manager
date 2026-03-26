@@ -8,6 +8,13 @@ export interface ManagerFollowupSource {
   sourceMessageTs: string;
 }
 
+export interface ManagerReviewNotification {
+  kind: "summary" | "followup";
+  mentionLevel: "none" | "direct";
+  targetSlackUserId?: string;
+  threadReference?: string;
+}
+
 export interface ManagerReviewFollowup {
   issueId: string;
   issueTitle: string;
@@ -19,6 +26,7 @@ export interface ManagerReviewFollowup {
   slackUserId?: string;
   riskCategory: string;
   shouldMention: boolean;
+  notification: ManagerReviewNotification;
   source?: ManagerFollowupSource;
 }
 
@@ -33,6 +41,7 @@ export interface ManagerReviewIssueLine {
 export interface ManagerReviewResult {
   kind: ManagerReviewKind;
   text: string;
+  summaryNotification: ManagerReviewNotification;
   summaryLines?: string[];
   issueLines?: ManagerReviewIssueLine[];
   followup?: ManagerReviewFollowup;

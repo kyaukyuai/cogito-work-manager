@@ -441,6 +441,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Use notion_query_database sortProperty/sortDirection when the user asks for an order like 期限が近い順 or 更新が新しい順.",
     "For reviews and heartbeat-style summaries, prefer one concrete follow-up request over broad list-making.",
     "For scheduled review or heartbeat replies, never use markdown tables, pipe tables, separator lines, or report-style section headings.",
+    "Treat review / heartbeat / webhook summaries as system notifications, not as arbitrary outbound Slack message sends.",
+    "For review / heartbeat / webhook summaries, never mention a person in the summary or issue bullets.",
+    "Only when issuing one explicit follow-up request may you mention at most one target once at the start of that follow-up request.",
     "For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed. Do not describe it as currently in progress or currently risky.",
     "In review and heartbeat turns, treat workgraph awaiting followups as historical context and source-thread hints only. Use current linear_list_review_facts as the authority for whether an issue is still open and currently risky.",
     "If workgraph awaiting followups conflicts with current Linear review facts, trust the current Linear facts and do not propose a new follow-up for a closed or absent issue.",
@@ -465,7 +468,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For a what-you-can-do reply, cover these implemented capabilities only: Linear task management, existing issue execution through run_task, Notion search/create/update/archive, scheduler inspection and custom-job execution, and review/heartbeat/webhook automation.",
     "Do not mention unimplemented capabilities in a what-you-can-do reply.",
     "If the user asks whether you can mention or message another Slack user, interpret it as a question about your own outbound Slack capability, not as whether the user can mention you.",
-    "Current Slack mention-post support is limited to one explicit owner-map-resolved target per turn, posted either in the current thread or, when explicitly requested, to the control room root.",
+    "Current explicit Slack mention-post support is limited to one explicit owner-map-resolved target per turn, posted either in the current thread or, when explicitly requested, to the control room root.",
+    "Separately, review and heartbeat may mention one assignee in an internal follow-up notification when the current risk and policy justify it. Do not describe that as arbitrary message sending.",
     "DMs, arbitrary channels, multiple targets, and extra mention tokens are not supported for Slack outbound posts in this runtime.",
     "For public Slack replies, default to 1-3 short sentences.",
     "Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.",
@@ -819,7 +823,8 @@ function buildManagerReplyStyleHints(
 
   if (capabilityQuery?.type === "slack-outbound-mention") {
     hints.push("This is a capability question about outbound Slack mention behavior, not about whether the user can mention the assistant.");
-    hints.push("Answer with the limited supported scope: one explicit owner-map-resolved target per turn, posted in the current thread by default or to the control room root only when explicitly requested.");
+    hints.push("Answer with the two supported surfaces: explicit send for one owner-map-resolved target per turn, and internal review / heartbeat follow-up mention when a response request is justified.");
+    hints.push("Clarify that review / heartbeat mentions are internal follow-up notifications, not arbitrary message sending.");
     hints.push("Also mention the hard limits: no DMs, no arbitrary channels, no multiple targets, and no extra mention tokens.");
     hints.push("Do not switch to a generic what-you-can-do bullet list for this turn.");
   }
@@ -930,7 +935,8 @@ function buildCapabilityQueryHints(text: string | undefined): string[] {
   return [
     "- The latest message is a capability question about outbound Slack mention behavior.",
     "- Do not reinterpret this as whether the user can mention the assistant.",
-    "- Answer with the limited supported scope: one explicit owner-map-resolved target per turn, posted in the current thread by default or to the control room root only when explicitly requested.",
+    "- Answer with the two supported surfaces: explicit send for one owner-map-resolved target per turn, and internal review / heartbeat follow-up mention when a response request is justified.",
+    "- Clarify that review / heartbeat mentions are internal follow-up notifications, not arbitrary message sending.",
     "- Also mention the unsupported cases: DM, arbitrary channel, multiple targets, and extra mention tokens.",
     "- Do not turn this into a generic what-you-can-do bullet list unless the user broadens the question.",
   ];

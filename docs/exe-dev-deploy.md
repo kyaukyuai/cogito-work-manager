@@ -284,7 +284,7 @@ docker compose down
 
 `explicit-slack-update` は silent update を許しません。`AGENDA_TEMPLATE.md` と `HEARTBEAT.md` は Slack で明示依頼された全文置換だけを manager commit で反映し、`owner-map.json` は structured proposal + preview/confirm を通して更新します。
 
-Slack への明示投稿も manager commit 経由です。v1 では `owner-map.json` に `slackUserId` がある相手への 1 人向けメンション投稿だけを扱い、送信先は既定で current thread、明示時のみ control room root に限定します。DM、任意 channel、複数 target、追加 mention は扱いません。
+Slack のメンションは 2 系統です。明示投稿は manager commit 経由で、v1 では `owner-map.json` に `slackUserId` がある相手への 1 人向けメンション投稿だけを扱い、送信先は既定で current thread、明示時のみ control room root に限定します。DM、任意 channel、複数 target、追加 mention は扱いません。これとは別に、review / heartbeat の follow-up では必要なときだけ担当者を 1 回だけメンションできますが、これは内部通知用であり任意メッセージ送信ではありません。
 
 `BOT_UID` / `BOT_GID` が正しく設定されていれば、これらの files は host 側 operator が `sudo` なしで編集できる owner に保たれます。
 

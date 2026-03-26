@@ -4,6 +4,7 @@ import type {
   OwnerMap,
 } from "../../state/manager-state-contract.js";
 import type {
+  ManagerReviewNotification,
   ManagerReviewFollowup,
   ManagerReviewIssueLine,
   ManagerReviewResult,
@@ -102,6 +103,27 @@ function shouldMentionReviewFollowup(
     && policy.mentionOnRepingCategories.includes(category);
 }
 
+export function buildSummaryNotification(): ManagerReviewNotification {
+  return {
+    kind: "summary",
+    mentionLevel: "none",
+  };
+}
+
+function buildFollowupNotification(args: {
+  shouldMention: boolean;
+  slackUserId?: string;
+  threadReference?: string;
+}): ManagerReviewNotification {
+  const mentionLevel = args.shouldMention && args.slackUserId ? "direct" : "none";
+  return {
+    kind: "followup",
+    mentionLevel,
+    targetSlackUserId: mentionLevel === "direct" ? args.slackUserId : undefined,
+    threadReference: args.threadReference,
+  };
+}
+
 export function buildReviewFollowup(
   item: RiskAssessment,
   policy: ManagerPolicy,
@@ -116,6 +138,8 @@ export function buildReviewFollowup(
     ?? item.issue.assignee?.displayName
     ?? item.issue.assignee?.name
     ?? undefined;
+  const slackUserId = resolveSlackUserIdForReview(ownerMap, assigneeDisplayName, deps);
+  const shouldMention = shouldMentionReviewFollowup(policy, riskCategory, existingFollowup);
   return {
     issueId: item.issue.identifier,
     issueTitle: item.issue.title,
@@ -125,9 +149,13 @@ export function buildReviewFollowup(
     acceptableAnswerHint: existingFollowup?.acceptableAnswerHint
       ?? acceptableAnswerHintForRequestKind(requestKind),
     assigneeDisplayName,
-    slackUserId: resolveSlackUserIdForReview(ownerMap, assigneeDisplayName, deps),
+    slackUserId,
     riskCategory,
-    shouldMention: shouldMentionReviewFollowup(policy, riskCategory, existingFollowup),
+    shouldMention,
+    notification: buildFollowupNotification({
+      shouldMention,
+      slackUserId,
+    }),
     source: existingFollowup?.sourceChannelId && existingFollowup?.sourceThreadTs && existingFollowup?.sourceMessageTs
       ? {
           channelId: existingFollowup.sourceChannelId,
@@ -314,8 +342,8 @@ export function formatIssueLineForSlack(issue: ManagerReviewIssueLine): string {
 }
 
 function formatSlackAssigneeLabel(followup: ManagerReviewFollowup): string | undefined {
-  if (followup.shouldMention && followup.slackUserId) {
-    return `<@${followup.slackUserId}>`;
+  if (followup.notification.mentionLevel === "direct" && followup.notification.targetSlackUserId) {
+    return `<@${followup.notification.targetSlackUserId}>`;
   }
   if (followup.assigneeDisplayName) {
     return `${followup.assigneeDisplayName} さん`;
@@ -330,6 +358,7 @@ export function formatControlRoomFollowupForSlack(
   const answerFormat = followup.acceptableAnswerHint ?? acceptableAnswerHintForRequestKind(followup.requestKind);
   const issueLabel = followup.issueUrl ? `<${followup.issueUrl}|${followup.issueId}>` : followup.issueId;
   const assignee = formatSlackAssigneeLabel(followup);
+  const resolvedThreadReference = followup.notification.threadReference ?? threadReference;
   const requestSentence = assignee
     ? `${assignee}、${issueLabel} について ${followup.request}`
     : `${issueLabel} について ${followup.request}`;
@@ -337,7 +366,7 @@ export function formatControlRoomFollowupForSlack(
     "気になっている点があります。",
     requestSentence,
     `返答フォーマットは ${answerFormat} です。`,
-    `戻る thread は ${formatSlackThreadReference(threadReference)} です。`,
+    `戻る thread は ${formatSlackThreadReference(resolvedThreadReference)} です。`,
   ]) ?? "";
 }
 
@@ -364,7 +393,10 @@ export function formatControlRoomReviewForSlack(
     (result.issueLines ?? []).slice(0, 3).map((issueLine) => formatIssueLineForSlack(issueLine)),
   );
   const followupBlock = result.followup
-    ? formatControlRoomFollowupForSlack(result.followup, threadReference ?? "source thread unavailable")
+    ? formatControlRoomFollowupForSlack(
+      result.followup,
+      result.followup.notification.threadReference ?? threadReference ?? "source thread unavailable",
+    )
     : undefined;
 
   if (!summaryBlock && !issueBlock && !followupBlock) {

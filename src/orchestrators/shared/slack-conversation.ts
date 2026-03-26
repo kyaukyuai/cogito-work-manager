@@ -40,8 +40,8 @@ export function detectSlackCapabilityQuery(text: string): SlackCapabilityQueryFa
     targetLabel: cleanCapabilityTargetLabel(mentionMatch.groups?.target),
     supported: true,
     requestedOperationLabel: "任意ユーザーへのメンション付きメッセージ送信",
-    supportSummary: "owner-map に slackUserId がある相手に対して、明示依頼された 1 件のメンション投稿だけ対応しています。",
-    limitationSummary: "送信先は既定でこの thread、明示時のみ control room root です。DM、任意 channel、複数 target、追加 mention はできません。",
+    supportSummary: "明示依頼なら、owner-map に slackUserId がある相手へ 1 件だけメンション投稿できます。",
+    limitationSummary: "別系統として review / heartbeat の follow-up では必要なときだけ担当者をメンションしますが、これは内部通知用です。任意メッセージ送信として使えるのは既定でこの thread、明示時のみ control room root です。DM、任意 channel、複数 target、追加 mention はできません。",
   };
 }
 

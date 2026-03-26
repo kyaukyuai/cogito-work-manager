@@ -245,6 +245,11 @@ describe("manager helpers", () => {
       slackUserId: "U123",
       riskCategory: "blocked",
       shouldMention: true,
+      notification: {
+        kind: "followup",
+        mentionLevel: "direct",
+        targetSlackUserId: "U123",
+      },
     }, "https://slack.example/thread")).toContain("<@U123>");
 
     expect(formatControlRoomFollowupForSlack({
@@ -257,6 +262,26 @@ describe("manager helpers", () => {
       assigneeDisplayName: "y.kakui",
       riskCategory: "due_missing",
       shouldMention: false,
+      notification: {
+        kind: "followup",
+        mentionLevel: "none",
+      },
+    }, "https://slack.example/thread")).not.toContain("<@");
+
+    expect(formatControlRoomFollowupForSlack({
+      issueId: "AIC-3",
+      issueTitle: "stale task",
+      issueUrl: "https://linear.app/kyaukyuai/issue/AIC-3",
+      request: "最新状況と次アクション、次回更新予定を共有してください。",
+      requestKind: "status",
+      acceptableAnswerHint: "進捗 / 次アクション / 次回更新予定",
+      assigneeDisplayName: "y.kakui",
+      riskCategory: "stale",
+      shouldMention: true,
+      notification: {
+        kind: "followup",
+        mentionLevel: "none",
+      },
     }, "https://slack.example/thread")).not.toContain("<@");
   });
 
@@ -284,6 +309,12 @@ describe("manager helpers", () => {
       { normalizeText: (text) => text.toLowerCase() },
     );
     expect(initial.shouldMention).toBe(false);
+    expect(initial.notification).toEqual({
+      kind: "followup",
+      mentionLevel: "none",
+      targetSlackUserId: undefined,
+      threadReference: undefined,
+    });
 
     const rePing = buildReviewFollowup(
       baseItem,
@@ -300,6 +331,12 @@ describe("manager helpers", () => {
     );
     expect(rePing.shouldMention).toBe(true);
     expect(rePing.slackUserId).toBeUndefined();
+    expect(rePing.notification).toEqual({
+      kind: "followup",
+      mentionLevel: "none",
+      targetSlackUserId: undefined,
+      threadReference: undefined,
+    });
 
     const dueSoon = buildReviewFollowup(
       {
@@ -318,12 +355,22 @@ describe("manager helpers", () => {
       { normalizeText: (text) => text.toLowerCase() },
     );
     expect(dueSoon.shouldMention).toBe(true);
+    expect(dueSoon.notification).toEqual({
+      kind: "followup",
+      mentionLevel: "none",
+      targetSlackUserId: undefined,
+      threadReference: undefined,
+    });
   });
 
   it("formats control room reviews with a heading, at most three issue lines, and one follow-up", () => {
     const review = formatControlRoomReviewForSlack({
       kind: "morning-review",
       text: "fallback text",
+      summaryNotification: {
+        kind: "summary",
+        mentionLevel: "none",
+      },
       summaryLines: ["今日やるべきこと", "期限リスク", "stale"],
       issueLines: [
         { issueId: "AIC-1", issueUrl: "https://linear.app/kyaukyuai/issue/AIC-1", title: "task 1", assigneeDisplayName: "a", riskSummary: "overdue" },
@@ -342,6 +389,11 @@ describe("manager helpers", () => {
         slackUserId: "U456",
         riskCategory: "blocked",
         shouldMention: true,
+        notification: {
+          kind: "followup",
+          mentionLevel: "direct",
+          targetSlackUserId: "U456",
+        },
       },
     }, "https://slack.example/thread");
 

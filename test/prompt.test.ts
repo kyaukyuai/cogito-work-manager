@@ -179,6 +179,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Use notion_query_database sortProperty/sortDirection when the user asks for an order like 期限が近い順 or 更新が新しい順.");
     expect(prompt).toContain("Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.");
     expect(prompt).toContain("For scheduled review or heartbeat replies, never use markdown tables, pipe tables, separator lines, or report-style section headings.");
+    expect(prompt).toContain("Treat review / heartbeat / webhook summaries as system notifications, not as arbitrary outbound Slack message sends.");
+    expect(prompt).toContain("For review / heartbeat / webhook summaries, never mention a person in the summary or issue bullets.");
+    expect(prompt).toContain("Only when issuing one explicit follow-up request may you mention at most one target once at the start of that follow-up request.");
     expect(prompt).toContain("For review and heartbeat reasoning, treat any issue with isOpen=false or completedAt set as completed.");
     expect(prompt).toContain("In review and heartbeat turns, treat workgraph awaiting followups as historical context and source-thread hints only.");
     expect(prompt).toContain("If workgraph awaiting followups conflicts with current Linear review facts, trust the current Linear facts");
@@ -192,7 +195,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For a what-you-can-do reply, cover these implemented capabilities only: Linear task management, existing issue execution through run_task, Notion search/create/update/archive, scheduler inspection and custom-job execution, and review/heartbeat/webhook automation.");
     expect(prompt).toContain("Do not mention unimplemented capabilities in a what-you-can-do reply.");
     expect(prompt).toContain("If the user asks whether you can mention or message another Slack user, interpret it as a question about your own outbound Slack capability");
-    expect(prompt).toContain("Current Slack mention-post support is limited to one explicit owner-map-resolved target per turn");
+    expect(prompt).toContain("Current explicit Slack mention-post support is limited to one explicit owner-map-resolved target per turn");
+    expect(prompt).toContain("review and heartbeat may mention one assignee in an internal follow-up notification");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
 
@@ -350,7 +354,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Capability query hints:");
     expect(prompt).toContain("The latest message is a capability question about outbound Slack mention behavior.");
     expect(prompt).toContain("Do not reinterpret this as whether the user can mention the assistant.");
-    expect(prompt).toContain("one explicit owner-map-resolved target per turn");
+    expect(prompt).toContain("two supported surfaces");
+    expect(prompt).toContain("review / heartbeat follow-up mention");
     expect(prompt).toContain("DM, arbitrary channel, multiple targets, and extra mention tokens");
     expect(prompt).toContain("Do not turn this into a generic what-you-can-do bullet list unless the user broadens the question.");
   });
