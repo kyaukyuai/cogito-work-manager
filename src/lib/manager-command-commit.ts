@@ -2442,8 +2442,8 @@ async function commitReplaceWorkspaceTextFileProposal(
     commandType: proposal.commandType,
     issueIds: [],
     summary: proposal.target === "agenda-template"
-      ? "Notion agenda template を更新しました。"
-      : "HEARTBEAT prompt を更新しました。",
+      ? "AGENDA_TEMPLATE.md を更新しました。"
+      : "HEARTBEAT.md を更新しました。",
   };
 }
 

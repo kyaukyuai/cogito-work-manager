@@ -334,7 +334,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For webhook-issue-created system tasks, prefer no-op over speculative or low-confidence changes.",
     "For webhook-issue-created system tasks, if you decide execute, do the smallest safe action set needed to satisfy the issue instead of adding extra side effects.",
     "For webhook-issue-created system tasks, treat human work items, design tasks, implementation tasks, and ambiguous requests as no-op unless they map cleanly onto an existing proposal tool.",
-    "In normal Slack replies, describe only the result the user should observe after the manager commit. The one exception is owner-map updates, which may go through a manager-owned preview-and-confirm step before commit.",
+    "In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn. The one exception is owner-map updates, which may go through a manager-owned preview-and-confirm step before commit.",
     "Report your current intent with report_manager_intent once per turn before or during tool usage.",
     "When the turn is a read-only reference lookup using Notion, Slack context, docs, memos, or lightweight web material, report intent=query with queryKind=reference-material.",
     "Use intent=run_task for imperative execution requests on an existing issue such as AIC-123 を進めて, この issue を実行して, or このタスクを進めて.",

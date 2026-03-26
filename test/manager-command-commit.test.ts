@@ -2078,7 +2078,7 @@ describe("manager command commit", () => {
     expect(result.committed).toEqual([
       expect.objectContaining({
         commandType: "replace_workspace_text_file",
-        summary: "Notion agenda template を更新しました。",
+        summary: "AGENDA_TEMPLATE.md を更新しました。",
       }),
     ]);
     await expect(readFile(buildSystemPaths(workspaceDir).agendaTemplateFile, "utf8")).resolves.toBe("## 目的\n- 方針確認\n## 議題\n- 期限整理\n");
@@ -2118,7 +2118,7 @@ describe("manager command commit", () => {
     expect(result.committed).toEqual([
       expect.objectContaining({
         commandType: "replace_workspace_text_file",
-        summary: "HEARTBEAT prompt を更新しました。",
+        summary: "HEARTBEAT.md を更新しました。",
       }),
     ]);
     await expect(readFile(buildSystemPaths(workspaceDir).heartbeatPromptFile, "utf8")).resolves.toBe("現在の blocked issue だけ短く知らせてください。\n");

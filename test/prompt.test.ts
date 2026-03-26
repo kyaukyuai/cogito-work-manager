@@ -125,7 +125,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");
     expect(prompt).toContain("If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn");
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
-    expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit.");
+    expect(prompt).toContain("In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn.");
     expect(prompt).toContain("When research is required, save detailed findings to Linear and return only a short summary and next action to Slack.");
     expect(prompt).toContain("If Notion tools are available, use Notion as reference material for specs, notes, and operating context.");
     expect(prompt).toContain("When the user explicitly asks to create an agenda in Notion, use propose_create_notion_agenda instead of creating a Linear issue.");

@@ -574,7 +574,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
 
   it("commits agenda template replacements immediately from Slack", async () => {
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
-      reply: "Notion agenda template を更新します。",
+      reply: "Notion 上の既存アジェンダ構成をもとに、AGENDA_TEMPLATE.md を更新するよう提案しました。",
       toolCalls: [],
       proposals: [
         {
@@ -606,7 +606,8 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("Notion agenda template を更新しました。");
+    expect(result.reply).toBe("AGENDA_TEMPLATE.md を更新しました。");
+    expect(result.reply).not.toContain("提案しました");
     await expect(readFile(systemPaths.agendaTemplateFile, "utf8")).resolves.toBe("## 目的\n- 共有\n## 議題\n- 次の判断\n");
   });
 
@@ -667,7 +668,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
       ts: "123.456",
     });
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
-      reply: "投稿します。",
+      reply: "kyaukyuai さんへのメンションを現在のスレッドに送る準備ができました。メッセージ内容は「こんにちは」です。",
       toolCalls: [],
       proposals: [
         {
@@ -703,7 +704,8 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("この thread に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(result.reply).toBe("この thread に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(result.reply).not.toContain("準備ができました");
     expect(postSlackMessage).toHaveBeenCalledWith({
       channel: "C0ALAMDRB9V",
       threadTs: "thread-slack-post-current",
@@ -718,7 +720,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
       ts: "123.457",
     });
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
-      reply: "control room に投稿します。",
+      reply: "コントロールルームのルートへ kyaukyuai さん宛てに「control room で確認お願いします」を送る準備ができました。",
       toolCalls: [],
       proposals: [
         {
@@ -754,7 +756,8 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("control room に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(result.reply).toBe("control room に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(result.reply).not.toContain("準備ができました");
     expect(postSlackMessage).toHaveBeenCalledWith({
       channel: "C0ALAMDRB9V",
       threadTs: undefined,

@@ -347,6 +347,12 @@ function isMutableIntent(
     || intent === "post_slack_message";
 }
 
+function shouldPreferCommittedPublicReply(
+  intent: ManagerIntentReport["intent"] | undefined,
+): boolean {
+  return intent === "update_workspace_config" || intent === "post_slack_message";
+}
+
 function originalMessageForPendingClarification(
   pendingClarification: PendingManagerClarification | undefined,
   decision: PendingClarificationDecisionReport["decision"] | undefined,
@@ -443,6 +449,10 @@ function shouldSuppressCommitSummary(agentReply: string, summary: string): boole
     return true;
   }
   return looksLikeFollowupSummary(summary) && agentAlreadyCoversFollowup(agentReply, summary);
+}
+
+function looksLikePreCommitAgentReply(reply: string): boolean {
+  return /(提案しました|提案します|変更案です|更新します|作成します|投稿します|送信します|反映します|準備ができました|送る準備ができました)/.test(reply);
 }
 
 interface ThreadQueryContinuationSnapshotInput {
@@ -674,12 +684,24 @@ function mergeAgentReplyWithCommit(args: {
   agentReply: string;
   commitSummaries: string[];
   commitRejections: string[];
+  preferCommittedPublicReply?: boolean;
 }): string {
   const paragraphs: string[] = [];
   const normalizedAgentReply = args.agentReply.trim();
   const visibleCommitSummaries = normalizedAgentReply
     ? args.commitSummaries.filter((summary) => !shouldSuppressCommitSummary(normalizedAgentReply, summary))
     : args.commitSummaries;
+  const shouldUseCommitSummaryAsPrimaryReply = args.preferCommittedPublicReply
+    && visibleCommitSummaries.length > 0
+    && (!normalizedAgentReply || looksLikePreCommitAgentReply(normalizedAgentReply));
+  if (shouldUseCommitSummaryAsPrimaryReply) {
+    paragraphs.push(...visibleCommitSummaries);
+    const rejectionReply = buildCommitRejectionReply(args.commitRejections);
+    if (rejectionReply) {
+      paragraphs.push(rejectionReply);
+    }
+    return composeSlackReply(paragraphs);
+  }
   if (normalizedAgentReply) {
     paragraphs.push(normalizedAgentReply);
   }
@@ -1371,6 +1393,7 @@ export async function handleManagerMessage(
           agentReply: agentTurn.reply,
           commitSummaries: commitResult.replySummaries,
           commitRejections: commitResult.rejected.map((entry) => entry.reason),
+          preferCommittedPublicReply: shouldPreferCommittedPublicReply(agentIntent),
         });
     const mergedReply = commitResult.pendingConfirmation?.kind === "owner-map"
       ? commitResult.pendingConfirmation.previewReply
