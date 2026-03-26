@@ -50,7 +50,14 @@ import {
 import { handleManagerUpdates } from "../orchestrators/updates/handle-updates.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
-import { composeSlackReply, formatSlackBullets, joinSlackSentences } from "../orchestrators/shared/slack-conversation.js";
+import {
+  buildSlackCapabilityReply,
+  composeSlackReply,
+  detectSlackCapabilityQuery,
+  detectSlackOutboundPostRequest,
+  formatSlackBullets,
+  joinSlackSentences,
+} from "../orchestrators/shared/slack-conversation.js";
 import {
   commitManagerCommandProposals,
   type CommitManagerCommandArgs,
@@ -288,7 +295,13 @@ function detectFallbackConversationKind(text: string): "greeting" | "smalltalk" 
   return "other";
 }
 
-function buildFallbackConversationReply(kind: "greeting" | "smalltalk" | "other"): string {
+function buildFallbackConversationReply(
+  kind: "greeting" | "smalltalk" | "other",
+  capabilityQuery?: ReturnType<typeof detectSlackCapabilityQuery>,
+): string {
+  if (capabilityQuery) {
+    return buildSlackCapabilityReply(capabilityQuery);
+  }
   if (kind === "greeting") {
     return "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。";
   }
@@ -320,7 +333,7 @@ function isSchedulerRunRequestText(text: string): boolean {
 
 function isMutableIntent(
   intent: ManagerIntentReport["intent"] | undefined,
-): intent is "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" {
+): intent is "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" | "post_slack_message" {
   return intent === "run_task"
     || intent === "create_work"
     || intent === "create_schedule"
@@ -330,7 +343,8 @@ function isMutableIntent(
     || intent === "update_blocked"
     || intent === "update_schedule"
     || intent === "delete_schedule"
-    || intent === "followup_resolution";
+    || intent === "followup_resolution"
+    || intent === "post_slack_message";
 }
 
 function originalMessageForPendingClarification(
@@ -346,7 +360,7 @@ function originalMessageForPendingClarification(
 
 async function persistPendingManagerClarification(args: {
   paths: ThreadPaths;
-  intent: "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution";
+  intent: "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" | "post_slack_message";
   originalUserMessage: string;
   lastUserMessage: string;
   clarificationReply: string;
@@ -691,6 +705,7 @@ async function buildConversationReply(
 ): Promise<string> {
   const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   await ensureThreadWorkspace(paths);
+  const capabilityQuery = detectSlackCapabilityQuery(message.text);
 
   try {
     const result = await runManagerReplyTurn(config, paths, {
@@ -701,12 +716,13 @@ async function buildConversationReply(
       facts: {
         messageText: message.text,
         conversationKind,
+        capabilityQuery,
       },
       taskKey: `${message.channelId}-${message.rootThreadTs}-conversation-reply`,
     });
     return result.reply;
   } catch {
-    return buildFallbackConversationReply(conversationKind);
+    return buildFallbackConversationReply(conversationKind, capabilityQuery);
   }
 }
 
@@ -732,9 +748,11 @@ function buildSafetyOnlyManagerFallbackReply(
         ? "request"
         : pendingClarification.intent === "create_schedule"
           ? "scheduler"
-        : pendingClarification.intent === "update_progress"
-          ? "progress"
-          : pendingClarification.intent === "update_completed"
+          : pendingClarification.intent === "post_slack_message"
+            ? "request"
+          : pendingClarification.intent === "update_progress"
+            ? "progress"
+            : pendingClarification.intent === "update_completed"
             ? "completed"
             : pendingClarification.intent === "update_blocked"
               ? "blocked"
@@ -765,11 +783,19 @@ function buildSafetyOnlyManagerFallbackReply(
     };
   }
 
+  if (detectSlackOutboundPostRequest(message.text)) {
+    return {
+      action: "request",
+      reply: "いまはメンション投稿の宛先や送信先を安全に確定できないため、owner-map にある相手名と送る文面を 1 文で言い換えてください。control room に送りたい場合はそれも明記してください。",
+    };
+  }
+
   const action = classifyManagerSignal(message.text);
   if (action === "conversation") {
+    const capabilityQuery = detectSlackCapabilityQuery(message.text);
     return {
       action,
-      reply: buildFallbackConversationReply(detectFallbackConversationKind(message.text)),
+      reply: buildFallbackConversationReply(detectFallbackConversationKind(message.text), capabilityQuery),
     };
   }
   if (action === "query") {
@@ -1208,6 +1234,7 @@ export async function handleManagerMessage(
   maybeNow?: Date,
   runtimeActions?: {
     runSchedulerJobNow?: CommitManagerCommandArgs["runSchedulerJobNow"];
+    postSlackMessage?: CommitManagerCommandArgs["postSlackMessage"];
   },
 ): Promise<ManagerHandleResult> {
   const repositories = isManagerRepositories(repositoriesOrNow)
@@ -1268,6 +1295,7 @@ export async function handleManagerMessage(
         env,
         ownerMapConfirmationMode: "confirm",
         runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
+        postSlackMessage: runtimeActions?.postSlackMessage,
       });
       if (confirmCommitResult.committed.length > 0 && confirmCommitResult.rejected.length === 0) {
         await clearPendingManagerConfirmation(paths);
@@ -1327,6 +1355,7 @@ export async function handleManagerMessage(
       policy,
       env,
       runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
+      postSlackMessage: runtimeActions?.postSlackMessage,
     });
     const agentIntent = agentTurn.intentReport?.intent;
     const extractedQuerySnapshot = agentIntent === "query"
@@ -1381,6 +1410,7 @@ export async function handleManagerMessage(
       || agentIntent === "delete_schedule"
       || agentIntent === "followup_resolution"
       || agentIntent === "update_workspace_config"
+      || agentIntent === "post_slack_message"
       || agentIntent === "review"
       || agentIntent === "heartbeat"
       || agentIntent === "scheduler"
@@ -1523,7 +1553,11 @@ export async function handleManagerMessage(
     });
     if (safetyFallback.action !== "conversation") {
       const fallbackIntent = safetyFallback.action === "request"
-        ? (isRunTaskRequestText(message.text) ? "run_task" : "create_work")
+        ? (isRunTaskRequestText(message.text)
+          ? "run_task"
+          : /(?:メンション(?:して|を付けて)|mention(?:して)?).*(?:送って|送信して|投稿して|メッセージ送信して)/i.test(message.text)
+            ? "post_slack_message"
+            : "create_work")
         : safetyFallback.action === "scheduler"
           ? (isSchedulerRunRequestText(message.text) ? "run_schedule" : "create_schedule")
         : safetyFallback.action === "progress"

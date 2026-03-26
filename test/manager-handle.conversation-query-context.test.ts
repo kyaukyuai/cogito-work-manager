@@ -468,6 +468,33 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     expect(result.diagnostics?.router.technicalFailure).toContain("agent failure");
   });
 
+  it("returns a limited-scope reply for Slack mention capability questions in the safety path", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-capability-fallback",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "kyaukyuai にメンションできる？",
+      },
+      new Date("2026-03-26T07:57:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("kyaukyuai へのメンション付きメッセージ送信");
+    expect(result.reply).toContain("限定的に対応しています");
+    expect(result.reply).toContain("owner-map に slackUserId がある相手");
+    expect(result.reply).toContain("DM");
+    expect(result.diagnostics?.router).toMatchObject({
+      source: "fallback",
+      action: "conversation",
+    });
+  });
+
   it("returns a safety-only query reply when the manager agent fails technically", async () => {
     piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
 

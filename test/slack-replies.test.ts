@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { postSlackProcessingNotice, sendSlackReply } from "../src/lib/slack-replies.js";
+import {
+  postSlackMentionMessage,
+  postSlackProcessingNotice,
+  sendSlackReply,
+} from "../src/lib/slack-replies.js";
 
 describe("slack reply helpers", () => {
   it("posts a processing notice in thread", async () => {
@@ -67,6 +71,55 @@ describe("slack reply helpers", () => {
       channel: "C123",
       thread_ts: "111.222",
       text: "AIC-39 を確認してください。",
+      blocks: expect.any(Array),
+    });
+  });
+
+  it("posts a mention message into the current thread", async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ts: "123.999" });
+    const update = vi.fn();
+    const webClient = {
+      chat: { postMessage, update },
+    } as never;
+
+    const result = await postSlackMentionMessage(webClient, {
+      channel: "C123",
+      threadTs: "111.222",
+      mentionSlackUserId: "U999",
+      messageText: "こんにちは",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    expect(result).toEqual({
+      text: "@U999 こんにちは",
+      ts: "123.999",
+    });
+    expect(postMessage).toHaveBeenCalledWith({
+      channel: "C123",
+      thread_ts: "111.222",
+      text: "@U999 こんにちは",
+      blocks: expect.any(Array),
+    });
+  });
+
+  it("posts a root mention message without thread_ts when targeting control-room-root", async () => {
+    const postMessage = vi.fn().mockResolvedValue({ ts: "124.000" });
+    const update = vi.fn();
+    const webClient = {
+      chat: { postMessage, update },
+    } as never;
+
+    await postSlackMentionMessage(webClient, {
+      channel: "C999",
+      mentionSlackUserId: "U999",
+      messageText: "確認お願いします",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      channel: "C999",
+      thread_ts: undefined,
+      text: "@U999 確認お願いします",
       blocks: expect.any(Array),
     });
   });

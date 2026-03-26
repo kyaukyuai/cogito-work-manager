@@ -315,5 +315,6 @@ describe("manager agent tools", () => {
     expect(tools.some((entry) => entry.name === "workspace_get_owner_map")).toBe(true);
     expect(tools.some((entry) => entry.name === "propose_replace_workspace_text_file")).toBe(true);
     expect(tools.some((entry) => entry.name === "propose_update_owner_map")).toBe(true);
+    expect(tools.some((entry) => entry.name === "propose_post_slack_message")).toBe(true);
   });
 });

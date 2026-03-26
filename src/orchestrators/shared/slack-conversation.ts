@@ -1,6 +1,67 @@
 import type { LinearIssue } from "../../lib/linear.js";
 
 type SlackIssueLabel = Pick<LinearIssue, "identifier" | "title"> & { url?: string | null };
+const SLACK_OUTBOUND_MENTION_CAPABILITY_QUERY_PATTERN = /(?:(?<target><@[^>]+>|@?[^\s、,。!?？]+)\s*に\s*)?(?:メンション|mention)(?:[^。\n\r]*?)(?:できる|できます|可能|送れる|送信できる)(?:の)?[？?]*$/i;
+const SLACK_OUTBOUND_POST_REQUEST_SIGNAL_PATTERN = /(?:メンション(?:して|を付けて)|mention(?:して)?).*(?:送って|送信して|投稿して|メッセージ送信して)/i;
+const SLACK_CONTROL_ROOM_PATTERN = /(?:control\s*room|control-room|コントロールルーム)/i;
+
+export interface SlackCapabilityQueryFacts {
+  type: "slack-outbound-mention";
+  targetLabel?: string;
+  supported: true;
+  requestedOperationLabel: string;
+  supportSummary: string;
+  limitationSummary: string;
+}
+
+export interface SlackOutboundPostRequestHint {
+  destination: "current-thread" | "control-room-root";
+}
+
+function cleanCapabilityTargetLabel(value: string | undefined): string | undefined {
+  const normalized = value
+    ?.trim()
+    .replace(/^[「"'`]+|[」"'`]+$/g, "")
+    .trim();
+  return normalized || undefined;
+}
+
+export function detectSlackCapabilityQuery(text: string): SlackCapabilityQueryFacts | undefined {
+  const normalized = text.trim();
+  if (!normalized) return undefined;
+
+  const mentionMatch = normalized.match(SLACK_OUTBOUND_MENTION_CAPABILITY_QUERY_PATTERN);
+  if (!mentionMatch) {
+    return undefined;
+  }
+
+  return {
+    type: "slack-outbound-mention",
+    targetLabel: cleanCapabilityTargetLabel(mentionMatch.groups?.target),
+    supported: true,
+    requestedOperationLabel: "任意ユーザーへのメンション付きメッセージ送信",
+    supportSummary: "owner-map に slackUserId がある相手に対して、明示依頼された 1 件のメンション投稿だけ対応しています。",
+    limitationSummary: "送信先は既定でこの thread、明示時のみ control room root です。DM、任意 channel、複数 target、追加 mention はできません。",
+  };
+}
+
+export function buildSlackCapabilityReply(facts: SlackCapabilityQueryFacts): string {
+  const targetPrefix = facts.targetLabel ? `${facts.targetLabel} への` : "任意ユーザーへの";
+  return `${targetPrefix}メンション付きメッセージ送信は限定的に対応しています。${facts.supportSummary} ${facts.limitationSummary}`;
+}
+
+export function detectSlackOutboundPostRequest(text: string): SlackOutboundPostRequestHint | undefined {
+  const normalized = text.trim();
+  if (!normalized) return undefined;
+  if (!SLACK_OUTBOUND_POST_REQUEST_SIGNAL_PATTERN.test(normalized)) {
+    return undefined;
+  }
+  return {
+    destination: SLACK_CONTROL_ROOM_PATTERN.test(normalized)
+      ? "control-room-root"
+      : "current-thread",
+  };
+}
 
 export function truncateSlackText(text: string, maxLength = 80): string {
   const normalized = text.replace(/\s+/g, " ").trim();

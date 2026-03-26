@@ -12,7 +12,8 @@ export type PendingManagerClarificationIntent =
   | "update_blocked"
   | "update_schedule"
   | "delete_schedule"
-  | "followup_resolution";
+  | "followup_resolution"
+  | "post_slack_message";
 
 export interface PendingManagerClarification {
   intent: PendingManagerClarificationIntent;
@@ -41,7 +42,8 @@ function isPendingManagerClarificationIntent(value: unknown): value is PendingMa
     || value === "update_blocked"
     || value === "update_schedule"
     || value === "delete_schedule"
-    || value === "followup_resolution";
+    || value === "followup_resolution"
+    || value === "post_slack_message";
 }
 
 function normalizeStringList(value: unknown): string[] {

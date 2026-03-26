@@ -661,6 +661,151 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     await expect(readFile(systemPaths.ownerMapFile, "utf8")).resolves.not.toContain("\"id\": \"opt\"");
   });
 
+  it("commits an explicit Slack mention post into the current thread", async () => {
+    const postSlackMessage = vi.fn().mockResolvedValue({
+      text: "@U01L86BCA9X こんにちは",
+      ts: "123.456",
+    });
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "投稿します。",
+      toolCalls: [],
+      proposals: [
+        {
+          commandType: "post_slack_message",
+          destination: "current-thread",
+          mentionSlackUserId: "U01L86BCA9X",
+          targetLabel: "kyaukyuai",
+          messageText: "こんにちは",
+          reasonSummary: "明示依頼された current-thread 投稿です。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "post_slack_message",
+        confidence: 0.97,
+        summary: "明示されたメンション投稿です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-slack-post-current",
+        messageTs: "msg-slack-post-current-1",
+        userId: "U1",
+        text: "kyaukyuai にメンションして、こんにちはと送って",
+      },
+      new Date("2026-03-26T02:16:00.000Z"),
+      undefined,
+      { postSlackMessage },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("この thread に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(postSlackMessage).toHaveBeenCalledWith({
+      channel: "C0ALAMDRB9V",
+      threadTs: "thread-slack-post-current",
+      mentionSlackUserId: "U01L86BCA9X",
+      messageText: "こんにちは",
+    });
+  });
+
+  it("commits an explicit Slack mention post to control room root", async () => {
+    const postSlackMessage = vi.fn().mockResolvedValue({
+      text: "@U01L86BCA9X control room で確認お願いします",
+      ts: "123.457",
+    });
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "control room に投稿します。",
+      toolCalls: [],
+      proposals: [
+        {
+          commandType: "post_slack_message",
+          destination: "control-room-root",
+          mentionSlackUserId: "U01L86BCA9X",
+          targetLabel: "kyaukyuai",
+          messageText: "control room で確認お願いします",
+          reasonSummary: "明示依頼された control-room-root 投稿です。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "post_slack_message",
+        confidence: 0.97,
+        summary: "control room へのメンション投稿です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-slack-post-root",
+        messageTs: "msg-slack-post-root-1",
+        userId: "U1",
+        text: "control room に kyaukyuai へ確認お願いしますと送って",
+      },
+      new Date("2026-03-26T02:17:00.000Z"),
+      undefined,
+      { postSlackMessage },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("control room に kyaukyuai 宛てのメッセージを投稿しました。");
+    expect(postSlackMessage).toHaveBeenCalledWith({
+      channel: "C0ALAMDRB9V",
+      threadTs: undefined,
+      mentionSlackUserId: "U01L86BCA9X",
+      messageText: "control room で確認お願いします",
+    });
+  });
+
+  it("rejects Slack mention posts when the target is not resolvable from owner-map", async () => {
+    const postSlackMessage = vi.fn();
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "投稿します。",
+      toolCalls: [],
+      proposals: [
+        {
+          commandType: "post_slack_message",
+          destination: "current-thread",
+          mentionSlackUserId: "UUNKNOWN",
+          targetLabel: "unknown-user",
+          messageText: "こんにちは",
+          reasonSummary: "未解決 target に送ろうとしています。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "post_slack_message",
+        confidence: 0.9,
+        summary: "メンション投稿です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-slack-post-reject",
+        messageTs: "msg-slack-post-reject-1",
+        userId: "U1",
+        text: "unknown-user にメンションして、こんにちはと送って",
+      },
+      new Date("2026-03-26T02:18:00.000Z"),
+      undefined,
+      { postSlackMessage },
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("owner-map.json");
+    expect(postSlackMessage).not.toHaveBeenCalled();
+  });
+
   it("commits a pending owner-map preview when the user confirms", async () => {
     const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-owner-map-apply");
     await savePendingManagerConfirmation(threadPaths, {

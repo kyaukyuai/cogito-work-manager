@@ -40,6 +40,10 @@ import {
   type PersonalizationExtractionInput,
   type PersonalizationExtractionResult,
 } from "../planners/personalization-extraction/index.js";
+import {
+  detectSlackCapabilityQuery,
+  detectSlackOutboundPostRequest,
+} from "../orchestrators/shared/slack-conversation.js";
 import { selectFinalAssistantText } from "../runtime/assistant-text.js";
 import { createManagerAgentTools } from "./manager-agent-tools.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
@@ -394,6 +398,11 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When the user explicitly asks to update, replace, rewrite, edit, or reflect changes into AGENDA_TEMPLATE.md, use intent=update_workspace_config, read the current file with workspace_get_agenda_template first, and then use propose_replace_workspace_text_file with target=agenda-template.",
     "When the user explicitly asks to update, replace, rewrite, edit, or reflect changes into HEARTBEAT.md, use intent=update_workspace_config, read the current file with workspace_get_heartbeat_prompt first, and then use propose_replace_workspace_text_file with target=heartbeat-prompt.",
     "When the user explicitly asks to update, change, edit, add to, or delete from owner-map.json, use intent=update_workspace_config, read the current file with workspace_get_owner_map first, and then use propose_update_owner_map with a structured operation instead of free-form JSON edits.",
+    "When the user explicitly asks to mention someone and send a Slack message, use intent=post_slack_message instead of treating it as a capability query or a generic conversation.",
+    "Before proposing a Slack mention post, call workspace_get_owner_map and resolve exactly one target by exact-match on entry.id, linearAssignee, or slackUserId after trim, lowercase, and whitespace normalization.",
+    "If owner-map resolution returns zero or multiple matches, ask one short clarification question instead of proposing a mutation.",
+    "For explicit Slack mention posts, default destination=current-thread unless the user explicitly says control room. control-room-root posts go to the control room root message, not a new thread.",
+    "Use propose_post_slack_message for exactly one target and one post. messageText must be the final body without the target mention token, and it must not contain extra user, group, or channel mention tokens.",
     "Do not route AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json changes through MEMORY saves or silent personalization.",
     "owner-map updates use a preview-first path in this scope. The first turn may return a confirmation preview instead of an immediate commit.",
     "Never reply that direct file editing tools are unavailable for AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json. Use the dedicated workspace config read and proposal tools in this runtime.",
@@ -455,6 +464,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "If the user asks what you can do, answer with 4-5 short bullets and a one-line closing invitation.",
     "For a what-you-can-do reply, cover these implemented capabilities only: Linear task management, existing issue execution through run_task, Notion search/create/update/archive, scheduler inspection and custom-job execution, and review/heartbeat/webhook automation.",
     "Do not mention unimplemented capabilities in a what-you-can-do reply.",
+    "If the user asks whether you can mention or message another Slack user, interpret it as a question about your own outbound Slack capability, not as whether the user can mention you.",
+    "Current Slack mention-post support is limited to one explicit owner-map-resolved target per turn, posted either in the current thread or, when explicitly requested, to the control room root.",
+    "DMs, arbitrary channels, multiple targets, and extra mention tokens are not supported for Slack outbound posts in this runtime.",
     "For public Slack replies, default to 1-3 short sentences.",
     "Do not use markdown headings, separator lines, report-style sections, warning icons, or emojis in public Slack replies.",
     "For a single important issue, answer directly in one sentence before adding any supporting detail.",
@@ -752,6 +764,7 @@ function buildManagerReplyStyleHints(
   pendingClarification?: PendingManagerClarification,
 ): string[] {
   const normalized = messageText.trim();
+  const capabilityQuery = detectSlackCapabilityQuery(normalized);
   const notionRecheck = shouldTreatAsNotionRecheck(normalized, lastQueryContext);
   const hints = [
     "Keep the public Slack reply to 1-3 short sentences by default.",
@@ -802,6 +815,13 @@ function buildManagerReplyStyleHints(
 
   if (pendingClarification?.intent === "create_work") {
     hints.push("If the latest message looks like a clarification or intent correction, treat it as a continuation of the pending create request, not as a new topic.");
+  }
+
+  if (capabilityQuery?.type === "slack-outbound-mention") {
+    hints.push("This is a capability question about outbound Slack mention behavior, not about whether the user can mention the assistant.");
+    hints.push("Answer with the limited supported scope: one explicit owner-map-resolved target per turn, posted in the current thread by default or to the control room root only when explicitly requested.");
+    hints.push("Also mention the hard limits: no DMs, no arbitrary channels, no multiple targets, and no extra mention tokens.");
+    hints.push("Do not switch to a generic what-you-can-do bullet list for this turn.");
   }
 
   return hints;
@@ -883,10 +903,45 @@ function buildWorkspaceConfigUpdateHints(
   return [];
 }
 
+function buildSlackPostRequestHints(text: string | undefined): string[] {
+  const request = text ? detectSlackOutboundPostRequest(text) : undefined;
+  if (!request) {
+    return [];
+  }
+
+  return [
+    "- The latest message is an explicit outbound Slack post request, not a capability question.",
+    "- Treat this as intent=post_slack_message.",
+    "- Read owner-map.json first with workspace_get_owner_map and resolve exactly one target by exact-match on entry.id, linearAssignee, or slackUserId after trim, lowercase, and whitespace normalization.",
+    "- If owner-map resolution is zero-match or multi-match, ask one short clarification question instead of proposing a mutation.",
+    request.destination === "control-room-root"
+      ? "- The user explicitly asked for control room, so use destination=control-room-root."
+      : "- Default to destination=current-thread because the user did not explicitly ask for control room.",
+    "- Use propose_post_slack_message with exactly one target and one message. messageText must exclude the target mention token and any extra mention tokens.",
+  ];
+}
+
+function buildCapabilityQueryHints(text: string | undefined): string[] {
+  const capabilityQuery = text ? detectSlackCapabilityQuery(text) : undefined;
+  if (capabilityQuery?.type !== "slack-outbound-mention") {
+    return [];
+  }
+
+  return [
+    "- The latest message is a capability question about outbound Slack mention behavior.",
+    "- Do not reinterpret this as whether the user can mention the assistant.",
+    "- Answer with the limited supported scope: one explicit owner-map-resolved target per turn, posted in the current thread by default or to the control room root only when explicitly requested.",
+    "- Also mention the unsupported cases: DM, arbitrary channel, multiple targets, and extra mention tokens.",
+    "- Do not turn this into a generic what-you-can-do bullet list unless the user broadens the question.",
+  ];
+}
+
 export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const notionRecheck = shouldTreatAsNotionRecheck(input.text, input.lastQueryContext);
   const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext, input.pendingClarification)
     .map((hint) => `- ${hint}`);
+  const capabilityQueryHints = buildCapabilityQueryHints(input.text);
+  const slackPostRequestHints = buildSlackPostRequestHints(input.text);
   const workspaceConfigUpdateHints = buildWorkspaceConfigUpdateHints(
     detectWorkspaceConfigUpdateTarget(input.text),
   );
@@ -989,6 +1044,20 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "Public reply style hints:",
     ...styleHints,
+    ...(capabilityQueryHints.length > 0
+      ? [
+          "",
+          "Capability query hints:",
+          ...capabilityQueryHints,
+        ]
+      : []),
+    ...(slackPostRequestHints.length > 0
+      ? [
+          "",
+          "Slack post request hints:",
+          ...slackPostRequestHints,
+        ]
+      : []),
     ...(workspaceConfigUpdateHints.length > 0
       ? [
           "",

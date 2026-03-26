@@ -138,6 +138,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("When the user explicitly asks to update, change, edit, add to, or delete from owner-map.json, use intent=update_workspace_config");
     expect(prompt).toContain("workspace_get_owner_map");
     expect(prompt).toContain("propose_update_owner_map");
+    expect(prompt).toContain("When the user explicitly asks to mention someone and send a Slack message, use intent=post_slack_message");
+    expect(prompt).toContain("resolve exactly one target by exact-match on entry.id, linearAssignee, or slackUserId");
+    expect(prompt).toContain("Use propose_post_slack_message for exactly one target and one post.");
     expect(prompt).toContain("Do not route AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json changes through MEMORY saves or silent personalization.");
     expect(prompt).toContain("owner-map updates use a preview-first path in this scope.");
     expect(prompt).toContain("Never reply that direct file editing tools are unavailable for AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json.");
@@ -188,6 +191,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If the user asks what you can do, answer with 4-5 short bullets and a one-line closing invitation.");
     expect(prompt).toContain("For a what-you-can-do reply, cover these implemented capabilities only: Linear task management, existing issue execution through run_task, Notion search/create/update/archive, scheduler inspection and custom-job execution, and review/heartbeat/webhook automation.");
     expect(prompt).toContain("Do not mention unimplemented capabilities in a what-you-can-do reply.");
+    expect(prompt).toContain("If the user asks whether you can mention or message another Slack user, interpret it as a question about your own outbound Slack capability");
+    expect(prompt).toContain("Current Slack mention-post support is limited to one explicit owner-map-resolved target per turn");
     expect(prompt).toContain("If the user says things like 他には / ほかには / 他のタスク after a list or prioritization reply in the same thread");
   });
 
@@ -329,6 +334,43 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Treat this as a continuation of the previous list or prioritization reply in the same thread");
     expect(prompt).toContain("If there is only one additional relevant issue or no additional issue, say that plainly in one sentence.");
     expect(prompt).toContain("Continue from the stored last query context (what-should-i-do / team)");
+  });
+
+  it("adds capability-query guidance when the latest message asks about Slack mentions", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "kyaukyuai にメンションできる？",
+      currentDate: "2026-03-26",
+    });
+
+    expect(prompt).toContain("Capability query hints:");
+    expect(prompt).toContain("The latest message is a capability question about outbound Slack mention behavior.");
+    expect(prompt).toContain("Do not reinterpret this as whether the user can mention the assistant.");
+    expect(prompt).toContain("one explicit owner-map-resolved target per turn");
+    expect(prompt).toContain("DM, arbitrary channel, multiple targets, and extra mention tokens");
+    expect(prompt).toContain("Do not turn this into a generic what-you-can-do bullet list unless the user broadens the question.");
+  });
+
+  it("adds Slack post request guidance for explicit mention-send requests", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "y.kakui にメンションして、こんにちはと送って",
+      currentDate: "2026-03-26",
+    });
+
+    expect(prompt).toContain("Slack post request hints:");
+    expect(prompt).toContain("Treat this as intent=post_slack_message.");
+    expect(prompt).toContain("workspace_get_owner_map");
+    expect(prompt).toContain("destination=current-thread");
+    expect(prompt).toContain("propose_post_slack_message");
   });
 
   it("includes pending manager clarification context for create continuations", () => {
@@ -886,6 +928,7 @@ describe("prompt helpers", () => {
 
     expect(prompt).toContain("Reply with a single JSON object only.");
     expect(prompt).toContain('"queryKind":"list-active"|"list-today"|"what-should-i-do"|"inspect-work"|"search-existing"|"recommend-next-step"|"reference-material"');
+    expect(prompt).toContain("Questions like y.kakui にメンションできる？ ask about the manager's own outbound Slack capability.");
     expect(prompt).toContain("Last query continuation context:");
     expect(prompt).toContain("- kind: what-should-i-do");
     expect(prompt).toContain('Example: "他にはどのようなタスクがある？" after a task-list reply in the same thread');
@@ -937,6 +980,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain('Use exactly this schema: {"reply": string}.');
     expect(prompt).toContain("Tone: concise executive assistant.");
     expect(prompt).toContain("queryScope=self");
+    expect(prompt).toContain("If facts.capabilityQuery is present, answer that capability question directly in one or two short sentences.");
+    expect(prompt).toContain("Do not reinterpret a capability question like y.kakui にメンションできる？ as whether the user can mention the assistant.");
+    expect(prompt).toContain("supportSummary and limitationSummary");
 
     const parsed = parseManagerReplyReply('{"reply":"今日まず手を付けるなら AIC-930 今日の優先 task から見るのがよさそうです。"}');
     expect(parsed).toEqual({

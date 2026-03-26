@@ -54,3 +54,27 @@ export async function sendSlackReply(
   });
   return payload.text;
 }
+
+export async function postSlackMentionMessage(
+  webClient: SlackChatClient,
+  args: {
+    channel: string;
+    mentionSlackUserId: string;
+    messageText: string;
+    linearWorkspace: string;
+    threadTs?: string;
+  },
+): Promise<{ text: string; ts?: string }> {
+  const reply = `<@${args.mentionSlackUserId}> ${args.messageText.trim()}`.trim();
+  const payload = buildSlackMessagePayload(reply, { linearWorkspace: args.linearWorkspace });
+  const result = await webClient.chat.postMessage({
+    channel: args.channel,
+    thread_ts: args.threadTs,
+    text: payload.text,
+    blocks: payload.blocks,
+  });
+  return {
+    text: payload.text,
+    ts: result.ts,
+  };
+}

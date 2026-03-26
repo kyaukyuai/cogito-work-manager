@@ -219,6 +219,8 @@ runtime state file の大まかな扱いは次の 3 分類です。
 - `system-maintained`: runtime が通常処理の中で直接保守する
 - `rebuild-only`: generated state なので edit せず recovery / rebuild で扱う
 
+Slack への明示投稿も manager commit 経由です。v1 では `owner-map.json` に `slackUserId` がある相手に対してだけ、`X にメンションして Y と送って` のような明示依頼を 1 turn 1 target で実行できます。送信先は既定で current thread、明示時のみ control room root です。DM、任意 channel、複数 target、追加 mention は対象外です。
+
 `policy.json` では次の manager knobs を調整できます。
 
 - `autoCreate`

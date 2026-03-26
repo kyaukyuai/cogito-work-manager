@@ -473,7 +473,7 @@ function createIntentReportTool(): ToolDefinition {
     description: "Record the current high-level intent before or during tool usage. Use this once per turn.",
     promptSnippet: "Call this early to tell the manager what kind of turn this is.",
     parameters: Type.Object({
-      intent: Type.String({ description: "conversation | query | query_schedule | run_task | create_work | create_schedule | run_schedule | update_progress | update_completed | update_blocked | update_schedule | delete_schedule | followup_resolution | update_workspace_config | review | heartbeat | scheduler" }),
+      intent: Type.String({ description: "conversation | query | query_schedule | run_task | create_work | create_schedule | run_schedule | update_progress | update_completed | update_blocked | update_schedule | delete_schedule | followup_resolution | update_workspace_config | post_slack_message | review | heartbeat | scheduler" }),
       queryKind: Type.Optional(Type.String({ description: "Optional query subtype: list-active | list-today | what-should-i-do | inspect-work | search-existing | recommend-next-step | reference-material." })),
       queryScope: Type.Optional(Type.String({ description: "Optional query scope self | team | thread-context." })),
       confidence: Type.Optional(Type.Number({ description: "Confidence between 0 and 1." })),
@@ -1245,6 +1245,22 @@ function createProposalTools(): ToolDefinition[] {
       commandType: "run_scheduler_job_now",
       parameters: Type.Object({
         jobId: Type.String({ description: "Existing custom scheduler job id." }),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
+      name: "propose_post_slack_message",
+      label: "Propose Post Slack Message",
+      description: "Propose posting one mention-tagged Slack message to the current thread or control room root. This does not execute the mutation.",
+      promptSnippet: "Use this only for explicit Slack requests like X にメンションして Y と送って. Call workspace_get_owner_map first, resolve exactly one target, default to current-thread unless the user explicitly says control room, and do not include any extra mention tokens in messageText.",
+      commandType: "post_slack_message",
+      parameters: Type.Object({
+        destination: Type.String({ description: "current-thread | control-room-root" }),
+        mentionSlackUserId: Type.String({ description: "Resolved Slack user id from owner-map.json." }),
+        targetLabel: Type.String({ description: "Human-readable target label such as y.kakui or kyaukyuai." }),
+        messageText: Type.String({ description: "Final message body without the target mention token." }),
         reasonSummary: Type.String({ description: "Short reason for this proposal." }),
         evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
         dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),

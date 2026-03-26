@@ -20,7 +20,7 @@ import { handleIssueCreatedWebhook } from "../orchestrators/webhooks/handle-issu
 import { handlePersonalizationUpdate } from "../orchestrators/personalization/handle-personalization.js";
 import { reconcileAwaitingFollowupsWithCurrentLinear } from "../orchestrators/review/review-data.js";
 import { runManagerSystemTurn } from "../lib/pi-session.js";
-import { postSlackProcessingNotice, sendSlackReply } from "../lib/slack-replies.js";
+import { postSlackMentionMessage, postSlackProcessingNotice, sendSlackReply } from "../lib/slack-replies.js";
 import { mergeSystemReply } from "../lib/system-slack-reply.js";
 import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "../lib/slack.js";
 import {
@@ -339,6 +339,21 @@ export function createAppRuntimeHandlers(args: {
     };
   }
 
+  async function executeSlackMentionPost(argsForPost: {
+    channel: string;
+    mentionSlackUserId: string;
+    messageText: string;
+    threadTs?: string;
+  }): Promise<{ text: string; ts?: string }> {
+    return postSlackMentionMessage(args.webClient, {
+      channel: argsForPost.channel,
+      mentionSlackUserId: argsForPost.mentionSlackUserId,
+      messageText: argsForPost.messageText,
+      threadTs: argsForPost.threadTs,
+      linearWorkspace: args.config.linearWorkspace,
+    });
+  }
+
   async function processIssueCreatedWebhookDelivery(event: {
     deliveryId: string;
     webhookId?: string;
@@ -551,6 +566,7 @@ export function createAppRuntimeHandlers(args: {
                 };
               }
             },
+            postSlackMessage: executeSlackMentionPost,
           },
         );
         if (managerResult.diagnostics?.agent) {

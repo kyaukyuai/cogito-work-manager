@@ -28,6 +28,7 @@ export function buildMessageRouterPrompt(input: MessageRouterInput): string {
     "Keep reasoningSummary concise and in Japanese.",
     "Choose conversation for greetings, light smalltalk, or non-task chatter.",
     "Choose query for read-only questions about tasks, status, lists, search, or next-step guidance.",
+    "Questions like y.kakui にメンションできる？ ask about the manager's own outbound Slack capability. Treat them as conversation, not as whether the user can mention the bot.",
     "Choose create_work for new task creation requests and replies that answer a pending clarification for task creation.",
     "Choose update_progress / update_completed / update_blocked only for status-changing updates about existing work.",
     "Use queryScope=self when the user asks about their own work.",
