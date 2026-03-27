@@ -6,8 +6,8 @@ import {
   classifyManagerQuery,
   classifyManagerSignal,
   handleManagerMessage,
-  handleManagerMessageLegacy,
 } from "../src/lib/manager.js";
+import { handleManagerMessageLegacy } from "../src/orchestrators/legacy/handle-manager-legacy.js";
 import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
 import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
