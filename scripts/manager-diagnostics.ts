@@ -65,6 +65,28 @@ function buildRuntimeConfig(workspaceDir: string): AppConfig {
   };
 }
 
+function buildThreadDiagnosticsCliView(
+  diagnostics: Awaited<ReturnType<typeof buildManagerThreadDiagnostics>>,
+) {
+  return {
+    summary: {
+      lastAgentTurn: diagnostics.lastAgentTurn
+        ? {
+            recordedAt: diagnostics.lastAgentTurn.recordedAt,
+            replyPath: diagnostics.lastAgentTurn.replyPath,
+            intent: diagnostics.lastAgentTurn.intent,
+            conversationKind: diagnostics.lastAgentTurn.conversationKind,
+            queryKind: diagnostics.lastAgentTurn.queryKind,
+            queryScope: diagnostics.lastAgentTurn.queryScope,
+            currentDateTimeJst: diagnostics.lastAgentTurn.currentDateTimeJst,
+            technicalFailure: diagnostics.lastAgentTurn.technicalFailure,
+          }
+        : undefined,
+    },
+    ...diagnostics,
+  };
+}
+
 async function main(): Promise<void> {
   const command = parseCommand(process.argv[2]);
   const workspaceDir = resolve(
@@ -109,7 +131,7 @@ async function main(): Promise<void> {
       channelId,
       rootThreadTs,
     });
-    process.stdout.write(`${JSON.stringify(diagnostics, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(buildThreadDiagnosticsCliView(diagnostics), null, 2)}\n`);
     return;
   }
 

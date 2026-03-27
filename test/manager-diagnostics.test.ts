@@ -136,11 +136,15 @@ describe("manager diagnostics", () => {
     });
     await saveLastManagerAgentTurn(threadPaths, {
       recordedAt: "2026-03-23T04:06:30.000Z",
+      replyPath: "agent",
       intent: "create_work",
+      conversationKind: "other",
+      currentDateTimeJst: "2026-03-23 13:06 JST",
       pendingClarificationDecision: "continue_pending",
       pendingClarificationPersistence: "keep",
       pendingClarificationDecisionSummary: "前の create clarification への補足です。",
       missingQuerySnapshot: false,
+      technicalFailure: "planner timeout",
     });
 
     const diagnostics = await buildManagerThreadDiagnostics({
@@ -164,10 +168,14 @@ describe("manager diagnostics", () => {
       threadParentIssueId: "AIC-970",
     });
     expect(diagnostics.lastAgentTurn).toMatchObject({
+      replyPath: "agent",
       intent: "create_work",
+      conversationKind: "other",
+      currentDateTimeJst: "2026-03-23 13:06 JST",
       pendingClarificationDecision: "continue_pending",
       pendingClarificationPersistence: "keep",
       missingQuerySnapshot: false,
+      technicalFailure: "planner timeout",
     });
     expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
     expect(diagnostics.ownerMapDiagnostics.unmappedSlackEntries).toHaveLength(0);

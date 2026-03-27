@@ -93,6 +93,32 @@ describe("manager agent tools", () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
+  it("validates conversationKind in report_manager_intent", async () => {
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+    const tool = tools.find((entry) => entry.name === "report_manager_intent");
+
+    expect(tool).toBeDefined();
+
+    const ok = await tool!.execute("tool-call-intent-ok", {
+      intent: "conversation",
+      conversationKind: "greeting",
+      confidence: 0.9,
+      summary: "挨拶です。",
+    });
+    expect(ok.details).toMatchObject({
+      intentReport: {
+        intent: "conversation",
+        conversationKind: "greeting",
+      },
+    });
+
+    await expect(tool!.execute("tool-call-intent-invalid", {
+      intent: "conversation",
+      confidence: 0.9,
+      summary: "挨拶です。",
+    })).rejects.toThrow(/conversationKind/i);
+  });
+
   it("returns dueRelativeLabel and daysUntilDue in review facts", async () => {
     vi.useFakeTimers();
     try {

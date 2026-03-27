@@ -1,4 +1,8 @@
-export { managerCommandProposalSchema } from "./manager-command-commit/contracts.js";
+export {
+  managerCommandProposalSchema,
+  managerConversationKindSchema,
+  managerIntentReportSchema,
+} from "./manager-command-commit/contracts.js";
 export type {
   CommitManagerCommandArgs,
   ManagerAgentToolCall,

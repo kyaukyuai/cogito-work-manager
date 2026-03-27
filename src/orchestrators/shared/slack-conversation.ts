@@ -1,6 +1,7 @@
 import type { LinearIssue } from "../../lib/linear.js";
 
 type SlackIssueLabel = Pick<LinearIssue, "identifier" | "title"> & { url?: string | null };
+const SLACK_GREETING_PATTERN = /^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/i;
 const SLACK_OUTBOUND_MENTION_CAPABILITY_QUERY_PATTERN = /(?:(?<target><@[^>]+>|@?[^\s、,。!?？]+)\s*に\s*)?(?:メンション|mention)(?:[^。\n\r]*?)(?:できる|できます|可能|送れる|送信できる)(?:の)?[？?]*$/i;
 const SLACK_OUTBOUND_POST_REQUEST_SIGNAL_PATTERN = /(?:メンション(?:して|を付けて)|mention(?:して)?).*(?:送って|送信して|投稿して|メッセージ送信して)/i;
 const SLACK_CONTROL_ROOM_PATTERN = /(?:control\s*room|control-room|コントロールルーム)/i;
@@ -18,12 +19,33 @@ export interface SlackOutboundPostRequestHint {
   destination: "current-thread" | "control-room-root";
 }
 
+export const MANAGER_REPLY_GREETING_TIME_RULE =
+  "When conversationKind=greeting and currentDateTimeJst is present, choose a natural Japanese greeting that matches that Asia/Tokyo time.";
+
 function cleanCapabilityTargetLabel(value: string | undefined): string | undefined {
   const normalized = value
     ?.trim()
     .replace(/^[「"'`]+|[」"'`]+$/g, "")
     .trim();
   return normalized || undefined;
+}
+
+export function isSlackGreetingMessage(text: string): boolean {
+  return SLACK_GREETING_PATTERN.test(text.trim());
+}
+
+export function buildSlackGreetingPromptHints(args: {
+  messageText: string;
+  currentDateTimeJst?: string;
+}): string[] {
+  if (!args.currentDateTimeJst || !isSlackGreetingMessage(args.messageText)) {
+    return [];
+  }
+
+  return [
+    "The latest message is a greeting.",
+    `Choose a natural Japanese greeting that matches currentDateTimeJst (${args.currentDateTimeJst}) in Asia/Tokyo.`,
+  ];
 }
 
 export function detectSlackCapabilityQuery(text: string): SlackCapabilityQueryFacts | undefined {

@@ -155,12 +155,21 @@ function renderMockIssue(issue: Record<string, unknown>): string {
   return `${String(issue.identifier ?? "")} ${String(issue.title ?? "")}`.trim();
 }
 
-function defaultManagerReply(input: { kind: string; conversationKind?: string; facts?: Record<string, unknown> }) {
+function greetingFromJstDateTime(value: unknown): string {
+  const match = typeof value === "string" ? value.match(/\b(\d{2}):(\d{2})\b/) : undefined;
+  const hour = match ? Number(match[1]) : NaN;
+  if (Number.isNaN(hour)) return "こんばんは";
+  if (hour >= 5 && hour < 11) return "おはようございます";
+  if (hour >= 11 && hour < 18) return "こんにちは";
+  return "こんばんは";
+}
+
+function defaultManagerReply(input: { kind: string; conversationKind?: string; currentDateTimeJst?: string; facts?: Record<string, unknown> }) {
   const facts = input.facts ?? {};
   if (input.kind === "conversation") {
     return {
       reply: input.conversationKind === "greeting"
-        ? "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。"
+        ? `${greetingFromJstDateTime(input.currentDateTimeJst ?? facts.currentDateTimeJst)}。確認したいことや進めたい task があれば、そのまま送ってください。`
         : "必要なことがあれば、そのまま続けて送ってください。",
     };
   }

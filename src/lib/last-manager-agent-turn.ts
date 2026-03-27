@@ -3,13 +3,19 @@ import { join } from "node:path";
 import type { ThreadPaths } from "./thread-workspace.js";
 import type { ManagerIntentReport, PendingClarificationDecisionReport, TaskExecutionDecisionReport } from "./manager-command-commit.js";
 
+export type LastManagerReplyPath = "agent" | "reply-planner" | "fallback";
+export type LastManagerConversationKind = "greeting" | "smalltalk" | "other";
+
 export interface LastManagerAgentTurn {
   recordedAt: string;
+  replyPath?: LastManagerReplyPath;
   intent?: ManagerIntentReport["intent"];
+  conversationKind?: LastManagerConversationKind;
   queryKind?: ManagerIntentReport["queryKind"];
   queryScope?: ManagerIntentReport["queryScope"];
   confidence?: number;
   summary?: string;
+  currentDateTimeJst?: string;
   pendingClarificationDecision?: PendingClarificationDecisionReport["decision"];
   pendingClarificationPersistence?: PendingClarificationDecisionReport["persistence"];
   pendingClarificationDecisionSummary?: string;
@@ -18,6 +24,7 @@ export interface LastManagerAgentTurn {
   taskExecutionTargetIssueIdentifier?: string;
   taskExecutionSummary?: string;
   missingQuerySnapshot?: boolean;
+  technicalFailure?: string;
 }
 
 function buildLastManagerAgentTurnPath(paths: ThreadPaths): string {
@@ -35,11 +42,19 @@ export async function loadLastManagerAgentTurn(
     }
     return {
       recordedAt: parsed.recordedAt,
+      replyPath: parsed.replyPath === "agent" || parsed.replyPath === "reply-planner" || parsed.replyPath === "fallback"
+        ? parsed.replyPath
+        : undefined,
       intent: typeof parsed.intent === "string" ? parsed.intent as ManagerIntentReport["intent"] : undefined,
+      conversationKind:
+        parsed.conversationKind === "greeting" || parsed.conversationKind === "smalltalk" || parsed.conversationKind === "other"
+          ? parsed.conversationKind
+          : undefined,
       queryKind: typeof parsed.queryKind === "string" ? parsed.queryKind as ManagerIntentReport["queryKind"] : undefined,
       queryScope: typeof parsed.queryScope === "string" ? parsed.queryScope as ManagerIntentReport["queryScope"] : undefined,
       confidence: typeof parsed.confidence === "number" ? parsed.confidence : undefined,
       summary: typeof parsed.summary === "string" ? parsed.summary : undefined,
+      currentDateTimeJst: typeof parsed.currentDateTimeJst === "string" ? parsed.currentDateTimeJst : undefined,
       pendingClarificationDecision: typeof parsed.pendingClarificationDecision === "string"
         ? parsed.pendingClarificationDecision as PendingClarificationDecisionReport["decision"]
         : undefined,
@@ -62,6 +77,7 @@ export async function loadLastManagerAgentTurn(
         ? parsed.taskExecutionSummary
         : undefined,
       missingQuerySnapshot: parsed.missingQuerySnapshot === true,
+      technicalFailure: typeof parsed.technicalFailure === "string" ? parsed.technicalFailure : undefined,
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {

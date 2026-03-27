@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
+import { saveLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 
 const execFileAsync = promisify(execFile);
 const repoDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
@@ -124,5 +126,47 @@ describe("manager diagnostics cli", () => {
         missingSections: ["Members And Roles", "Roadmap And Milestones"],
       }),
     ]));
+  });
+
+  it("prints thread summary fields for the last agent turn", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-thread-"));
+    tempDirs.push(cwd);
+    const workspaceDir = join(cwd, "workspace");
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-summary");
+    await ensureThreadWorkspace(threadPaths);
+    await saveLastManagerAgentTurn(threadPaths, {
+      recordedAt: "2026-03-19T04:05:00.000Z",
+      replyPath: "reply-planner",
+      intent: "conversation",
+      conversationKind: "greeting",
+      currentDateTimeJst: "2026-03-19 13:05 JST",
+      technicalFailure: "reply planner timeout",
+      missingQuerySnapshot: false,
+    });
+
+    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "thread", "C0ALAMDRB9V", "thread-summary", "./workspace"], {
+      cwd,
+      env: process.env,
+    });
+    const json = stdout.slice(stdout.indexOf("{"));
+    const diagnostics = JSON.parse(json) as {
+      summary: {
+        lastAgentTurn?: {
+          replyPath?: string;
+          intent?: string;
+          conversationKind?: string;
+          currentDateTimeJst?: string;
+          technicalFailure?: string;
+        };
+      };
+    };
+
+    expect(diagnostics.summary.lastAgentTurn).toMatchObject({
+      replyPath: "reply-planner",
+      intent: "conversation",
+      conversationKind: "greeting",
+      currentDateTimeJst: "2026-03-19 13:05 JST",
+      technicalFailure: "reply planner timeout",
+    });
   });
 });

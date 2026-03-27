@@ -17,6 +17,7 @@ export const managerReplySchema = z.object({
 export interface ManagerReplyInput {
   kind: "conversation" | "list-active" | "list-today" | "what-should-i-do" | "inspect-work" | "search-existing" | "recommend-next-step";
   currentDate: string;
+  currentDateTimeJst?: string;
   messageText: string;
   workspaceAgents?: string;
   workspaceMemory?: string;

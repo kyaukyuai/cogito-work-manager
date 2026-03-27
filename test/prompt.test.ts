@@ -340,6 +340,24 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Continue from the stored last query context (what-should-i-do / team)");
   });
 
+  it("adds JST-aware greeting guidance to the manager runtime prompt", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "おはよう",
+      currentDate: "2026-03-19",
+      currentDateTimeJst: "2026-03-19 06:36 JST",
+    });
+
+    expect(prompt).toContain("currentDateTimeJst: 2026-03-19 06:36 JST");
+    expect(prompt).toContain("Greeting hints:");
+    expect(prompt).toContain("The latest message is a greeting.");
+    expect(prompt).toContain("Choose a natural Japanese greeting that matches currentDateTimeJst (2026-03-19 06:36 JST) in Asia/Tokyo.");
+  });
+
   it("adds capability-query guidance when the latest message asks about Slack mentions", () => {
     const prompt = buildManagerAgentPrompt({
       kind: "message",
@@ -986,8 +1004,20 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Tone: concise executive assistant.");
     expect(prompt).toContain("queryScope=self");
     expect(prompt).toContain("If facts.capabilityQuery is present, answer that capability question directly in one or two short sentences.");
+    expect(prompt).toContain("When conversationKind=greeting and currentDateTimeJst is present, choose a natural Japanese greeting that matches that Asia/Tokyo time.");
     expect(prompt).toContain("Do not reinterpret a capability question like y.kakui にメンションできる？ as whether the user can mention the assistant.");
     expect(prompt).toContain("supportSummary and limitationSummary");
+
+    const greetingPrompt = buildManagerReplyPrompt({
+      kind: "conversation",
+      conversationKind: "greeting",
+      currentDate: "2026-03-19",
+      currentDateTimeJst: "2026-03-19 06:36 JST",
+      messageText: "おはよう",
+      facts: { conversationKind: "greeting" },
+      taskKey: "reply-greeting-test",
+    });
+    expect(greetingPrompt).toContain("currentDateTimeJst: 2026-03-19 06:36 JST");
 
     const parsed = parseManagerReplyReply('{"reply":"今日まず手を付けるなら AIC-930 今日の優先 task から見るのがよさそうです。"}');
     expect(parsed).toEqual({

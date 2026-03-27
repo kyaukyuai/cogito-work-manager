@@ -1,4 +1,5 @@
 import type { ManagerReplyInput } from "./contract.js";
+import { MANAGER_REPLY_GREETING_TIME_RULE } from "../../orchestrators/shared/slack-conversation.js";
 
 export function buildManagerReplyPrompt(input: ManagerReplyInput): string {
   return [
@@ -14,12 +15,14 @@ export function buildManagerReplyPrompt(input: ManagerReplyInput): string {
     "If queryScope=self, phrase the answer as the viewer's own work.",
     "If viewerMappingMissing is true, briefly mention that the reply is team-wide because Slack-to-owner mapping is missing.",
     "If facts.capabilityQuery is present, answer that capability question directly in one or two short sentences.",
+    MANAGER_REPLY_GREETING_TIME_RULE,
     "Do not reinterpret a capability question like y.kakui にメンションできる？ as whether the user can mention the assistant.",
     "When facts.capabilityQuery is present, rely on the provided supportSummary and limitationSummary for the supported scope and hard limits instead of inventing a broader Slack action surface.",
     `replyKind: ${input.kind}`,
     `queryScope: ${input.queryScope ?? "(none)"}`,
     `conversationKind: ${input.conversationKind ?? "(none)"}`,
     `currentDateInJst: ${input.currentDate}`,
+    `currentDateTimeJst: ${input.currentDateTimeJst ?? "(none)"}`,
     `latestUserMessage: ${input.messageText}`,
     "Facts:",
     JSON.stringify(input.facts, null, 2),

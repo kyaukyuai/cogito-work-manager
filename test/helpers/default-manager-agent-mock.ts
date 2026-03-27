@@ -693,6 +693,9 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
       const reply = args.buildReply({
         kind: "conversation",
         conversationKind: router.conversationKind,
+        facts: {
+          currentDateTimeJst: input.currentDateTimeJst,
+        },
       }).reply;
       return {
         reply,
@@ -700,6 +703,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
           buildIntentToolCall({
             intent: "conversation",
+            conversationKind: router.conversationKind,
             confidence: router.confidence,
             summary: router.reasoningSummary,
           }),
@@ -708,6 +712,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         invalidProposalCount: 0,
         intentReport: {
           intent: "conversation",
+          conversationKind: router.conversationKind,
           confidence: router.confidence,
           summary: router.reasoningSummary,
         },
@@ -965,6 +970,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
           ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
           buildIntentToolCall({
             intent: router.action,
+            conversationKind: router.action === "conversation" ? router.conversationKind : undefined,
             confidence: router.confidence,
             summary: router.reasoningSummary,
           }),
@@ -973,6 +979,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         invalidProposalCount: 0,
         intentReport: {
           intent: router.action,
+          conversationKind: router.action === "conversation" ? router.conversationKind : undefined,
           confidence: router.confidence,
           summary: router.reasoningSummary,
         },
@@ -1017,6 +1024,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
         ...(pendingDecision ? [buildPendingClarificationDecisionToolCall(pendingDecision.decision, pendingDecision.persistence, pendingDecision.summary)] : []),
         buildIntentToolCall({
           intent: router.action,
+          conversationKind: router.action === "conversation" ? router.conversationKind : undefined,
           confidence: router.confidence,
           summary: router.reasoningSummary,
         }),
@@ -1025,6 +1033,7 @@ export function createDefaultTestManagerAgentTurn(args: DefaultManagerAgentMockA
       invalidProposalCount: 0,
       intentReport: {
         intent: router.action,
+        conversationKind: router.action === "conversation" ? router.conversationKind : undefined,
         confidence: router.confidence,
         summary: router.reasoningSummary,
       },

@@ -918,6 +918,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
       invalidProposalCount: 0,
       intentReport: {
         intent: "conversation",
+        conversationKind: "other",
         confidence: 0.75,
         summary: "pending owner-map preview の説明です。",
       },

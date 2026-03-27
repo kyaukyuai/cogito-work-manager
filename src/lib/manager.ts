@@ -52,6 +52,7 @@ import { createFileBackedManagerRepositories } from "../state/repositories/file-
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import {
   buildSlackCapabilityReply,
+  isSlackGreetingMessage,
   composeSlackReply,
   detectSlackCapabilityQuery,
   detectSlackOutboundPostRequest,
@@ -149,6 +150,7 @@ export interface ManagerHandleResult {
     agent?: {
       source: "agent" | "fallback";
       intent?: ManagerIntentReport["intent"];
+      conversationKind?: "greeting" | "smalltalk" | "other";
       queryKind?: ManagerIntentReport["queryKind"];
       queryScope?: ManagerIntentReport["queryScope"];
       confidence?: number;
@@ -198,7 +200,6 @@ const AMBIGUOUS_EXECUTION_PATTERN = /(進めておいて|進めて|よしなに|
 const ACTIONABLE_RESEARCH_PATTERN = /(確認|修正|対応|実装|調査|整理|洗い出し|作成|更新|共有|再現|検証|比較)/i;
 const LIST_MARKER_PATTERN = /^\s*(?:[-*・•]\s+|\d+[.)]\s+)/;
 const LIST_HEADING_PATTERN = /^(?:タスク|todo|issue|イシュー)?\s*一覧$/i;
-const GREETING_PATTERN = /^(?:おはよう|こんにちは|こんばんは|お疲れさま|おつかれさま)(?:ございます)?[。！!？?]*$/i;
 const REFERENCE_QUERY_PATTERN = /((?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ).*(?:確認|見て|検索|探して|調べ|読んで)|(?:確認|見て|検索|探して|調べ|読んで).*(?:notion|ノーション|slack|スラック|ドキュメント|docs?|メモ))/i;
 const SCHEDULER_PATTERN = /(スケジュール|schedule|scheduler|cron|heartbeat|朝レビュー|夕方レビュー|週次レビュー|weekly review|morning review|evening review)/i;
 const INTAKE_CORRECTION_PATTERN = /(ではなく|そうではなく|意図としては|つまり|言い換えると|そういう意味です|という意図です)/;
@@ -285,8 +286,21 @@ function currentDateInJst(now: Date): string {
   }).format(now);
 }
 
+function currentDateTimeInJst(now: Date): string {
+  const formatted = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(now);
+  return `${formatted} JST`;
+}
+
 function detectFallbackConversationKind(text: string): "greeting" | "smalltalk" | "other" {
-  if (GREETING_PATTERN.test(text.trim())) {
+  if (isSlackGreetingMessage(text)) {
     return "greeting";
   }
   if (/[?？]$/.test(text.trim())) {
@@ -303,7 +317,7 @@ function buildFallbackConversationReply(
     return buildSlackCapabilityReply(capabilityQuery);
   }
   if (kind === "greeting") {
-    return "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。";
+    return "確認したいことや進めたい task があれば、そのまま送ってください。";
   }
   if (kind === "smalltalk") {
     return "確認したいことがあれば、そのまま続けて送ってください。状況確認でも task 追加でも大丈夫です。";
@@ -724,7 +738,11 @@ async function buildConversationReply(
   message: ManagerSlackMessage,
   now: Date,
   conversationKind: "greeting" | "smalltalk" | "other",
-): Promise<string> {
+): Promise<{
+  reply: string;
+  replyPath: "reply-planner" | "fallback";
+  technicalFailure?: string;
+}> {
   const paths = buildThreadPaths(config.workspaceDir, message.channelId, message.rootThreadTs);
   await ensureThreadWorkspace(paths);
   const capabilityQuery = detectSlackCapabilityQuery(message.text);
@@ -734,6 +752,7 @@ async function buildConversationReply(
       kind: "conversation",
       conversationKind,
       currentDate: currentDateInJst(now),
+      currentDateTimeJst: currentDateTimeInJst(now),
       messageText: message.text,
       facts: {
         messageText: message.text,
@@ -742,9 +761,16 @@ async function buildConversationReply(
       },
       taskKey: `${message.channelId}-${message.rootThreadTs}-conversation-reply`,
     });
-    return result.reply;
-  } catch {
-    return buildFallbackConversationReply(conversationKind, capabilityQuery);
+    return {
+      reply: result.reply,
+      replyPath: "reply-planner",
+    };
+  } catch (error) {
+    return {
+      reply: buildFallbackConversationReply(conversationKind, capabilityQuery),
+      replyPath: "fallback",
+      technicalFailure: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -1349,6 +1375,7 @@ export async function handleManagerMessage(
       userId: message.userId,
       text: message.text,
       currentDate: currentDateInJst(now),
+      currentDateTimeJst: currentDateTimeInJst(now),
       lastQueryContext,
       currentThreadNotionPageTarget,
       pendingClarification: pendingManagerClarification,
@@ -1366,6 +1393,9 @@ export async function handleManagerMessage(
     }
     if (agentTurn.intentReport?.intent === "run_task" && !agentTurn.taskExecutionDecision) {
       throw new Error("manager agent run_task missing task execution decision");
+    }
+    if (agentTurn.intentReport?.intent === "conversation" && !agentTurn.intentReport.conversationKind) {
+      throw new Error("manager agent conversation missing conversationKind");
     }
 
     const commitResult = await commitManagerCommandProposals({
@@ -1514,11 +1544,14 @@ export async function handleManagerMessage(
 
     await saveLastManagerAgentTurn(paths, {
       recordedAt: now.toISOString(),
+      replyPath: "agent",
       intent: agentTurn.intentReport?.intent,
+      conversationKind: agentTurn.intentReport?.conversationKind,
       queryKind: agentTurn.intentReport?.queryKind,
       queryScope: agentTurn.intentReport?.queryScope,
       confidence: agentTurn.intentReport?.confidence,
       summary: agentTurn.intentReport?.summary,
+      currentDateTimeJst: currentDateTimeInJst(now),
       pendingClarificationDecision: agentTurn.pendingClarificationDecision?.decision,
       pendingClarificationPersistence: agentTurn.pendingClarificationDecision?.persistence,
       pendingClarificationDecisionSummary: agentTurn.pendingClarificationDecision?.summary,
@@ -1536,6 +1569,7 @@ export async function handleManagerMessage(
         agent: {
           source: "agent",
           intent: agentTurn.intentReport?.intent,
+          conversationKind: agentTurn.intentReport?.conversationKind,
           queryKind: agentTurn.intentReport?.queryKind,
           queryScope: agentTurn.intentReport?.queryScope,
           confidence: agentTurn.intentReport?.confidence,
@@ -1567,15 +1601,9 @@ export async function handleManagerMessage(
           : undefined
       : undefined;
     const safetyFallback = buildSafetyOnlyManagerFallbackReply(message, pendingManagerClarification);
-    await saveLastManagerAgentTurn(paths, {
-      recordedAt: now.toISOString(),
-      pendingClarificationDecision: fallbackPendingDecision,
-      pendingClarificationDecisionSummary: error instanceof Error ? error.message : String(error),
-      pendingClarificationPersistence: pendingManagerClarification ? "keep" : undefined,
-      missingQuerySnapshot: false,
-    });
-    if (safetyFallback.action !== "conversation") {
-      const fallbackIntent = safetyFallback.action === "request"
+    const fallbackIntent = safetyFallback.action === "conversation"
+      ? "conversation"
+      : safetyFallback.action === "request"
         ? (isRunTaskRequestText(message.text)
           ? "run_task"
           : /(?:メンション(?:して|を付けて)|mention(?:して)?).*(?:送って|送信して|投稿して|メッセージ送信して)/i.test(message.text)
@@ -1583,14 +1611,29 @@ export async function handleManagerMessage(
             : "create_work")
         : safetyFallback.action === "scheduler"
           ? (isSchedulerRunRequestText(message.text) ? "run_schedule" : "create_schedule")
-        : safetyFallback.action === "progress"
-          ? "update_progress"
-          : safetyFallback.action === "completed"
-            ? "update_completed"
-            : safetyFallback.action === "blocked"
-              ? "update_blocked"
-              : undefined;
-      if (fallbackIntent) {
+          : safetyFallback.action === "progress"
+            ? "update_progress"
+            : safetyFallback.action === "completed"
+              ? "update_completed"
+              : safetyFallback.action === "blocked"
+                ? "update_blocked"
+                : undefined;
+    await saveLastManagerAgentTurn(paths, {
+      recordedAt: now.toISOString(),
+      replyPath: "fallback",
+      intent: fallbackIntent,
+      conversationKind: safetyFallback.action === "conversation"
+        ? detectFallbackConversationKind(message.text)
+        : undefined,
+      currentDateTimeJst: currentDateTimeInJst(now),
+      pendingClarificationDecision: fallbackPendingDecision,
+      pendingClarificationDecisionSummary: error instanceof Error ? error.message : String(error),
+      pendingClarificationPersistence: pendingManagerClarification ? "keep" : undefined,
+      missingQuerySnapshot: false,
+      technicalFailure: error instanceof Error ? error.message : String(error),
+    });
+    if (safetyFallback.action !== "conversation") {
+      if (fallbackIntent && fallbackIntent !== "conversation") {
         await persistPendingManagerClarification({
           paths,
           intent: fallbackIntent,
@@ -1638,7 +1681,7 @@ export async function handleManagerMessage(
   }
 }
 
-async function handleManagerMessageLegacy(
+export async function handleManagerMessageLegacy(
   config: AppConfig,
   systemPaths: SystemPaths,
   message: ManagerSlackMessage,
@@ -1811,9 +1854,21 @@ async function handleManagerMessageLegacy(
   }
 
   if (routerResult.action === "conversation") {
+    const conversationReply = await buildConversationReply(config, message, now, routerResult.conversationKind);
+    await saveLastManagerAgentTurn(paths, {
+      recordedAt: now.toISOString(),
+      replyPath: conversationReply.replyPath,
+      intent: "conversation",
+      conversationKind: routerResult.conversationKind,
+      confidence: routerResult.confidence,
+      summary: routerResult.reasoningSummary,
+      currentDateTimeJst: currentDateTimeInJst(now),
+      technicalFailure: conversationReply.technicalFailure,
+      missingQuerySnapshot: false,
+    });
     return {
       handled: true,
-      reply: await buildConversationReply(config, message, now, routerResult.conversationKind),
+      reply: conversationReply.reply,
       diagnostics: routerDiagnostics,
     };
   }

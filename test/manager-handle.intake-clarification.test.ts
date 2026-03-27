@@ -309,9 +309,19 @@ function renderMockIssue(issue: Record<string, unknown>): string {
   return `${identifier} ${title}`.trim();
 }
 
+function greetingFromJstDateTime(value: unknown): string {
+  const match = typeof value === "string" ? value.match(/\b(\d{2}):(\d{2})\b/) : undefined;
+  const hour = match ? Number(match[1]) : NaN;
+  if (Number.isNaN(hour)) return "こんばんは";
+  if (hour >= 5 && hour < 11) return "おはようございます";
+  if (hour >= 11 && hour < 18) return "こんにちは";
+  return "こんばんは";
+}
+
 function defaultManagerReply(input: {
   kind: string;
   conversationKind?: string;
+  currentDateTimeJst?: string;
   facts?: Record<string, unknown>;
 }) {
   const facts = input.facts ?? {};
@@ -319,7 +329,7 @@ function defaultManagerReply(input: {
   if (input.kind === "conversation") {
     if (input.conversationKind === "greeting") {
       return {
-        reply: "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。",
+        reply: `${greetingFromJstDateTime(input.currentDateTimeJst ?? facts.currentDateTimeJst)}。確認したいことや進めたい task があれば、そのまま送ってください。`,
       };
     }
     return {

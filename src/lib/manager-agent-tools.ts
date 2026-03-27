@@ -38,6 +38,7 @@ import { analyzeOwnerMap } from "./owner-map-diagnostics.js";
 import type { OwnerMap } from "../state/manager-state-contract.js";
 import {
   managerCommandProposalSchema,
+  managerIntentReportSchema,
   type ManagerCommandProposal,
   type ManagerIntentReport,
   type PendingClarificationDecisionReport,
@@ -476,11 +477,12 @@ function createIntentReportTool(): ToolDefinition {
       intent: Type.String({ description: "conversation | query | query_schedule | run_task | create_work | create_schedule | run_schedule | update_progress | update_completed | update_blocked | update_schedule | delete_schedule | followup_resolution | update_workspace_config | post_slack_message | review | heartbeat | scheduler" }),
       queryKind: Type.Optional(Type.String({ description: "Optional query subtype: list-active | list-today | what-should-i-do | inspect-work | search-existing | recommend-next-step | reference-material." })),
       queryScope: Type.Optional(Type.String({ description: "Optional query scope self | team | thread-context." })),
+      conversationKind: Type.Optional(Type.String({ description: "Required when intent=conversation: greeting | smalltalk | other." })),
       confidence: Type.Optional(Type.Number({ description: "Confidence between 0 and 1." })),
       summary: Type.Optional(Type.String({ description: "One short sentence explaining the intent." })),
     }),
     async execute(_toolCallId, params) {
-      const typed = params as ManagerIntentReport;
+      const typed = managerIntentReportSchema.parse(params) as ManagerIntentReport;
       return {
         content: [{ type: "text", text: "Intent recorded." }],
         details: { intentReport: typed },

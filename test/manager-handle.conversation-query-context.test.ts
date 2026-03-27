@@ -6,7 +6,9 @@ import {
   classifyManagerQuery,
   classifyManagerSignal,
   handleManagerMessage,
+  handleManagerMessageLegacy,
 } from "../src/lib/manager.js";
+import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -203,9 +205,19 @@ function renderMockIssue(issue: Record<string, unknown>): string {
   return `${identifier} ${title}`.trim();
 }
 
+function greetingFromJstDateTime(value: unknown): string {
+  const match = typeof value === "string" ? value.match(/\b(\d{2}):(\d{2})\b/) : undefined;
+  const hour = match ? Number(match[1]) : NaN;
+  if (Number.isNaN(hour)) return "こんばんは";
+  if (hour >= 5 && hour < 11) return "おはようございます";
+  if (hour >= 11 && hour < 18) return "こんにちは";
+  return "こんばんは";
+}
+
 function defaultManagerReply(input: {
   kind: string;
   conversationKind?: string;
+  currentDateTimeJst?: string;
   facts?: Record<string, unknown>;
 }) {
   const facts = input.facts ?? {};
@@ -213,7 +225,7 @@ function defaultManagerReply(input: {
   if (input.kind === "conversation") {
     if (input.conversationKind === "greeting") {
       return {
-        reply: "こんばんは。確認したいことや進めたい task があれば、そのまま送ってください。",
+        reply: `${greetingFromJstDateTime(input.currentDateTimeJst ?? facts.currentDateTimeJst)}。確認したいことや進めたい task があれば、そのまま送ってください。`,
       };
     }
     return {
@@ -443,6 +455,81 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     expect(piSessionMocks.runTaskPlanningTurn).not.toHaveBeenCalled();
   });
 
+  it("uses a JST morning greeting in the primary conversation path", async () => {
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-conversation-morning",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "おはよう",
+      },
+      new Date("2026-03-18T21:36:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("おはようございます。");
+    expect(piSessionMocks.runTaskPlanningTurn).not.toHaveBeenCalled();
+  });
+
+  it("uses a JST daytime greeting in the primary conversation path and records diagnostics", async () => {
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-conversation-daytime",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんにちは",
+      },
+      new Date("2026-03-19T04:05:00.000Z"),
+    );
+
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-conversation-daytime"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("こんにちは。");
+    expect(lastTurn).toMatchObject({
+      replyPath: "agent",
+      intent: "conversation",
+      conversationKind: "greeting",
+      currentDateTimeJst: "2026-03-19 13:05 JST",
+    });
+  });
+
+  it("records replyPath=reply-planner on the legacy conversation path", async () => {
+    const result = await handleManagerMessageLegacy(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-conversation-legacy",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんにちは",
+      },
+      new Date("2026-03-19T04:06:00.000Z"),
+    );
+
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-conversation-legacy"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("こんにちは。");
+    expect(lastTurn).toMatchObject({
+      replyPath: "reply-planner",
+      intent: "conversation",
+      conversationKind: "greeting",
+      currentDateTimeJst: "2026-03-19 13:06 JST",
+    });
+  });
+
   it("returns a safety-only conversation reply when the manager agent fails technically", async () => {
     piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
 
@@ -460,12 +547,48 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     );
 
     expect(result.handled).toBe(true);
-    expect(result.reply).toContain("こんばんは。");
+    expect(result.reply).toContain("確認したいことや進めたい task があれば、そのまま送ってください。");
+    expect(result.reply).not.toContain("こんばんは。");
     expect(result.diagnostics?.router).toMatchObject({
       source: "fallback",
       action: "conversation",
     });
     expect(result.diagnostics?.router.technicalFailure).toContain("agent failure");
+  });
+
+  it("keeps the safety-only fallback conversation reply neutral in the morning", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-router-fallback-morning",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "おはよう",
+      },
+      new Date("2026-03-18T21:37:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("確認したいことや進めたい task があれば、そのまま送ってください。");
+    expect(result.reply).not.toContain("おはようございます。");
+    expect(result.diagnostics?.router).toMatchObject({
+      source: "fallback",
+      action: "conversation",
+    });
+
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-router-fallback-morning"),
+    );
+    expect(lastTurn).toMatchObject({
+      replyPath: "fallback",
+      conversationKind: "greeting",
+      currentDateTimeJst: "2026-03-19 06:37 JST",
+      technicalFailure: "agent failure",
+    });
   });
 
   it("returns a limited-scope reply for Slack mention capability questions in the safety path", async () => {
@@ -758,6 +881,7 @@ describe("handleManagerMessage conversation and query-context flow", () => {
           details: {
             intentReport: {
               intent: "conversation",
+              conversationKind: "greeting",
               confidence: 0.98,
               summary: "挨拶です。",
             },
@@ -768,6 +892,7 @@ describe("handleManagerMessage conversation and query-context flow", () => {
       invalidProposalCount: 0,
       intentReport: {
         intent: "conversation",
+        conversationKind: "greeting",
         confidence: 0.98,
         summary: "挨拶です。",
       },

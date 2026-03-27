@@ -41,6 +41,7 @@ import {
   type PersonalizationExtractionResult,
 } from "../planners/personalization-extraction/index.js";
 import {
+  buildSlackGreetingPromptHints,
   detectSlackCapabilityQuery,
   detectSlackOutboundPostRequest,
 } from "../orchestrators/shared/slack-conversation.js";
@@ -102,6 +103,7 @@ export interface ManagerAgentInput {
   userId: string;
   text: string;
   currentDate: string;
+  currentDateTimeJst?: string;
   lastQueryContext?: ThreadQueryContinuation;
   currentThreadNotionPageTarget?: ThreadNotionPageTarget;
   combinedRequestText?: string;
@@ -336,6 +338,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For webhook-issue-created system tasks, treat human work items, design tasks, implementation tasks, and ambiguous requests as no-op unless they map cleanly onto an existing proposal tool.",
     "In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn. The one exception is owner-map updates, which may go through a manager-owned preview-and-confirm step before commit.",
     "Report your current intent with report_manager_intent once per turn before or during tool usage.",
+    "When intent=conversation, include conversationKind=greeting | smalltalk | other in report_manager_intent.",
     "When the turn is a read-only reference lookup using Notion, Slack context, docs, memos, or lightweight web material, report intent=query with queryKind=reference-material.",
     "Use intent=run_task for imperative execution requests on an existing issue such as AIC-123 を進めて, この issue を実行して, or このタスクを進めて.",
     "For run_task turns, inspect the target issue first with raw facts tools before proposing any mutation.",
@@ -946,6 +949,10 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const notionRecheck = shouldTreatAsNotionRecheck(input.text, input.lastQueryContext);
   const styleHints = buildManagerReplyStyleHints(input.text, input.lastQueryContext, input.pendingClarification)
     .map((hint) => `- ${hint}`);
+  const greetingHints = buildSlackGreetingPromptHints({
+    messageText: input.text,
+    currentDateTimeJst: input.currentDateTimeJst,
+  }).map((hint) => `- ${hint}`);
   const capabilityQueryHints = buildCapabilityQueryHints(input.text);
   const slackPostRequestHints = buildSlackPostRequestHints(input.text);
   const workspaceConfigUpdateHints = buildWorkspaceConfigUpdateHints(
@@ -1029,6 +1036,7 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     `- sourceMessageTs: ${input.messageTs}`,
     `- userId: ${input.userId}`,
     `- currentDateJst: ${input.currentDate}`,
+    `- currentDateTimeJst: ${input.currentDateTimeJst ?? "(none)"}`,
     "",
     "User message:",
     input.text || "(empty)",
@@ -1050,6 +1058,13 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "Public reply style hints:",
     ...styleHints,
+    ...(greetingHints.length > 0
+      ? [
+          "",
+          "Greeting hints:",
+          ...greetingHints,
+        ]
+      : []),
     ...(capabilityQueryHints.length > 0
       ? [
           "",

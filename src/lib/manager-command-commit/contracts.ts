@@ -352,6 +352,7 @@ export type DeleteSchedulerJobProposal = z.infer<typeof deleteSchedulerJobPropos
 export type UpdateBuiltinScheduleProposal = z.infer<typeof updateBuiltinScheduleProposalSchema>;
 export type RunSchedulerJobNowProposal = z.infer<typeof runSchedulerJobNowProposalSchema>;
 export type PostSlackMessageProposal = z.infer<typeof postSlackMessageProposalSchema>;
+export const managerConversationKindSchema = z.enum(["greeting", "smalltalk", "other"]);
 
 export const managerIntentReportSchema = z.object({
   intent: z.enum([
@@ -384,8 +385,24 @@ export const managerIntentReportSchema = z.object({
     "reference-material",
   ]).optional(),
   queryScope: z.enum(["self", "team", "thread-context"]).optional(),
+  conversationKind: managerConversationKindSchema.optional(),
   confidence: z.number().min(0).max(1).optional(),
   summary: z.string().optional(),
+}).superRefine((value, ctx) => {
+  if (value.intent === "conversation" && !value.conversationKind) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["conversationKind"],
+      message: "conversationKind is required when intent=conversation",
+    });
+  }
+  if (value.intent !== "conversation" && value.conversationKind) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["conversationKind"],
+      message: "conversationKind must be omitted when intent is not conversation",
+    });
+  }
 });
 
 export type ManagerIntentReport = z.infer<typeof managerIntentReportSchema>;
