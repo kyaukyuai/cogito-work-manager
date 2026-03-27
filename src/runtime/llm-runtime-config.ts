@@ -4,12 +4,19 @@ import { AuthStorage, ModelRegistry, SettingsManager } from "@mariozechner/pi-co
 import type { Model } from "@mariozechner/pi-ai";
 import type { AppConfig, BotThinkingLevel } from "../lib/config.js";
 
+export interface LlmTurnRetryPolicy {
+  maxRetries: number;
+  baseDelayMs: number;
+  source: "fixed";
+}
+
 export interface LlmRuntimeConfig {
   configuredModel: string;
   configuredThinkingLevel: BotThinkingLevel;
   effectiveThinkingLevel: ThinkingLevel;
   maxOutputTokens?: number;
   retryMaxRetries: number;
+  turnRetryPolicy: LlmTurnRetryPolicy;
 }
 
 export interface LlmResolvedModelSummary {
@@ -81,6 +88,7 @@ export interface LlmDiagnostics {
       thinkingLevel: ThinkingLevel;
       maxOutputTokens: number | null;
       retryMaxRetries: number;
+      retryBaseDelayMs: number;
       systemPresent: true;
       toolsPresent: true;
     };
@@ -88,6 +96,7 @@ export interface LlmDiagnostics {
       thinkingLevel: ThinkingLevel;
       maxOutputTokens: number | null;
       retryMaxRetries: number;
+      retryBaseDelayMs: number;
       systemPresent: true;
       toolsPresent: false;
     };
@@ -101,6 +110,7 @@ export interface LlmDiagnostics {
     sessionId: string;
     temperature: string;
     cacheRetention: string;
+    retryPolicy: string;
   };
 }
 
@@ -312,6 +322,12 @@ function summarizeResolvedModel(model: Model<any>): LlmResolvedModelSummary {
   };
 }
 
+const FIXED_TURN_RETRY_POLICY: LlmTurnRetryPolicy = {
+  maxRetries: 2,
+  baseDelayMs: 2000,
+  source: "fixed",
+};
+
 export function resolveLlmRuntimeConfig(config: Pick<AppConfig, "botModel" | "botThinkingLevel" | "botMaxOutputTokens" | "botRetryMaxRetries">, model: Model<any>): LlmRuntimeConfig {
   return {
     configuredModel: config.botModel,
@@ -319,6 +335,7 @@ export function resolveLlmRuntimeConfig(config: Pick<AppConfig, "botModel" | "bo
     effectiveThinkingLevel: resolveEffectiveThinkingLevel(config.botThinkingLevel, model),
     maxOutputTokens: config.botMaxOutputTokens,
     retryMaxRetries: config.botRetryMaxRetries,
+    turnRetryPolicy: FIXED_TURN_RETRY_POLICY,
   };
 }
 
@@ -326,7 +343,11 @@ export function createLlmSettingsManager(runtimeConfig: LlmRuntimeConfig): Setti
   return SettingsManager.inMemory({
     defaultThinkingLevel: runtimeConfig.effectiveThinkingLevel,
     compaction: { enabled: true },
-    retry: { enabled: true, maxRetries: runtimeConfig.retryMaxRetries },
+    retry: {
+      enabled: true,
+      maxRetries: runtimeConfig.turnRetryPolicy.maxRetries,
+      baseDelayMs: runtimeConfig.turnRetryPolicy.baseDelayMs,
+    },
   });
 }
 
@@ -416,14 +437,16 @@ export function buildLlmDiagnostics(args: {
       thread: {
         thinkingLevel: args.runtimeConfig.effectiveThinkingLevel,
         maxOutputTokens: args.runtimeConfig.maxOutputTokens ?? null,
-        retryMaxRetries: args.runtimeConfig.retryMaxRetries,
+        retryMaxRetries: args.runtimeConfig.turnRetryPolicy.maxRetries,
+        retryBaseDelayMs: args.runtimeConfig.turnRetryPolicy.baseDelayMs,
         systemPresent: true,
         toolsPresent: true,
       },
       isolated: {
         thinkingLevel: args.runtimeConfig.effectiveThinkingLevel,
         maxOutputTokens: args.runtimeConfig.maxOutputTokens ?? null,
-        retryMaxRetries: args.runtimeConfig.retryMaxRetries,
+        retryMaxRetries: args.runtimeConfig.turnRetryPolicy.maxRetries,
+        retryBaseDelayMs: args.runtimeConfig.turnRetryPolicy.baseDelayMs,
         systemPresent: true,
         toolsPresent: false,
       },
@@ -435,6 +458,7 @@ export function buildLlmDiagnostics(args: {
         ? "Temperature is currently unset by the repo."
         : "Temperature is currently unset by the repo and Anthropic omits it when thinking is enabled.",
       cacheRetention: "cacheRetention is not configured by the repo. Anthropic currently defaults to short/ephemeral caching.",
+      retryPolicy: "Turn retry policy is fixed in code: initial attempt plus 2 retries with 2000ms exponential backoff base delay.",
     },
   };
 }

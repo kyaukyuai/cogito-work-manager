@@ -48,7 +48,7 @@ describe("llm runtime config", () => {
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  it("creates settings manager with configured retry settings", () => {
+  it("creates settings manager with the fixed turn retry policy", () => {
     const model = getModel("anthropic", "claude-sonnet-4-5");
     const runtimeConfig = resolveLlmRuntimeConfig({
       botModel: model.id,
@@ -59,7 +59,16 @@ describe("llm runtime config", () => {
 
     const settingsManager = createLlmSettingsManager(runtimeConfig);
 
-    expect(settingsManager.getRetrySettings().maxRetries).toBe(0);
+    expect(runtimeConfig.retryMaxRetries).toBe(0);
+    expect(runtimeConfig.turnRetryPolicy).toEqual({
+      maxRetries: 2,
+      baseDelayMs: 2000,
+      source: "fixed",
+    });
+    expect(settingsManager.getRetrySettings()).toMatchObject({
+      maxRetries: 2,
+      baseDelayMs: 2000,
+    });
     expect(settingsManager.getDefaultThinkingLevel()).toBe("high");
   });
 
@@ -113,6 +122,16 @@ describe("llm runtime config", () => {
     expect(diagnostics.providerPayloadPreview.isolated).toMatchObject({
       toolsPresent: false,
     });
+    expect(diagnostics.configured.retryMaxRetries).toBe(1);
+    expect(diagnostics.effective.thread).toMatchObject({
+      retryMaxRetries: 2,
+      retryBaseDelayMs: 2000,
+    });
+    expect(diagnostics.effective.isolated).toMatchObject({
+      retryMaxRetries: 2,
+      retryBaseDelayMs: 2000,
+    });
+    expect(diagnostics.notes.retryPolicy).toContain("fixed in code");
   });
 
   it("summarizes auth source without exposing secrets", async () => {
