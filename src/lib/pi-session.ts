@@ -143,6 +143,11 @@ export interface ManagerAgentTurnResult {
   taskExecutionDecision?: TaskExecutionDecisionReport;
 }
 
+export interface ManagerAgentTurnObserver {
+  onIntentReport?: (report: ManagerIntentReport) => void;
+  onTextDelta?: (delta: string) => void;
+}
+
 function hasExplicitNotionUrl(text: string | undefined): boolean {
   return /https?:\/\/www\.notion\.so\/\S+/i.test(text ?? "");
 }
@@ -1285,16 +1290,19 @@ async function runStructuredPromptTurn(
   config: AppConfig,
   paths: ThreadPaths,
   prompt: string,
+  observer?: ManagerAgentTurnObserver,
 ): Promise<ManagerAgentTurnResult> {
   const runtimeKey = buildThreadRuntimeKey(paths);
   const runtime = await getOrCreateThreadRuntime(config, paths);
   const messageCountBefore = runtime.session.messages.length;
   const deltas: string[] = [];
   const toolCalls: ManagerAgentToolCall[] = [];
+  let lastObservedIntentReportJson: string | undefined;
 
   const unsubscribe = runtime.session.subscribe((event) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       deltas.push(event.assistantMessageEvent.delta);
+      observer?.onTextDelta?.(event.assistantMessageEvent.delta);
       return;
     }
 
@@ -1305,6 +1313,16 @@ async function runStructuredPromptTurn(
         details: result?.details,
         isError: event.isError,
       });
+      const intentReport = extractIntentReport(toolCalls);
+      if (!intentReport) {
+        return;
+      }
+      const intentReportJson = JSON.stringify(intentReport);
+      if (intentReportJson === lastObservedIntentReportJson) {
+        return;
+      }
+      lastObservedIntentReportJson = intentReportJson;
+      observer?.onIntentReport?.(intentReport);
     }
   });
 
@@ -1350,6 +1368,7 @@ export async function runManagerAgentTurn(
   config: AppConfig,
   paths: ThreadPaths,
   input: ManagerAgentInput,
+  observer?: ManagerAgentTurnObserver,
 ): Promise<ManagerAgentTurnResult> {
   const customization = await loadPromptCustomization(config);
   return runStructuredPromptTurn(config, paths, buildManagerAgentPrompt({
@@ -1359,7 +1378,7 @@ export async function runManagerAgentTurn(
     agendaTemplate: shouldIncludeAgendaTemplateForManagerMessage(input)
       ? customization.agendaTemplate
       : undefined,
-  }));
+  }), observer);
 }
 
 export async function runManagerSystemTurn(

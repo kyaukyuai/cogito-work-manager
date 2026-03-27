@@ -14,6 +14,7 @@ import {
   runManagerAgentTurn,
   runManagerReplyTurn,
   runMessageRouterTurn,
+  type ManagerAgentTurnObserver,
   type MessageRouterInput,
   type MessageRouterResult,
 } from "./pi-session.js";
@@ -1334,6 +1335,7 @@ export async function handleManagerMessage(
   runtimeActions?: {
     runSchedulerJobNow?: CommitManagerCommandArgs["runSchedulerJobNow"];
     postSlackMessage?: CommitManagerCommandArgs["postSlackMessage"];
+    managerAgentObserver?: ManagerAgentTurnObserver;
   },
 ): Promise<ManagerHandleResult> {
   const repositories = isManagerRepositories(repositoriesOrNow)
@@ -1431,7 +1433,7 @@ export async function handleManagerMessage(
       currentThreadNotionPageTarget,
       pendingClarification: pendingManagerClarification,
       pendingConfirmation: pendingManagerConfirmation,
-    });
+    }, runtimeActions?.managerAgentObserver);
 
     if (agentTurn.invalidProposalCount > 0 && agentTurn.proposals.length === 0) {
       throw new Error(`manager agent returned ${agentTurn.invalidProposalCount} invalid proposals`);

@@ -949,6 +949,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
           previewSummaryLines: ["entry opt を追加/更新"],
         }),
       }),
+      undefined,
     );
     await expect(loadPendingManagerConfirmation(
       threadPaths,

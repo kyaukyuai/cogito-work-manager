@@ -15,13 +15,17 @@ import {
 } from "../lib/linear-webhook.js";
 import type { Logger } from "../lib/logger.js";
 import { handleManagerMessage } from "../lib/manager.js";
-import { commitManagerCommandProposals } from "../lib/manager-command-commit.js";
+import { commitManagerCommandProposals, type ManagerIntentReport } from "../lib/manager-command-commit.js";
 import { buildSlackVisibleLlmFailureNotice } from "../lib/llm-failure.js";
 import { handleIssueCreatedWebhook } from "../orchestrators/webhooks/handle-issue-created.js";
 import { handlePersonalizationUpdate } from "../orchestrators/personalization/handle-personalization.js";
 import { reconcileAwaitingFollowupsWithCurrentLinear } from "../orchestrators/review/review-data.js";
 import { runManagerSystemTurn } from "../lib/pi-session.js";
-import { postSlackMentionMessage, postSlackProcessingNotice, sendSlackReply } from "../lib/slack-replies.js";
+import {
+  createSlackReplyStreamController,
+  postSlackMentionMessage,
+  sendSlackReply,
+} from "../lib/slack-replies.js";
 import { mergeSystemReply } from "../lib/system-slack-reply.js";
 import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "../lib/slack.js";
 import {
@@ -107,6 +111,12 @@ function buildSlackVisibleFailureReply(args: {
   return [args.fallbackReply, technicalMessage].filter(Boolean).join("\n\n");
 }
 
+function isReadOnlyStreamingIntent(
+  intent: ManagerIntentReport["intent"] | undefined,
+): intent is "conversation" | "query" | "query_schedule" {
+  return intent === "conversation" || intent === "query" || intent === "query_schedule";
+}
+
 async function downloadAttachments(
   token: string,
   attachmentsDir: string,
@@ -186,6 +196,7 @@ export function createAppRuntimeHandlers(args: {
   systemPaths: SystemPaths;
   managerRepositories: ManagerRepositories;
   linearEnv: Record<string, string | undefined>;
+  slackTeamId?: string;
   getManagerPolicy: () => ManagerPolicy;
   setManagerPolicy: (policy: ManagerPolicy) => void;
 }): AppRuntimeHandlers {
@@ -521,16 +532,36 @@ export function createAppRuntimeHandlers(args: {
 
     const message = normalizeSlackMessage(rawEvent);
     const threadKey = `${message.channelId}:${message.rootThreadTs}`;
-    const pendingReplyTsPromise = postSlackProcessingNotice(args.webClient, {
+    let observedIntent: ManagerIntentReport["intent"] | undefined;
+    const streamController = createSlackReplyStreamController(args.webClient, {
       channel: message.channelId,
       threadTs: message.rootThreadTs,
-    }).catch((error) => {
-      args.logger.warn("Failed to post Slack processing notice", {
-        channelId: message.channelId,
-        threadTs: message.rootThreadTs,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return undefined;
+      recipientUserId: message.userId,
+      recipientTeamId: args.slackTeamId,
+      linearWorkspace: args.config.linearWorkspace,
+      onEvent: (event) => {
+        const logPayload = {
+          channelId: message.channelId,
+          threadTs: message.rootThreadTs,
+          intent: observedIntent,
+          reason: event.reason,
+          error: event.error,
+          streamTs: event.ts,
+        };
+        if (event.type === "stream_failed") {
+          args.logger.warn("Slack reply stream failed", logPayload);
+          return;
+        }
+        if (event.type === "stream_fallback") {
+          args.logger.info("Slack reply stream fell back to non-streaming reply", logPayload);
+          return;
+        }
+        if (event.type === "stream_started") {
+          args.logger.info("Slack reply stream started", logPayload);
+          return;
+        }
+        args.logger.info("Slack reply stream stopped", logPayload);
+      },
     });
 
     messageQueue.enqueue(threadKey, async () => {
@@ -589,6 +620,26 @@ export function createAppRuntimeHandlers(args: {
               }
             },
             postSlackMessage: executeSlackMentionPost,
+            managerAgentObserver: {
+              onIntentReport: (report) => {
+                observedIntent = report.intent;
+                if (!isReadOnlyStreamingIntent(report.intent)) {
+                  streamController.disableStreaming();
+                  return;
+                }
+                void streamController.enableStreaming().catch((error) => {
+                  args.logger.warn("Failed to enable Slack reply streaming", {
+                    channelId: message.channelId,
+                    threadTs: message.rootThreadTs,
+                    intent: report.intent,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                });
+              },
+              onTextDelta: (delta) => {
+                streamController.pushTextDelta(delta);
+              },
+            },
           },
         );
         if (managerResult.diagnostics?.agent) {
@@ -647,15 +698,7 @@ export function createAppRuntimeHandlers(args: {
         }
 
         const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
-        const pendingReplyTs = await pendingReplyTsPromise;
-
-        const formattedReply = await sendSlackReply(args.webClient, {
-          channel: message.channelId,
-          threadTs: message.rootThreadTs,
-          reply,
-          linearWorkspace: args.config.linearWorkspace,
-          updateTs: pendingReplyTs,
-        });
+        const formattedReply = await streamController.finalizeReply(reply);
 
         await appendThreadLog(paths, {
           type: "assistant",
@@ -670,19 +713,11 @@ export function createAppRuntimeHandlers(args: {
           threadTs: message.rootThreadTs,
           error: errorMessage,
         });
-        const pendingReplyTs = await pendingReplyTsPromise;
-
-        const reply = await sendSlackReply(args.webClient, {
-          channel: message.channelId,
-          threadTs: message.rootThreadTs,
-          reply: buildSlackVisibleFailureReply({
-            error,
-            fallbackReply: "処理に失敗しました。設定や Linear 連携を確認してください。",
-            includeTechnicalMessage: true,
-          }),
-          linearWorkspace: args.config.linearWorkspace,
-          updateTs: pendingReplyTs,
-        });
+        const reply = await streamController.finalizeReply(buildSlackVisibleFailureReply({
+          error,
+          fallbackReply: "処理に失敗しました。設定や Linear 連携を確認してください。",
+          includeTechnicalMessage: true,
+        }));
 
         await appendThreadLog(paths, {
           type: "system",

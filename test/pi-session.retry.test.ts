@@ -13,6 +13,12 @@ const codingAgentMocks = vi.hoisted(() => ({
     requiredRetries?: number;
     successReply?: string;
     failureMessage?: string;
+    textDeltas?: string[];
+    toolExecutions?: Array<{
+      toolName: string;
+      details?: unknown;
+      isError?: boolean;
+    }>;
   }>,
   settingsSnapshots: [] as Array<{
     retrySettings: {
@@ -160,14 +166,28 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
 
         const requiredRetries = scenario.requiredRetries ?? retrySettings.maxRetries + 1;
         if (scenario.successReply && retrySettings.maxRetries >= requiredRetries) {
-          for (const listener of listeners) {
-            listener({
-              type: "message_update",
-              assistantMessageEvent: {
-                type: "text_delta",
-                delta: scenario.successReply,
-              },
-            });
+          for (const toolExecution of scenario.toolExecutions ?? []) {
+            for (const listener of listeners) {
+              listener({
+                type: "tool_execution_end",
+                toolName: toolExecution.toolName,
+                isError: toolExecution.isError ?? false,
+                result: {
+                  details: toolExecution.details,
+                },
+              });
+            }
+          }
+          for (const delta of scenario.textDeltas ?? [scenario.successReply]) {
+            for (const listener of listeners) {
+              listener({
+                type: "message_update",
+                assistantMessageEvent: {
+                  type: "text_delta",
+                  delta,
+                },
+              });
+            }
           }
           session.messages.push({
             role: "assistant",
@@ -370,5 +390,66 @@ describe("pi-session fixed retry policy", () => {
       },
       sessionKind: "thread",
     });
+  });
+
+  it("notifies manager agent observers about intent reports and text deltas", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-session-observer-"));
+    tempDirs.push(workspaceDir);
+    await ensureManagerStateFiles(buildSystemPaths(workspaceDir));
+
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-observer");
+    await ensureThreadWorkspace(threadPaths);
+
+    codingAgentMocks.scenarios.push({
+      requiredRetries: 0,
+      successReply: "ストリーミング返信です。",
+      textDeltas: ["ストリーミング", "返信です。"],
+      toolExecutions: [{
+        toolName: "report_manager_intent",
+        details: {
+          intentReport: {
+            intent: "conversation",
+            conversationKind: "smalltalk",
+            confidence: 0.88,
+            summary: "雑談です。",
+          },
+        },
+      }],
+    });
+
+    const piSession = await import("../src/lib/pi-session.js");
+    const observedReports: Array<Record<string, unknown>> = [];
+    const observedDeltas: string[] = [];
+    const result = await piSession.runManagerAgentTurn(
+      buildConfig(workspaceDir),
+      threadPaths,
+      {
+        kind: "message",
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-observer",
+        messageTs: "thread-observer",
+        userId: "U123",
+        text: "こんにちは",
+        currentDate: "2026-03-27",
+        currentDateTimeJst: "2026-03-27 11:30 JST",
+      },
+      {
+        onIntentReport: (report) => {
+          observedReports.push(report);
+        },
+        onTextDelta: (delta) => {
+          observedDeltas.push(delta);
+        },
+      },
+    );
+
+    expect(result.reply).toBe("ストリーミング返信です。");
+    expect(observedReports).toEqual([{
+      intent: "conversation",
+      conversationKind: "smalltalk",
+      confidence: 0.88,
+      summary: "雑談です。",
+    }]);
+    expect(observedDeltas).toEqual(["ストリーミング", "返信です。"]);
   });
 });

@@ -1,11 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createSlackReplyStreamController,
   postSlackMentionMessage,
   postSlackProcessingNotice,
   sendSlackReply,
 } from "../src/lib/slack-replies.js";
 
 describe("slack reply helpers", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("posts a processing notice in thread", async () => {
     const postMessage = vi.fn().mockResolvedValue({ ts: "123.456" });
     const update = vi.fn();
@@ -73,6 +78,130 @@ describe("slack reply helpers", () => {
       text: "AIC-39 を確認してください。",
       blocks: expect.any(Array),
     });
+  });
+
+  it("starts and stops a reply stream for read-only replies", async () => {
+    vi.useFakeTimers();
+    const postMessage = vi.fn();
+    const update = vi.fn();
+    const startStream = vi.fn().mockResolvedValue({ ts: "stream.123" });
+    const appendStream = vi.fn().mockResolvedValue({});
+    const stopStream = vi.fn().mockResolvedValue({});
+    const webClient = {
+      chat: { postMessage, update, startStream, appendStream, stopStream },
+    } as never;
+
+    const controller = createSlackReplyStreamController(webClient, {
+      channel: "C123",
+      threadTs: "111.222",
+      recipientUserId: "U123",
+      recipientTeamId: "T123",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    await controller.enableStreaming();
+    controller.pushTextDelta("こんにちは");
+
+    const text = await controller.finalizeReply("こんにちは");
+
+    expect(text).toBe("こんにちは");
+    expect(startStream).toHaveBeenCalledWith({
+      channel: "C123",
+      thread_ts: "111.222",
+      recipient_user_id: "U123",
+      recipient_team_id: "T123",
+      markdown_text: "こんにちは",
+    });
+    expect(stopStream).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "stream.123",
+      markdown_text: undefined,
+    });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("appends buffered deltas on a throttle while streaming", async () => {
+    vi.useFakeTimers();
+    const postMessage = vi.fn();
+    const update = vi.fn();
+    const startStream = vi.fn().mockResolvedValue({ ts: "stream.456" });
+    const appendStream = vi.fn().mockResolvedValue({});
+    const stopStream = vi.fn().mockResolvedValue({});
+    const webClient = {
+      chat: { postMessage, update, startStream, appendStream, stopStream },
+    } as never;
+
+    const controller = createSlackReplyStreamController(webClient, {
+      channel: "C123",
+      threadTs: "111.222",
+      recipientUserId: "U123",
+      recipientTeamId: "T123",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    await controller.enableStreaming();
+    controller.pushTextDelta("こんにちは");
+    await vi.advanceTimersByTimeAsync(250);
+
+    controller.pushTextDelta("。よろしくお願いします。");
+    await vi.advanceTimersByTimeAsync(250);
+
+    const text = await controller.finalizeReply("こんにちは。よろしくお願いします。");
+
+    expect(text).toBe("こんにちは。よろしくお願いします。");
+    expect(startStream).toHaveBeenCalledTimes(1);
+    expect(appendStream).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "stream.456",
+      markdown_text: "。よろしくお願いします。",
+    });
+    expect(stopStream).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "stream.456",
+      markdown_text: undefined,
+    });
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("falls back to placeholder plus update when stream setup fails", async () => {
+    vi.useFakeTimers();
+    const postMessage = vi.fn().mockResolvedValue({ ts: "123.456" });
+    const update = vi.fn().mockResolvedValue({});
+    const startStream = vi.fn().mockRejectedValue(new Error("stream_not_allowed"));
+    const appendStream = vi.fn();
+    const stopStream = vi.fn();
+    const webClient = {
+      chat: { postMessage, update, startStream, appendStream, stopStream },
+    } as never;
+
+    const controller = createSlackReplyStreamController(webClient, {
+      channel: "C123",
+      threadTs: "111.222",
+      recipientUserId: "U123",
+      recipientTeamId: "T123",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    await controller.enableStreaming();
+    controller.pushTextDelta("こんにちは");
+
+    const text = await controller.finalizeReply("こんにちは");
+
+    expect(text).toBe("こんにちは");
+    expect(postMessage).toHaveBeenCalledWith({
+      channel: "C123",
+      thread_ts: "111.222",
+      text: "考え中...",
+    });
+    expect(update).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "123.456",
+      text: "こんにちは",
+      blocks: expect.any(Array),
+    });
+    expect(stopStream).not.toHaveBeenCalled();
   });
 
   it("posts a mention message into the current thread", async () => {

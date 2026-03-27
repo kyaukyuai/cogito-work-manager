@@ -130,6 +130,7 @@ export async function runApp(): Promise<void> {
 
   const authTest = await webClient.auth.test();
   const botUserId = authTest.user_id;
+  const slackTeamId = authTest.team_id;
   if (!botUserId) {
     throw new Error("Unable to resolve Slack bot user ID");
   }
@@ -148,6 +149,7 @@ export async function runApp(): Promise<void> {
     systemPaths,
     managerRepositories,
     linearEnv,
+    slackTeamId,
     getManagerPolicy: () => managerPolicy,
     setManagerPolicy: (nextPolicy) => {
       managerPolicy = nextPolicy;
