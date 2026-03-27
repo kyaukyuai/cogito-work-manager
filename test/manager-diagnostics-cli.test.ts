@@ -128,6 +128,68 @@ describe("manager diagnostics cli", () => {
     ]));
   });
 
+  it("prints workgraph diagnostics with operator guidance", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-workgraph-"));
+    tempDirs.push(cwd);
+
+    await mkdir(join(cwd, "workspace", "system"), { recursive: true });
+    await writeFile(join(cwd, "workspace", "system", "workgraph-events.jsonl"), [
+      JSON.stringify({
+        id: "00000000-0000-4000-8000-000000000001",
+        type: "planning.parent_created",
+        occurredAt: "2026-03-19T05:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-workgraph",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-workgraph",
+        sourceMessageTs: "msg-1",
+        issueId: "AIC-980",
+        title: "workgraph health check",
+      }),
+      "",
+    ].join("\n"), "utf8");
+
+    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "workgraph", "./workspace"], {
+      cwd,
+      env: {
+        ...process.env,
+        WORKGRAPH_HEALTH_WARN_ACTIVE_EVENTS: "1",
+        WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS: "3",
+      },
+    });
+    const json = stdout.slice(stdout.indexOf("{"));
+    const diagnostics = JSON.parse(json) as {
+      health: {
+        status?: string;
+        recommendedAction?: string;
+        reasons?: Array<{ code?: string }>;
+      };
+      operatorActionSummary: {
+        commands?: { compact?: string; recover?: string };
+      };
+      files: {
+        activeLog?: { relativePath?: string; sizeBytes?: number | null };
+      };
+    };
+
+    expect(diagnostics.health).toMatchObject({
+      status: "warning",
+      recommendedAction: "observe",
+      reasons: [
+        expect.objectContaining({
+          code: "active-log-warning",
+        }),
+      ],
+    });
+    expect(diagnostics.operatorActionSummary.commands).toMatchObject({
+      compact: expect.stringContaining("npm run workgraph:compact"),
+      recover: expect.stringContaining("npm run workgraph:recover"),
+    });
+    expect(diagnostics.files.activeLog).toMatchObject({
+      relativePath: "workgraph-events.jsonl",
+    });
+    expect(diagnostics.files.activeLog?.sizeBytes ?? 0).toBeGreaterThan(0);
+  });
+
   it("prints thread summary fields for the last agent turn", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-thread-"));
     tempDirs.push(cwd);

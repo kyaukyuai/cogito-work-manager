@@ -67,7 +67,47 @@ const config: AppConfig = {
 
 function buildRepositoriesForTools() {
   return {
-    policy: { load: vi.fn() },
+    policy: {
+      load: vi.fn().mockResolvedValue({
+        controlRoomChannelId: "C0ALAMDRB9V",
+        assistantName: "コギト",
+        fallbackOwner: "kyaukyuai",
+        businessHours: {
+          timezone: "Asia/Tokyo",
+          weekdays: [1, 2, 3, 4, 5],
+          start: "09:00",
+          end: "18:00",
+        },
+        heartbeatEnabled: true,
+        heartbeatIntervalMin: 30,
+        heartbeatActiveLookbackHours: 24,
+        staleBusinessDays: 3,
+        blockedBusinessDays: 1,
+        followupCooldownHours: 24,
+        clarificationCooldownHours: 12,
+        autoCreate: true,
+        autoStatusUpdate: true,
+        autoAssign: true,
+        autoPlan: true,
+        reviewExplicitFollowupCount: 1,
+        mentionOnFirstFollowupCategories: ["blocked", "overdue", "due_today", "due_soon"],
+        mentionOnRepingCategories: ["stale", "owner_missing"],
+        mentionAfterRepingCount: 1,
+        researchAutoPlanMinActions: 2,
+        researchAutoPlanMaxChildren: 3,
+        urgentPriorityThreshold: 2,
+        reviewCadence: {
+          morningEnabled: true,
+          morning: "09:00",
+          eveningEnabled: true,
+          evening: "17:00",
+          weeklyEnabled: true,
+          weeklyDay: "mon",
+          weeklyTime: "09:30",
+        },
+      }),
+      save: vi.fn(),
+    },
     ownerMap: {
       load: vi.fn().mockResolvedValue({
         defaultOwner: "kyaukyuai",

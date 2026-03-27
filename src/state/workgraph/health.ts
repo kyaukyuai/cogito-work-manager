@@ -6,6 +6,18 @@ export interface WorkgraphHealthPolicy {
   autoCompactMaxActiveLogEvents: number;
 }
 
+export type WorkgraphHealthReasonCode =
+  | "snapshot-invalid"
+  | "snapshot-ahead-of-log"
+  | "active-log-warning"
+  | "compact-recommended";
+
+export interface WorkgraphHealthReason {
+  code: WorkgraphHealthReasonCode;
+  severity: "warning" | "recovery-required";
+  summary: string;
+}
+
 export interface WorkgraphHealth {
   status: "ok" | "warning" | "recovery-required";
   snapshotEventCount: number;
@@ -19,6 +31,13 @@ export interface WorkgraphHealth {
   snapshotInvalid: boolean;
   snapshotAheadOfLog: boolean;
   compactRecommended: boolean;
+  warnActiveLogEvents: number;
+  autoCompactMaxActiveLogEvents: number;
+  eventsUntilWarning: number;
+  eventsUntilAutoCompact: number;
+  reasons: WorkgraphHealthReason[];
+  recommendedAction: "observe" | "compact" | "recover";
+  operatorSummary: string;
 }
 
 export function assessWorkgraphHealth(
@@ -38,6 +57,50 @@ export function assessWorkgraphHealth(
     : Math.max(0, activeLogEventCount - snapshottedActiveLogEventCount);
   const compactRecommended = activeLogEventCount >= policy.autoCompactMaxActiveLogEvents;
   const warning = compactRecommended || activeLogEventCount >= policy.warnActiveLogEvents;
+  const eventsUntilWarning = Math.max(0, policy.warnActiveLogEvents - activeLogEventCount);
+  const eventsUntilAutoCompact = Math.max(0, policy.autoCompactMaxActiveLogEvents - activeLogEventCount);
+  const reasons: WorkgraphHealthReason[] = [];
+
+  if (snapshotInvalid) {
+    reasons.push({
+      code: "snapshot-invalid",
+      severity: "recovery-required",
+      summary: "snapshot compactedEventCount exceeds snapshot eventCount.",
+    });
+  }
+  if (snapshotAheadOfLog) {
+    reasons.push({
+      code: "snapshot-ahead-of-log",
+      severity: "recovery-required",
+      summary: "snapshot expects more replay tail events than the active log currently contains.",
+    });
+  }
+  if (compactRecommended) {
+    reasons.push({
+      code: "compact-recommended",
+      severity: "warning",
+      summary: `active log reached the auto-compaction threshold (${policy.autoCompactMaxActiveLogEvents}).`,
+    });
+  } else if (warning) {
+    reasons.push({
+      code: "active-log-warning",
+      severity: "warning",
+      summary: `active log reached the warning threshold (${policy.warnActiveLogEvents}).`,
+    });
+  }
+
+  const recommendedAction = snapshotInvalid || snapshotAheadOfLog
+    ? "recover"
+    : compactRecommended
+      ? "compact"
+      : "observe";
+  const operatorSummary = recommendedAction === "recover"
+    ? "Recovery is required before trusting the current workgraph snapshot."
+    : recommendedAction === "compact"
+      ? "Compaction is recommended now because the active event log has reached the configured threshold."
+      : warning
+        ? "Workgraph is still readable, but the active event log is growing and should be watched."
+        : "Workgraph health is OK. No maintenance action is required now.";
 
   return {
     status: snapshotInvalid || snapshotAheadOfLog
@@ -56,5 +119,12 @@ export function assessWorkgraphHealth(
     snapshotInvalid,
     snapshotAheadOfLog,
     compactRecommended,
+    warnActiveLogEvents: policy.warnActiveLogEvents,
+    autoCompactMaxActiveLogEvents: policy.autoCompactMaxActiveLogEvents,
+    eventsUntilWarning,
+    eventsUntilAutoCompact,
+    reasons,
+    recommendedAction,
+    operatorSummary,
   };
 }

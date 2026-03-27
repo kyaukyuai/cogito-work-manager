@@ -473,6 +473,12 @@ describe("workgraph repository", () => {
       activeLogEventCount: 2,
       replayTailEventCount: 2,
       compactRecommended: true,
+      recommendedAction: "compact",
+      reasons: [
+        expect.objectContaining({
+          code: "compact-recommended",
+        }),
+      ],
       issueCount: 1,
       threadCount: 1,
     });
@@ -524,6 +530,12 @@ describe("workgraph repository", () => {
       status: "recovery-required",
       snapshotAheadOfLog: true,
       activeLogEventCount: 1,
+      recommendedAction: "recover",
+      reasons: [
+        expect.objectContaining({
+          code: "snapshot-ahead-of-log",
+        }),
+      ],
     });
   });
 });

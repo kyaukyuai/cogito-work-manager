@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { type WorkgraphHealthPolicy } from "../src/state/workgraph/health.js";
+import { buildWorkgraphDiagnostics } from "../src/state/workgraph/diagnostics.js";
 import { createFileBackedWorkgraphRepository } from "../src/state/workgraph/file-backed-workgraph-repository.js";
 
 type Command = "health" | "snapshot" | "compact" | "recover";
@@ -22,34 +23,49 @@ function loadPolicy(): WorkgraphHealthPolicy {
 async function main(): Promise<void> {
   const command = parseCommand(process.argv[2]);
   const workspaceDir = resolve(process.argv[3] ?? process.env.WORKSPACE_DIR ?? "./workspace");
-  const repository = createFileBackedWorkgraphRepository(buildSystemPaths(workspaceDir));
+  const systemPaths = buildSystemPaths(workspaceDir);
+  const repository = createFileBackedWorkgraphRepository(systemPaths);
   const policy = loadPolicy();
 
   if (command === "health") {
-    const health = await repository.health(policy);
+    const diagnostics = await buildWorkgraphDiagnostics({
+      workspaceDir,
+      repository,
+      policy,
+      systemPaths,
+    });
     process.stdout.write(`${JSON.stringify({
       command,
-      workspaceDir,
-      ...health,
+      ...diagnostics,
     }, null, 2)}\n`);
     return;
   }
 
+  const before = await repository.health(policy);
   const snapshot = command === "snapshot"
     ? await repository.rebuildSnapshot()
     : command === "compact"
       ? await repository.compact()
       : await repository.recoverSnapshotFromLog();
+  const diagnostics = await buildWorkgraphDiagnostics({
+    workspaceDir,
+    repository,
+    policy,
+    systemPaths,
+  });
 
   process.stdout.write(`${JSON.stringify({
     command,
     workspaceDir,
+    before,
     eventCount: snapshot.eventCount,
     compactedEventCount: snapshot.compactedEventCount,
     lastEventId: snapshot.lastEventId ?? null,
     lastOccurredAt: snapshot.lastOccurredAt ?? null,
     issueCount: Object.keys(snapshot.projection.issues).length,
     threadCount: Object.keys(snapshot.projection.threads).length,
+    health: diagnostics.health,
+    operatorActionSummary: diagnostics.operatorActionSummary,
   }, null, 2)}\n`);
 }
 

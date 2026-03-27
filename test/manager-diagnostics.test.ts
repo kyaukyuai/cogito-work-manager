@@ -6,6 +6,7 @@ import {
   buildManagerIssueDiagnostics,
   buildManagerStateFileDiagnostics,
   buildManagerThreadDiagnostics,
+  buildManagerWorkgraphDiagnostics,
   buildManagerWorkspaceMemoryDiagnostics,
 } from "../src/lib/manager-diagnostics.js";
 import { saveLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
@@ -304,6 +305,62 @@ describe("manager diagnostics", () => {
     ]));
     expect(diagnostics.writePolicyNotes.silentAutoUpdate).toContain("automatically");
     expect(diagnostics.writePolicyNotes.explicitSlackUpdate).toContain("explicit Slack request");
+  });
+
+  it("builds workgraph diagnostics with operator guidance", async () => {
+    await repositories.workgraph.append([
+      {
+        type: "planning.parent_created",
+        occurredAt: "2026-03-19T05:00:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-workgraph",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-workgraph",
+        sourceMessageTs: "msg-workgraph-1",
+        issueId: "AIC-980",
+        title: "workgraph health check",
+      },
+      {
+        type: "issue.progressed",
+        occurredAt: "2026-03-19T05:10:00.000Z",
+        threadKey: "C0ALAMDRB9V:thread-workgraph",
+        sourceChannelId: "C0ALAMDRB9V",
+        sourceThreadTs: "thread-workgraph",
+        sourceMessageTs: "msg-workgraph-2",
+        issueId: "AIC-980",
+      },
+    ]);
+
+    const diagnostics = await buildManagerWorkgraphDiagnostics({
+      config: {
+        ...config,
+        workspaceDir,
+        workgraphHealthWarnActiveEvents: 1,
+        workgraphAutoCompactMaxActiveEvents: 5,
+      },
+      repositories,
+    });
+
+    expect(diagnostics.health).toMatchObject({
+      status: "warning",
+      activeLogEventCount: 2,
+      recommendedAction: "observe",
+      reasons: [
+        expect.objectContaining({
+          code: "active-log-warning",
+        }),
+      ],
+    });
+    expect(diagnostics.files.activeLog.relativePath).toBe("workgraph-events.jsonl");
+    expect(diagnostics.files.activeLog.sizeBytes).toBeGreaterThan(0);
+    expect(diagnostics.operatorActionSummary).toMatchObject({
+      recommendedAction: "observe",
+      commands: {
+        compact: `npm run workgraph:compact -- ${workspaceDir}`,
+        recover: `npm run workgraph:recover -- ${workspaceDir}`,
+      },
+    });
+    expect(diagnostics.operatorActionSummary.maintenanceRules.compactWhen).toContain(">= 5");
+    expect(diagnostics.operatorActionSummary.maintenanceRules.recoverWhen).toContain("snapshotInvalid=true");
   });
 
   it("builds workspace memory diagnostics with coverage and boundary warnings", async () => {

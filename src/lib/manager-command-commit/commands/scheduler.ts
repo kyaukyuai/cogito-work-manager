@@ -6,7 +6,6 @@ import {
   saveSchedulerJobs,
   schedulerJobSchema,
 } from "../../system-workspace.js";
-import { ensureManagerStateFiles, loadManagerPolicy, saveManagerPolicy } from "../../manager-state.js";
 import {
   getUnifiedSchedule,
   isBuiltInReviewJobId,
@@ -327,7 +326,7 @@ export async function commitUpdateBuiltinScheduleProposal(
     };
   }
   const systemPaths = buildSystemPaths(args.config.workspaceDir);
-  const nextPolicy = await loadManagerPolicy(systemPaths);
+  const nextPolicy = await args.repositories.policy.load();
 
   if (proposal.builtinId === "heartbeat") {
     nextPolicy.heartbeatEnabled = proposal.enabled ?? nextPolicy.heartbeatEnabled;
@@ -345,8 +344,7 @@ export async function commitUpdateBuiltinScheduleProposal(
     nextPolicy.reviewCadence.weeklyDay = proposal.weekday ?? nextPolicy.reviewCadence.weeklyDay;
   }
 
-  await saveManagerPolicy(systemPaths, nextPolicy);
-  await ensureManagerStateFiles(systemPaths);
+  await args.repositories.policy.save(nextPolicy);
 
   const targetId = proposal.builtinId === "heartbeat"
     ? "heartbeat"

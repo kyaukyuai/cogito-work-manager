@@ -30,7 +30,7 @@ import {
 export interface HandleIssueCreatedWebhookArgs {
   config: AppConfig;
   paths: ThreadPaths;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "workgraph" | "personalization" | "notionPages">;
+  repositories: Pick<ManagerRepositories, "policy" | "ownerMap" | "planning" | "followups" | "workgraph" | "personalization" | "notionPages">;
   policy: ManagerPolicy;
   issue: LinearIssue;
   deliveryId: string;

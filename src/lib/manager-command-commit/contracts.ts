@@ -487,7 +487,7 @@ export interface ManagerCommitResult {
 
 export interface CommitManagerCommandArgs {
   config: AppConfig;
-  repositories: Pick<ManagerRepositories, "ownerMap" | "planning" | "followups" | "personalization" | "notionPages" | "workgraph">;
+  repositories: Pick<ManagerRepositories, "policy" | "ownerMap" | "planning" | "followups" | "personalization" | "notionPages" | "workgraph">;
   proposals: ManagerCommandProposal[];
   message: ManagerCommitMessageContext | ManagerCommitSystemContext;
   now: Date;

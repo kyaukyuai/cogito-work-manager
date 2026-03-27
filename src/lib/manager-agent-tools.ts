@@ -29,7 +29,6 @@ import {
   searchNotionPages,
   type NotionCommandEnv,
 } from "./notion.js";
-import { loadManagerPolicy } from "./manager-state.js";
 import {
   getUnifiedSchedule,
   listUnifiedSchedules,
@@ -923,7 +922,10 @@ function createNotionReadTools(config: AppConfig): ToolDefinition[] {
   ];
 }
 
-function createSchedulerReadTools(config: AppConfig): ToolDefinition[] {
+function createSchedulerReadTools(
+  config: AppConfig,
+  repositories: Pick<ManagerRepositories, "policy">,
+): ToolDefinition[] {
   const systemPaths = buildSystemPaths(config.workspaceDir);
 
   return [
@@ -936,7 +938,7 @@ function createSchedulerReadTools(config: AppConfig): ToolDefinition[] {
         channelId: Type.Optional(Type.String({ description: "Optional Slack channel ID filter. Defaults to the control room channel." })),
       }),
       async execute(_toolCallId, params) {
-        const policy = await loadManagerPolicy(systemPaths);
+        const policy = await repositories.policy.load();
         const schedules = await listUnifiedSchedules(systemPaths, policy, {
           channelId: (params as { channelId?: string }).channelId,
         });
@@ -955,7 +957,7 @@ function createSchedulerReadTools(config: AppConfig): ToolDefinition[] {
         id: Type.String({ description: "Custom job id or built-in schedule id such as manager-review-evening, morning-review, or heartbeat." }),
       }),
       async execute(_toolCallId, params) {
-        const policy = await loadManagerPolicy(systemPaths);
+        const policy = await repositories.policy.load();
         const schedule = await getUnifiedSchedule(systemPaths, policy, (params as { id: string }).id);
         return {
           content: [{ type: "text", text: schedule ? formatScheduleViewText(schedule) : "Schedule not found." }],
@@ -1551,7 +1553,7 @@ export function createManagerAgentTools(
     createTaskExecutionDecisionTool(),
     createQuerySnapshotTool(),
     ...createLinearReadTools(config, helpers),
-    ...createSchedulerReadTools(config),
+    ...createSchedulerReadTools(config, repositories),
     ...createWorkspaceReadTools(config, repositories),
     ...createNotionReadTools(config),
     ...createSlackContextTools(config),

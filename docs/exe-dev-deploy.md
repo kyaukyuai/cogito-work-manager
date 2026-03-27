@@ -339,6 +339,7 @@ npm run manager:diagnostics -- webhook /workspace
 npm run manager:diagnostics -- state-files /workspace
 npm run manager:diagnostics -- personalization /workspace
 npm run manager:diagnostics -- memory /workspace
+npm run manager:diagnostics -- workgraph /workspace
 npm run manager:diagnostics -- llm /workspace
 ```
 

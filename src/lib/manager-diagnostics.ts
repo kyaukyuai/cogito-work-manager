@@ -24,6 +24,7 @@ import {
 } from "./workspace-memory-diagnostics.js";
 import type { FollowupLedgerEntry } from "../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
+import { buildWorkgraphDiagnostics, type WorkgraphDiagnostics } from "../state/workgraph/diagnostics.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
   getIssueContext,
@@ -89,6 +90,8 @@ export interface ManagerWorkspaceMemoryDiagnostics extends WorkspaceMemoryCovera
   workspaceDir: string;
   memoryFile: string;
 }
+
+export interface ManagerWorkgraphDiagnostics extends WorkgraphDiagnostics {}
 
 async function loadLinearIssueBestEffort(
   issueId: string,
@@ -257,4 +260,18 @@ export async function buildManagerWorkspaceMemoryDiagnostics(args: {
     memoryFile: systemPaths.memoryFile,
     ...analyzeWorkspaceMemory(workspaceMemory),
   };
+}
+
+export async function buildManagerWorkgraphDiagnostics(args: {
+  config: AppConfig;
+  repositories: Pick<ManagerRepositories, "workgraph">;
+}): Promise<ManagerWorkgraphDiagnostics> {
+  return buildWorkgraphDiagnostics({
+    workspaceDir: args.config.workspaceDir,
+    repository: args.repositories.workgraph,
+    policy: {
+      warnActiveLogEvents: args.config.workgraphHealthWarnActiveEvents,
+      autoCompactMaxActiveLogEvents: args.config.workgraphAutoCompactMaxActiveEvents,
+    },
+  });
 }

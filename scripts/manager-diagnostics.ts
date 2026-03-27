@@ -4,6 +4,7 @@ import {
   buildManagerIssueDiagnostics,
   buildManagerStateFileDiagnostics,
   buildManagerThreadDiagnostics,
+  buildManagerWorkgraphDiagnostics,
   buildManagerWorkspaceMemoryDiagnostics,
 } from "../src/lib/manager-diagnostics.js";
 import { DEFAULT_BOT_MODEL, type AppConfig } from "../src/lib/config.js";
@@ -12,7 +13,7 @@ import { buildLlmDiagnosticsFromConfig } from "../src/runtime/llm-runtime-config
 import { buildSystemPaths, readWorkspaceAgents, readWorkspaceMemory } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
-type Command = "thread" | "issue" | "webhook" | "personalization" | "llm" | "state-files" | "memory";
+type Command = "thread" | "issue" | "webhook" | "personalization" | "llm" | "state-files" | "memory" | "workgraph";
 
 function extractMarkdownHeadings(value: string | undefined): string[] {
   if (!value) {
@@ -25,8 +26,8 @@ function extractMarkdownHeadings(value: string | undefined): string[] {
 }
 
 function parseCommand(value: string | undefined): Command {
-  if (value === "thread" || value === "issue" || value === "webhook" || value === "personalization" || value === "llm" || value === "state-files" || value === "memory") return value;
-  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|issue|webhook|personalization|llm|state-files|memory> <arg1> <arg2?> [workspaceDir]");
+  if (value === "thread" || value === "issue" || value === "webhook" || value === "personalization" || value === "llm" || value === "state-files" || value === "memory" || value === "workgraph") return value;
+  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|issue|webhook|personalization|llm|state-files|memory|workgraph> <arg1> <arg2?> [workspaceDir]");
 }
 
 function buildRuntimeConfig(workspaceDir: string): AppConfig {
@@ -123,6 +124,15 @@ async function main(): Promise<void> {
 
   if (command === "memory") {
     const diagnostics = await buildManagerWorkspaceMemoryDiagnostics({ workspaceDir });
+    process.stdout.write(`${JSON.stringify(diagnostics, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "workgraph") {
+    const diagnostics = await buildManagerWorkgraphDiagnostics({
+      config,
+      repositories,
+    });
     process.stdout.write(`${JSON.stringify(diagnostics, null, 2)}\n`);
     return;
   }

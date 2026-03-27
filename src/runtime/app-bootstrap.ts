@@ -83,6 +83,8 @@ export async function runApp(): Promise<void> {
           activeLogEventCountAfter: result.after?.activeLogEventCount,
           snapshotEventCount: result.after?.snapshotEventCount ?? result.snapshot?.eventCount,
           compactedEventCount: result.after?.compactedEventCount ?? result.snapshot?.compactedEventCount,
+          recommendedActionBefore: result.before.recommendedAction,
+          operatorSummaryBefore: result.before.operatorSummary,
         });
         return;
       }
@@ -94,6 +96,8 @@ export async function runApp(): Promise<void> {
           activeLogEventCount: result.before.activeLogEventCount,
           snapshotInvalid: result.before.snapshotInvalid,
           snapshotAheadOfLog: result.before.snapshotAheadOfLog,
+          reasons: result.before.reasons.map((reason) => reason.code),
+          operatorSummary: result.before.operatorSummary,
         });
         return;
       }
@@ -103,6 +107,8 @@ export async function runApp(): Promise<void> {
           activeLogEventCount: result.before.activeLogEventCount,
           replayTailEventCount: result.before.replayTailEventCount,
           compactRecommended: result.before.compactRecommended,
+          reasons: result.before.reasons.map((reason) => reason.code),
+          operatorSummary: result.before.operatorSummary,
         });
         return;
       }
@@ -111,6 +117,7 @@ export async function runApp(): Promise<void> {
         activeLogEventCount: result.before.activeLogEventCount,
         replayTailEventCount: result.before.replayTailEventCount,
         snapshotEventCount: result.before.snapshotEventCount,
+        operatorSummary: result.before.operatorSummary,
       });
     } catch (error) {
       logger.warn("Workgraph maintenance failed", {

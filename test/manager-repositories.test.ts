@@ -62,6 +62,10 @@ describe("file-backed manager repositories", () => {
 
     await repositories.followups.save(followups);
     await repositories.planning.save(planningLedger);
+    await repositories.policy.save({
+      ...policy,
+      heartbeatIntervalMin: 45,
+    });
     await repositories.ownerMap.save({
       defaultOwner: "y.kakui",
       entries: [
@@ -77,6 +81,9 @@ describe("file-backed manager repositories", () => {
 
     expect(await loadFollowupsLedger(systemPaths)).toEqual(followups);
     expect(await loadPlanningLedger(systemPaths)).toEqual(planningLedger);
+    await expect(repositories.policy.load()).resolves.toMatchObject({
+      heartbeatIntervalMin: 45,
+    });
     await expect(repositories.ownerMap.load()).resolves.toEqual({
       defaultOwner: "y.kakui",
       entries: [
