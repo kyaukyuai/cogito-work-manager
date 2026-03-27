@@ -4,6 +4,7 @@ import {
   assignLinearIssue,
   createManagedLinearIssue,
   createManagedLinearIssueBatch,
+  getLinearIssue,
   searchLinearIssues,
   updateManagedLinearIssue,
   type LinearIssue,
@@ -12,6 +13,7 @@ import {
   compactLinearIssues,
   formatAutonomousCreateReply,
   formatExistingIssueReply,
+  formatIssueReference,
   formatSourceComment,
 } from "../../../orchestrators/intake/formatting.js";
 import {
@@ -28,10 +30,11 @@ import {
 import type {
   CreateIssueBatchProposal,
   CreateIssueProposal,
+  LinkExistingIssueProposal,
   ManagerCommandHandlerResult,
 } from "../contracts.js";
 import type { CommitManagerCommandArgs } from "../contracts.js";
-import { buildOccurredAt, unique } from "../common.js";
+import { buildOccurredAt } from "../common.js";
 
 export function normalizeTitle(title: string | undefined): string {
   return (title ?? "")
@@ -183,6 +186,21 @@ function buildPlanningEntry(
 
 function buildManagerCommitOwnerResolution(): "mapped" {
   return "mapped";
+}
+
+function isClosedLinearIssue(issue: LinearIssue): boolean {
+  const stateName = issue.state?.name?.trim().toLowerCase();
+  return Boolean(issue.completedAt)
+    || issue.state?.type === "completed"
+    || issue.state?.type === "canceled"
+    || stateName === "done"
+    || stateName === "completed"
+    || stateName === "canceled"
+    || stateName === "cancelled";
+}
+
+function buildPlainIssueLabel(issue: Pick<LinearIssue, "identifier" | "title">): string {
+  return `${issue.identifier}（${issue.title}）`;
 }
 
 async function getExistingThreadIntakeAtTurnStart(
@@ -394,6 +412,7 @@ export async function commitCreateIssueProposal(
       false,
       threadParentIssue ? { attachedToExistingParent: true } : undefined,
     ),
+    publicReply: `${buildPlainIssueLabel(issue)} を作成しました。`,
   };
 }
 
@@ -534,5 +553,51 @@ export async function commitCreateIssueBatchProposal(
       proposal.planningReason,
       false,
     ),
+    publicReply: `${buildPlainIssueLabel(parent)} と子 issue ${children.length}件を作成しました。`,
+  };
+}
+
+export async function commitLinkExistingIssueProposal(
+  args: CommitManagerCommandArgs,
+  proposal: LinkExistingIssueProposal,
+): Promise<ManagerCommandHandlerResult> {
+  const occurredAt = buildOccurredAt(args.now);
+  const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
+  const fingerprint = fingerprintText(args.message.text);
+  const existingThreadIntake = await getExistingThreadIntakeAtTurnStart(args, threadKey, fingerprint);
+
+  if (existingThreadIntake) {
+    return {
+      proposal,
+      reason: "duplicate intake already recorded for this thread",
+    };
+  }
+
+  const issue = await getLinearIssue(proposal.issueId, args.env);
+  if (isClosedLinearIssue(issue)) {
+    return {
+      proposal,
+      reason: `${issue.identifier} は完了済みまたは Canceled のため、既存タスクとして再利用できません。新規 issue を作成するか、別の issue ID を指定してください。`,
+    };
+  }
+
+  await recordIntakeLinkedExisting(args.repositories.workgraph, {
+    occurredAt,
+    source: {
+      channelId: args.message.channelId,
+      rootThreadTs: args.message.rootThreadTs,
+      messageTs: args.message.messageTs,
+    },
+    messageFingerprint: fingerprint,
+    linkedIssueIds: [issue.identifier],
+    lastResolvedIssueId: issue.identifier,
+    originalText: args.message.text,
+  });
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [issue.identifier],
+    summary: `既存 task として ${formatIssueReference(issue)} を使います。`,
+    publicReply: `${buildPlainIssueLabel(issue)}は既存タスクを使います。`,
   };
 }

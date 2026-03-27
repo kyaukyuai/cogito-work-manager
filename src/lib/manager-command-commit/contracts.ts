@@ -83,6 +83,11 @@ export const createIssueBatchProposalSchema = proposalBaseSchema.extend({
   })).min(1).max(8),
 });
 
+export const linkExistingIssueProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("link_existing_issue"),
+  issueId: z.string().trim().min(1),
+});
+
 export const updateIssueStatusProposalSchema = proposalBaseSchema.extend({
   commandType: z.literal("update_issue_status"),
   issueId: z.string().trim().min(1),
@@ -309,6 +314,7 @@ export const postSlackMessageProposalSchema = proposalBaseSchema.extend({
 export const managerCommandProposalSchema = z.discriminatedUnion("commandType", [
   createIssueProposalSchema,
   createIssueBatchProposalSchema,
+  linkExistingIssueProposalSchema,
   updateIssueStatusProposalSchema,
   assignIssueProposalSchema,
   addCommentProposalSchema,
@@ -333,6 +339,7 @@ export const managerCommandProposalSchema = z.discriminatedUnion("commandType", 
 export type ManagerCommandProposal = z.infer<typeof managerCommandProposalSchema>;
 export type CreateIssueProposal = z.infer<typeof createIssueProposalSchema>;
 export type CreateIssueBatchProposal = z.infer<typeof createIssueBatchProposalSchema>;
+export type LinkExistingIssueProposal = z.infer<typeof linkExistingIssueProposalSchema>;
 export type UpdateIssueStatusProposal = z.infer<typeof updateIssueStatusProposalSchema>;
 export type AssignIssueProposal = z.infer<typeof assignIssueProposalSchema>;
 export type AddCommentProposal = z.infer<typeof addCommentProposalSchema>;

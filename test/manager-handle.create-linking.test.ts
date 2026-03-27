@@ -424,6 +424,170 @@ describe("handleManagerMessage create and linking flow", () => {
     expect(result.reply).toContain("子 task として <https://linear.app/kyaukyuai/issue/AIC-40|AIC-40 コギトをシステム設定・プロンプトに命名として反映する> を追加しています。");
   });
 
+  it("grounds multi-item create_work replies in committed create and reuse facts", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: [
+        "3件対応しました。",
+        "新規作成: OPT役員チャンネルへの角井さん招待",
+        "新規作成: 金澤さんにMTG定例名を確認",
+        "AIC-61（金澤さんのChatGPT招待）は既存タスクがあるのでそちらを使います",
+      ].join("\n"),
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "create_work",
+              confidence: 0.95,
+              summary: "複数の task 作成と既存 issue 再利用です。",
+            },
+          },
+        },
+        {
+          toolName: "propose_create_issue",
+          details: {
+            proposal: {
+              commandType: "create_issue",
+              planningReason: "single-issue",
+              threadParentHandling: "ignore",
+              duplicateHandling: "create-new",
+              issue: {
+                title: "OPT役員チャンネルへの角井さん招待",
+                description: "## Slack source\n角井さんを招待する",
+                assigneeMode: "leave-unassigned",
+              },
+              reasonSummary: "新規 task を作成します。",
+            },
+          },
+        },
+        {
+          toolName: "propose_create_issue",
+          details: {
+            proposal: {
+              commandType: "create_issue",
+              planningReason: "single-issue",
+              threadParentHandling: "ignore",
+              duplicateHandling: "create-new",
+              issue: {
+                title: "金澤さんにMTG定例名を確認する",
+                description: "## Slack source\n収集対象の定例を確認する",
+                assigneeMode: "leave-unassigned",
+              },
+              reasonSummary: "新規 task を作成します。",
+            },
+          },
+        },
+        {
+          toolName: "propose_link_existing_issue",
+          details: {
+            proposal: {
+              commandType: "link_existing_issue",
+              issueId: "AIC-61",
+              reasonSummary: "既存の招待タスクがあるため再利用します。",
+              evidenceSummary: "linear_search_issues で確認済みです。",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "ignore",
+          duplicateHandling: "create-new",
+          issue: {
+            title: "OPT役員チャンネルへの角井さん招待",
+            description: "## Slack source\n角井さんを招待する",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "新規 task を作成します。",
+        },
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "ignore",
+          duplicateHandling: "create-new",
+          issue: {
+            title: "金澤さんにMTG定例名を確認する",
+            description: "## Slack source\n収集対象の定例を確認する",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "新規 task を作成します。",
+        },
+        {
+          commandType: "link_existing_issue",
+          issueId: "AIC-61",
+          reasonSummary: "既存の招待タスクがあるため再利用します。",
+          evidenceSummary: "linear_search_issues で確認済みです。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "create_work",
+        confidence: 0.95,
+        summary: "複数の task 作成と既存 issue 再利用です。",
+      },
+    });
+
+    linearMocks.createManagedLinearIssue
+      .mockResolvedValueOnce({
+        id: "issue-86",
+        identifier: "AIC-86",
+        title: "OPT役員チャンネルへの角井さん招待",
+        url: "https://linear.app/kyaukyuai/issue/AIC-86",
+        relations: [],
+        inverseRelations: [],
+      })
+      .mockResolvedValueOnce({
+        id: "issue-87",
+        identifier: "AIC-87",
+        title: "金澤さんにMTG定例名を確認する",
+        url: "https://linear.app/kyaukyuai/issue/AIC-87",
+        relations: [],
+        inverseRelations: [],
+      });
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-61",
+      identifier: "AIC-61",
+      title: "金澤さんのChatGPTプロジェクト招待",
+      url: "https://linear.app/kyaukyuai/issue/AIC-61",
+      state: { id: "state-started", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-grounded-create-work",
+        messageTs: "msg-grounded-create-work-1",
+        userId: "U1",
+        text: "各タスクを追加しておいて",
+      },
+      new Date("2026-03-27T05:46:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toBe(
+      "3件対応しました。\n\n"
+      + "- 新規作成: AIC-86（OPT役員チャンネルへの角井さん招待） を作成しました\n"
+      + "- 新規作成: AIC-87（金澤さんにMTG定例名を確認する） を作成しました\n"
+      + "- 既存利用: AIC-61（金澤さんのChatGPTプロジェクト招待）は既存タスクを使います",
+    );
+    expect(result.reply).not.toContain("そちらを使います");
+    expect(result.reply).not.toContain("system log:");
+    expect(result.diagnostics?.agent?.committedCommands).toEqual(["create_issue", "create_issue", "link_existing_issue"]);
+
+    const thread = await loadThreadProjection("C0ALAMDRB9V:thread-grounded-create-work");
+    expect(thread).toMatchObject({
+      childIssueIds: expect.arrayContaining(["AIC-86", "AIC-87"]),
+      linkedIssueIds: expect.arrayContaining(["AIC-61"]),
+      lastResolvedIssueId: "AIC-61",
+    });
+  });
+
   it("updates an existing issue parent directly when the user asks for a child-task relation", async () => {
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-40",

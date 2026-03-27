@@ -121,6 +121,10 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For single-issue create proposals, decide explicitly whether the issue should stay standalone or attach under the existing thread parent issue.");
     expect(prompt).toContain("Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.");
     expect(prompt).toContain("Express that duplicate decision in propose_create_issue with duplicateHandling=reuse-existing, reuse-and-attach-parent, clarify, or create-new.");
+    expect(prompt).toContain("If one requested item should reuse an existing issue, inspect it first with linear_search_issues or linear_get_issue_facts and then use propose_link_existing_issue.");
+    expect(prompt).toContain("Do not mention an existing issue reuse like AIC-123 を使います in the public reply unless the turn also includes a matching propose_link_existing_issue proposal.");
+    expect(prompt).toContain("For multi-item create_work requests, decide item by item whether each item should create a new issue or link to an existing issue.");
+    expect(prompt).toContain("Treat propose_create_issue duplicateHandling=create-new as meaning you inspected likely existing issues and still judged the work to be genuinely new.");
     expect(prompt).toContain("When the user explicitly asks to make one existing issue a child task of another existing issue, use propose_set_issue_parent instead of proposing a comment or deferring for confirmation.");
     expect(prompt).toContain("Express that owner decision with assigneeMode=assign or leave-unassigned.");
     expect(prompt).toContain("For Linear issue delete or cancel requests, use propose_update_issue_status with signal=completed and state=Canceled.");

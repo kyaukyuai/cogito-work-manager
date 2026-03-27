@@ -14,6 +14,7 @@ import {
 import {
   commitCreateIssueBatchProposal,
   commitCreateIssueProposal,
+  commitLinkExistingIssueProposal,
   commitAddCommentProposal,
   commitAddRelationProposal,
   commitAssignIssueProposal,
@@ -59,6 +60,7 @@ type CommandHandlerMap = {
 const commandHandlers = {
   create_issue: commitCreateIssueProposal,
   create_issue_batch: commitCreateIssueBatchProposal,
+  link_existing_issue: commitLinkExistingIssueProposal,
   update_issue_status: commitUpdateIssueStatusProposal,
   assign_issue: commitAssignIssueProposal,
   add_comment: commitAddCommentProposal,
@@ -127,7 +129,9 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
   const dedupedProposals = Array.from(deduped.values());
 
   const needsIntakeDedupeCheck = dedupedProposals.some((proposal) => (
-    proposal.commandType === "create_issue" || proposal.commandType === "create_issue_batch"
+    proposal.commandType === "create_issue"
+    || proposal.commandType === "create_issue_batch"
+    || proposal.commandType === "link_existing_issue"
   ));
   const commitArgs = needsIntakeDedupeCheck && !args.existingThreadIntakeAtTurnStart
     ? {

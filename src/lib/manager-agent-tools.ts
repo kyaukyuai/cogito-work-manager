@@ -1100,6 +1100,19 @@ function createProposalTools(): ToolDefinition[] {
       }),
     }),
     createProposalTool({
+      name: "propose_link_existing_issue",
+      label: "Propose Link Existing Issue",
+      description: "Propose using an existing Linear issue for one requested work item. This does not execute any Linear mutation.",
+      promptSnippet: "Use this only after inspecting likely existing issues with linear_search_issues or linear_get_issue_facts and deciding one item should reuse an existing issue instead of creating a new one.",
+      commandType: "link_existing_issue",
+      parameters: Type.Object({
+        issueId: Type.String({ description: "Existing issue identifier like AIC-123." }),
+        reasonSummary: Type.String({ description: "Short reason for reusing this existing issue." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary from search results or issue facts." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
       name: "propose_update_issue_status",
       label: "Propose Update Issue Status",
       description: "Propose a progress, completed, or blocked update. This does not execute the mutation.",

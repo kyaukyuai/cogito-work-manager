@@ -433,7 +433,12 @@ function buildCompactSuccessfulMutationReply(args: {
   committed: ManagerCommittedCommand[];
   commitRejections: string[];
 }): string | undefined {
-  if (!isMutableIntent(args.intent) || args.commitRejections.length > 0 || args.committed.length !== 1) {
+  if (
+    !isMutableIntent(args.intent)
+    || args.intent === "create_work"
+    || args.commitRejections.length > 0
+    || args.committed.length !== 1
+  ) {
     return undefined;
   }
 
@@ -451,6 +456,37 @@ function buildCompactSuccessfulMutationReply(args: {
     return publicReply;
   }
   return joinSlackSentences([publicReply, followupSentence]) ?? publicReply;
+}
+
+function stripSlackSentenceEnding(text: string): string {
+  return text.trim().replace(/[。.!！?？]+$/u, "");
+}
+
+function buildGroundedCreateWorkReply(args: {
+  intent: ManagerIntentReport["intent"] | undefined;
+  committed: ManagerCommittedCommand[];
+  commitRejections: string[];
+}): string | undefined {
+  if (args.intent !== "create_work" || args.commitRejections.length > 0 || args.committed.length < 2) {
+    return undefined;
+  }
+
+  const supportedEntries = args.committed.filter((entry) => (
+    entry.commandType === "create_issue" || entry.commandType === "link_existing_issue"
+  ));
+  if (supportedEntries.length !== args.committed.length) {
+    return undefined;
+  }
+  if (supportedEntries.some((entry) => !entry.publicReply?.trim())) {
+    return undefined;
+  }
+
+  const summaryLine = `${supportedEntries.length}件対応しました。`;
+  const bulletLines = supportedEntries.map((entry) => `${entry.commandType === "link_existing_issue" ? "既存利用" : "新規作成"}: ${stripSlackSentenceEnding(entry.publicReply!)}`);
+  return composeSlackReply([
+    summaryLine,
+    formatSlackBullets(bulletLines),
+  ]);
 }
 
 function formatPendingOwnerMapConfirmationReply(summaryLines: string[]): string {
@@ -1480,9 +1516,14 @@ export async function handleManagerMessage(
       committed: commitResult.committed,
       commitRejections: commitRejectionReasons,
     });
+    const groundedCreateWorkReply = buildGroundedCreateWorkReply({
+      intent: agentIntent,
+      committed: commitResult.committed,
+      commitRejections: commitRejectionReasons,
+    });
     const mergedReplyBase = missingQuerySnapshot
       ? buildSafetyQueryReply()
-      : compactSuccessfulMutationReply ?? mergeAgentReplyWithCommit({
+      : compactSuccessfulMutationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
           agentReply: agentTurn.reply,
           commitSummaries: commitResult.replySummaries,
           commitRejections: commitRejectionReasons,

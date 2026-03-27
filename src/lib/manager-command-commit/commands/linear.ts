@@ -1,6 +1,7 @@
 export {
   commitCreateIssueProposal,
   commitCreateIssueBatchProposal,
+  commitLinkExistingIssueProposal,
   fingerprintText,
 } from "./linear-create.js";
 export {

@@ -383,4 +383,10 @@ describe("manager agent tools", () => {
     expect(tools.some((entry) => entry.name === "propose_update_owner_map")).toBe(true);
     expect(tools.some((entry) => entry.name === "propose_post_slack_message")).toBe(true);
   });
+
+  it("includes a structured existing-issue reuse proposal tool", async () => {
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+
+    expect(tools.some((entry) => entry.name === "propose_link_existing_issue")).toBe(true);
+  });
 });

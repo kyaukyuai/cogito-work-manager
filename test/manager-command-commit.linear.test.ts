@@ -15,6 +15,7 @@ const linearMocks = vi.hoisted(() => ({
   assignLinearIssue: vi.fn(),
   createManagedLinearIssue: vi.fn(),
   createManagedLinearIssueBatch: vi.fn(),
+  getLinearIssue: vi.fn(),
   searchLinearIssues: vi.fn(),
   updateManagedLinearIssue: vi.fn(),
   updateLinearIssueStateWithComment: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("../src/lib/linear.js", () => ({
   assignLinearIssue: linearMocks.assignLinearIssue,
   createManagedLinearIssue: linearMocks.createManagedLinearIssue,
   createManagedLinearIssueBatch: linearMocks.createManagedLinearIssueBatch,
+  getLinearIssue: linearMocks.getLinearIssue,
   searchLinearIssues: linearMocks.searchLinearIssues,
   updateManagedLinearIssue: linearMocks.updateManagedLinearIssue,
   updateLinearIssueStateWithComment: linearMocks.updateLinearIssueStateWithComment,
@@ -51,6 +53,7 @@ describe("manager command commit linear", () => {
     linearMocks.assignLinearIssue.mockReset();
     linearMocks.createManagedLinearIssue.mockReset();
     linearMocks.createManagedLinearIssueBatch.mockReset();
+    linearMocks.getLinearIssue.mockReset();
     linearMocks.searchLinearIssues.mockReset().mockResolvedValue([]);
     linearMocks.updateManagedLinearIssue.mockReset();
     linearMocks.updateLinearIssueStateWithComment.mockReset();
@@ -663,6 +666,99 @@ describe("manager command commit linear", () => {
     expect(linearMocks.assignLinearIssue).toHaveBeenCalledWith("AIC-55", "y.kakui", expect.any(Object));
     expect(result.committed[0]?.issueIds).toEqual(["AIC-55"]);
     expect(result.committed[0]?.summary).toContain("同じ内容の issue が見つかったので、新規起票はせず既存の issue に寄せます。");
+  });
+
+  it("reuses an existing open issue with a structured link_existing_issue proposal", async () => {
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-61",
+      identifier: "AIC-61",
+      title: "金澤さんのChatGPTプロジェクト招待",
+      url: "https://linear.app/kyaukyuai/issue/AIC-61",
+      state: { id: "state-started", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "link_existing_issue",
+          issueId: "AIC-61",
+          reasonSummary: "既存の招待タスクがあるため再利用します。",
+          evidenceSummary: "linear_search_issues で既存タスクを確認済みです。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-link-existing",
+        messageTs: "msg-link-existing-1",
+        userId: "U1",
+        text: "金澤さんのChatGPTのプロジェクト招待も対応してください",
+      },
+      now: new Date("2026-03-27T05:46:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.getLinearIssue).toHaveBeenCalledWith("AIC-61", expect.any(Object));
+    expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+    expect(result.committed[0]).toMatchObject({
+      commandType: "link_existing_issue",
+      issueIds: ["AIC-61"],
+      publicReply: "AIC-61（金澤さんのChatGPTプロジェクト招待）は既存タスクを使います。",
+    });
+
+    const projection = await testContext.repositories.workgraph.project();
+    expect(projection.threads["C0ALAMDRB9V:thread-link-existing"]).toMatchObject({
+      intakeStatus: "linked-existing",
+      linkedIssueIds: ["AIC-61"],
+      lastResolvedIssueId: "AIC-61",
+    });
+  });
+
+  it("rejects link_existing_issue when the target issue is already closed", async () => {
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-61",
+      identifier: "AIC-61",
+      title: "金澤さんのChatGPTプロジェクト招待",
+      url: "https://linear.app/kyaukyuai/issue/AIC-61",
+      completedAt: "2026-03-26T12:00:00.000Z",
+      state: { id: "state-done", name: "Done", type: "completed" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "link_existing_issue",
+          issueId: "AIC-61",
+          reasonSummary: "既存タスクの再利用です。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-link-existing-closed",
+        messageTs: "msg-link-existing-closed-1",
+        userId: "U1",
+        text: "金澤さんのChatGPTのプロジェクト招待も対応してください",
+      },
+      now: new Date("2026-03-27T05:46:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("完了済みまたは Canceled");
+    expect(linearMocks.createManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
   });
 
   it("sets an existing issue parent directly", async () => {
