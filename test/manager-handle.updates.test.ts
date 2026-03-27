@@ -8,7 +8,9 @@ import {
   handleManagerMessage,
 } from "../src/lib/manager.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
+import { saveThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 import { createDefaultTestManagerAgentTurn } from "./helpers/default-manager-agent-mock.js";
 
@@ -1002,6 +1004,155 @@ describe("handleManagerMessage update flows", () => {
       expect.stringContaining("API 仕様待ちです"),
       expect.any(Object),
     );
+  });
+
+  it("accepts a completion update for an issue shown in the last query continuation", async () => {
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-followup-complete");
+    await ensureThreadWorkspace(threadPaths);
+    await saveThreadQueryContinuation(threadPaths, {
+      kind: "what-should-i-do",
+      scope: "self",
+      userMessage: "今日やるべきことを教えて",
+      replySummary: "今日期限・直近締切・ブロック解消が必要な3件を提示",
+      issueIds: ["AIC-38", "AIC-55", "AIC-65"],
+      shownIssueIds: ["AIC-38", "AIC-55", "AIC-65"],
+      remainingIssueIds: ["AIC-66", "AIC-67"],
+      totalItemCount: 5,
+      recordedAt: "2026-03-27T02:09:05.334Z",
+    });
+
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-65 を完了に更新します。次は AIC-66 に着手できます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_completed",
+              confidence: 0.93,
+              summary: "AIC-65を完了に更新する",
+            },
+          },
+        },
+        {
+          toolName: "propose_update_issue_status",
+          details: {
+            proposal: {
+              commandType: "update_issue_status",
+              issueId: "AIC-65",
+              signal: "completed",
+              reasonSummary: "Slack招待が完了したため AIC-65 を完了にする",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-65",
+          signal: "completed",
+          reasonSummary: "Slack招待が完了したため AIC-65 を完了にする",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_completed",
+        confidence: 0.93,
+        summary: "AIC-65を完了に更新する",
+      },
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "AIC-65",
+      identifier: "AIC-65",
+      title: "田平さんをSlackチャンネルに招待",
+      url: "https://linear.app/kyaukyuai/issue/AIC-65",
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-followup-complete",
+        messageTs: "msg-complete-1",
+        userId: "U1",
+        text: "田平さんのSlackチャネル招待は完了しました",
+      },
+      new Date("2026-03-27T02:16:58.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).not.toContain("更新対象の issue をこの thread から特定できませんでした");
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-65",
+        state: "completed",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("suppresses contradictory success text when a mutation proposal is rejected", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-65 を完了に更新します。次は AIC-66 に着手できます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_completed",
+              confidence: 0.93,
+              summary: "AIC-65を完了に更新する",
+            },
+          },
+        },
+        {
+          toolName: "propose_update_issue_status",
+          details: {
+            proposal: {
+              commandType: "update_issue_status",
+              issueId: "AIC-65",
+              signal: "completed",
+              reasonSummary: "Slack招待が完了したため AIC-65 を完了にする",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-65",
+          signal: "completed",
+          reasonSummary: "Slack招待が完了したため AIC-65 を完了にする",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_completed",
+        confidence: 0.93,
+        summary: "AIC-65を完了に更新する",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-followup-rejected",
+        messageTs: "msg-complete-2",
+        userId: "U1",
+        text: "田平さんのSlackチャネル招待は完了しました",
+      },
+      new Date("2026-03-27T02:16:58.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("更新対象の issue をこの thread から特定できませんでした");
+    expect(result.reply).not.toContain("AIC-65 を完了に更新します");
+    expect(result.reply).not.toContain("AIC-66");
   });
 
   it("includes latest action labels in ambiguity replies", async () => {

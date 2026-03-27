@@ -654,6 +654,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
 
     const pending = await loadPendingManagerConfirmation(
       buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-owner-map-confirm"),
+      new Date("2026-03-26T02:11:30.000Z"),
     );
     expect(pending).toMatchObject({
       kind: "owner-map",
@@ -949,7 +950,10 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
         }),
       }),
     );
-    await expect(loadPendingManagerConfirmation(threadPaths)).resolves.toMatchObject({
+    await expect(loadPendingManagerConfirmation(
+      threadPaths,
+      new Date("2026-03-26T02:17:30.000Z"),
+    )).resolves.toMatchObject({
       kind: "owner-map",
     });
   });

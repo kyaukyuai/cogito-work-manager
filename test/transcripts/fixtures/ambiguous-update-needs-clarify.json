@@ -25,9 +25,11 @@
       "expect": {
         "handled": true,
         "replyIncludes": [
-          "進捗を反映します。",
           "どの issue を更新するか判断できませんでした。",
           "issue ID を添えてください。"
+        ],
+        "replyExcludes": [
+          "進捗を反映します。"
         ]
       }
     }

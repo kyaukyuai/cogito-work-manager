@@ -708,18 +708,22 @@ function mergeAgentReplyWithCommit(args: {
   commitSummaries: string[];
   commitRejections: string[];
   preferCommittedPublicReply?: boolean;
+  preferRejectionReply?: boolean;
 }): string {
   const paragraphs: string[] = [];
   const normalizedAgentReply = args.agentReply.trim();
   const visibleCommitSummaries = normalizedAgentReply
     ? args.commitSummaries.filter((summary) => !shouldSuppressCommitSummary(normalizedAgentReply, summary))
     : args.commitSummaries;
+  const rejectionReply = buildCommitRejectionReply(args.commitRejections);
+  if (args.preferRejectionReply && rejectionReply) {
+    return rejectionReply;
+  }
   const shouldUseCommitSummaryAsPrimaryReply = args.preferCommittedPublicReply
     && visibleCommitSummaries.length > 0
     && (!normalizedAgentReply || looksLikePreCommitAgentReply(normalizedAgentReply));
   if (shouldUseCommitSummaryAsPrimaryReply) {
     paragraphs.push(...visibleCommitSummaries);
-    const rejectionReply = buildCommitRejectionReply(args.commitRejections);
     if (rejectionReply) {
       paragraphs.push(rejectionReply);
     }
@@ -735,7 +739,6 @@ function mergeAgentReplyWithCommit(args: {
       paragraphs.push(...visibleCommitSummaries);
     }
   }
-  const rejectionReply = buildCommitRejectionReply(args.commitRejections);
   if (rejectionReply) {
     paragraphs.push(rejectionReply);
   }
@@ -1429,6 +1432,9 @@ export async function handleManagerMessage(
       ? extractedQuerySnapshot
       : undefined;
     const missingQuerySnapshot = agentIntent === "query" && !completeQuerySnapshot;
+    const preferRejectionReply = isMutableIntent(agentIntent)
+      && commitResult.committed.length === 0
+      && commitResult.rejected.length > 0;
     const mergedReplyBase = missingQuerySnapshot
       ? buildSafetyQueryReply()
       : mergeAgentReplyWithCommit({
@@ -1436,6 +1442,7 @@ export async function handleManagerMessage(
           commitSummaries: commitResult.replySummaries,
           commitRejections: commitResult.rejected.map((entry) => entry.reason),
           preferCommittedPublicReply: shouldPreferCommittedPublicReply(agentIntent),
+          preferRejectionReply,
         });
     const mergedReply = commitResult.pendingConfirmation?.kind === "owner-map"
       ? commitResult.pendingConfirmation.previewReply

@@ -11,6 +11,8 @@ import {
 import { formatStatusReply } from "../../../orchestrators/updates/reply-format.js";
 import { updateFollowupsWithIssueResponse } from "../../../orchestrators/updates/followup-state.js";
 import { getSlackThreadContext } from "../../slack-context.js";
+import { loadThreadQueryContinuation } from "../../query-continuation.js";
+import { buildThreadPaths } from "../../thread-workspace.js";
 import { buildWorkgraphThreadKey } from "../../../state/workgraph/events.js";
 import { getThreadPlanningContext } from "../../../state/workgraph/queries.js";
 import { recordFollowupTransitions, recordIssueSignals } from "../../../state/workgraph/recorder.js";
@@ -42,12 +44,14 @@ interface CommitIssueHints {
   explicitIssueIds: string[];
   recentIssueIds: string[];
   candidateIssueIds: string[];
+  queryShownIssueIds: string[];
   latestFocusIssueId?: string;
   lastResolvedIssueId?: string;
 }
 
 async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<CommitIssueHints> {
   const threadKey = buildWorkgraphThreadKey(args.message.channelId, args.message.rootThreadTs);
+  const threadPaths = buildThreadPaths(args.config.workspaceDir, args.message.channelId, args.message.rootThreadTs);
   const explicitIssueIds = extractIssueIdentifiers(args.message.text);
   const recentThread = await getSlackThreadContext(
     args.config.workspaceDir,
@@ -60,15 +64,22 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
       .slice(-6)
       .flatMap((entry) => extractIssueIdentifiers(entry.text ?? "")),
   );
+  const lastQueryContext = await loadThreadQueryContinuation(threadPaths).catch(() => undefined);
   const planningContext = await getThreadPlanningContext(args.repositories.workgraph, threadKey);
   const latestFocusIssueId = planningContext?.thread.latestFocusIssueId;
   const lastResolvedIssueId = planningContext?.latestResolvedIssue?.issueId ?? planningContext?.thread.lastResolvedIssueId;
+  const queryShownIssueIds = unique(
+    lastQueryContext?.shownIssueIds?.length
+      ? lastQueryContext.shownIssueIds
+      : (lastQueryContext?.issueIds ?? []),
+  );
   const candidateIssueIds = unique([
     latestFocusIssueId,
     lastResolvedIssueId,
     planningContext?.parentIssue?.issueId,
     ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
     ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
+    ...queryShownIssueIds,
   ]);
 
   return {
@@ -76,6 +87,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     explicitIssueIds,
     recentIssueIds,
     candidateIssueIds,
+    queryShownIssueIds,
     latestFocusIssueId,
     lastResolvedIssueId,
   };
@@ -111,6 +123,7 @@ async function validateUpdateIssueStatusProposal(
     && !hints.explicitIssueIds.includes(proposal.issueId)
     && proposal.issueId !== hints.latestFocusIssueId
     && proposal.issueId !== hints.lastResolvedIssueId
+    && !hints.queryShownIssueIds.includes(proposal.issueId)
   ) {
     return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";
   }
