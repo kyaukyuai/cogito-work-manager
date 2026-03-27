@@ -18,6 +18,7 @@ export type {
   TaskExecutionDecisionReport,
 } from "./manager-command-commit/contracts.js";
 export {
+  extractDuplicateResolutionSummaries,
   extractIntentReport,
   extractManagerCommandProposals,
   extractPendingClarificationDecision,

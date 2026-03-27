@@ -143,6 +143,15 @@ describe("manager diagnostics", () => {
       pendingClarificationDecision: "continue_pending",
       pendingClarificationPersistence: "keep",
       pendingClarificationDecisionSummary: "前の create clarification への補足です。",
+      duplicateResolutions: [
+        {
+          assessmentStatus: "fuzzy",
+          recommendedAction: "clarify",
+          reasonSummary: "AIC-61 は近いですが対象者が一致しません。",
+          extraQueries: ["角井 chatgpt 招待"],
+          finalCandidateIds: ["AIC-61"],
+        },
+      ],
       missingQuerySnapshot: false,
       technicalFailure: "planner timeout",
     });
@@ -174,6 +183,14 @@ describe("manager diagnostics", () => {
       currentDateTimeJst: "2026-03-23 13:06 JST",
       pendingClarificationDecision: "continue_pending",
       pendingClarificationPersistence: "keep",
+      duplicateResolutions: [
+        expect.objectContaining({
+          assessmentStatus: "fuzzy",
+          recommendedAction: "clarify",
+          extraQueries: ["角井 chatgpt 招待"],
+          finalCandidateIds: ["AIC-61"],
+        }),
+      ],
       missingQuerySnapshot: false,
       technicalFailure: "planner timeout",
     });

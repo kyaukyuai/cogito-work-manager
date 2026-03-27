@@ -9,6 +9,10 @@ import {
   type PendingClarificationDecisionReport,
   type TaskExecutionDecisionReport,
 } from "./contracts.js";
+import {
+  summarizeResolvedLinearDuplicateCandidates,
+  type LinearDuplicateResolutionSummary,
+} from "../linear-duplicate-resolution.js";
 
 export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerIntentReport | undefined {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
@@ -53,6 +57,18 @@ export function extractTaskExecutionDecision(
     }
   }
   return undefined;
+}
+
+export function extractDuplicateResolutionSummaries(
+  toolCalls: ManagerAgentToolCall[],
+): LinearDuplicateResolutionSummary[] {
+  return toolCalls.flatMap((toolCall) => {
+    if (toolCall?.toolName !== "linear_resolve_duplicate_candidates") {
+      return [];
+    }
+    const summary = summarizeResolvedLinearDuplicateCandidates(toolCall.details);
+    return summary ? [summary] : [];
+  });
 }
 
 export function extractManagerCommandProposals(toolCalls: ManagerAgentToolCall[]): {

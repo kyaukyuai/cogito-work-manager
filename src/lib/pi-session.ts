@@ -69,6 +69,7 @@ import type { PendingManagerConfirmation } from "./pending-manager-confirmation.
 import type { ThreadQueryContinuation } from "./query-continuation.js";
 import type { ThreadNotionPageTarget } from "./thread-notion-page-target.js";
 import {
+  extractDuplicateResolutionSummaries,
   extractIntentReport,
   extractManagerCommandProposals,
   extractPendingClarificationDecision,
@@ -79,6 +80,7 @@ import {
   type PendingClarificationDecisionReport,
   type TaskExecutionDecisionReport,
 } from "./manager-command-commit.js";
+import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 import type { TaskIntent } from "./slack.js";
 import { buildSystemPaths, loadWorkspaceCustomization, type WorkspaceCustomizationContext } from "./system-workspace.js";
 import type { AttachmentRecord, ThreadPaths } from "./thread-workspace.js";
@@ -146,6 +148,7 @@ export interface ManagerAgentTurnResult {
   intentReport?: ManagerIntentReport;
   pendingClarificationDecision?: PendingClarificationDecisionReport;
   taskExecutionDecision?: TaskExecutionDecisionReport;
+  duplicateResolutions?: LinearDuplicateResolutionSummary[];
 }
 
 export interface ManagerAgentTurnObserver {
@@ -1395,6 +1398,7 @@ async function runStructuredPromptTurn(
       intentReport: extractIntentReport(toolCalls),
       pendingClarificationDecision: extractPendingClarificationDecision(toolCalls),
       taskExecutionDecision: extractTaskExecutionDecision(toolCalls),
+      duplicateResolutions: extractDuplicateResolutionSummaries(toolCalls),
     };
   } catch (error) {
     await disposeThreadRuntime(runtimeKey);

@@ -140,6 +140,16 @@ describe("manager diagnostics cli", () => {
       intent: "conversation",
       conversationKind: "greeting",
       currentDateTimeJst: "2026-03-19 13:05 JST",
+      duplicateResolutions: [
+        {
+          assessmentStatus: "exact",
+          recommendedAction: "link_existing",
+          selectedIssueId: "AIC-87",
+          reasonSummary: "deterministic duplicate recall で既存 issue が 1 件に絞れました。",
+          extraQueries: [],
+          finalCandidateIds: ["AIC-87"],
+        },
+      ],
       technicalFailure: "reply planner timeout",
       missingQuerySnapshot: false,
     });
@@ -156,6 +166,13 @@ describe("manager diagnostics cli", () => {
           intent?: string;
           conversationKind?: string;
           currentDateTimeJst?: string;
+          duplicateResolutions?: Array<{
+            assessmentStatus?: string;
+            recommendedAction?: string;
+            selectedIssueId?: string;
+            extraQueries?: string[];
+            finalCandidateIds?: string[];
+          }>;
           technicalFailure?: string;
         };
       };
@@ -166,6 +183,14 @@ describe("manager diagnostics cli", () => {
       intent: "conversation",
       conversationKind: "greeting",
       currentDateTimeJst: "2026-03-19 13:05 JST",
+      duplicateResolutions: [
+        expect.objectContaining({
+          assessmentStatus: "exact",
+          recommendedAction: "link_existing",
+          selectedIssueId: "AIC-87",
+          finalCandidateIds: ["AIC-87"],
+        }),
+      ],
       technicalFailure: "reply planner timeout",
     });
   });

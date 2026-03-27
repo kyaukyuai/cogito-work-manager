@@ -30,10 +30,41 @@ export interface ResolvedLinearDuplicateCandidates {
 
 export type DuplicateRecallPlannerExecutor = (input: DuplicateRecallInput) => Promise<DuplicateRecallResult>;
 
+export interface LinearDuplicateResolutionSummary {
+  assessmentStatus: ResolvedDuplicateCandidateAssessment["assessmentStatus"];
+  recommendedAction: ResolvedDuplicateCandidateAssessment["recommendedAction"];
+  selectedIssueId?: string;
+  reasonSummary: string;
+  extraQueries: string[];
+  finalCandidateIds: string[];
+}
+
 const DEFAULT_DUPLICATE_LIMIT = 5;
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values));
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function isResolvedAssessmentStatus(
+  value: unknown,
+): value is ResolvedDuplicateCandidateAssessment["assessmentStatus"] {
+  return value === "exact" || value === "fuzzy" || value === "no_match" || value === "unavailable";
+}
+
+function isResolvedRecommendedAction(
+  value: unknown,
+): value is ResolvedDuplicateCandidateAssessment["recommendedAction"] {
+  return value === "link_existing" || value === "clarify" || value === "create_new";
 }
 
 function sanitizeExtraQueries(queries: string[]): string[] {
@@ -47,6 +78,55 @@ function sanitizeExtraQueries(queries: string[]): string[] {
 function buildSessionTaskKey(base: string | undefined, suffix: string): string {
   const normalizedBase = (base ?? "duplicate-recall").replace(/\s+/g, " ").trim();
   return `${normalizedBase}-${suffix}`;
+}
+
+export function summarizeResolvedLinearDuplicateCandidates(
+  value: unknown,
+): LinearDuplicateResolutionSummary | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as {
+    extraQueries?: unknown;
+    finalCandidates?: unknown;
+    assessment?: unknown;
+  };
+  const assessment = record.assessment as {
+    assessmentStatus?: unknown;
+    recommendedAction?: unknown;
+    selectedIssueId?: unknown;
+    reasonSummary?: unknown;
+  } | undefined;
+
+  if (!assessment) {
+    return undefined;
+  }
+  if (!isResolvedAssessmentStatus(assessment.assessmentStatus) || !isResolvedRecommendedAction(assessment.recommendedAction)) {
+    return undefined;
+  }
+  if (typeof assessment.reasonSummary !== "string" || !assessment.reasonSummary.trim()) {
+    return undefined;
+  }
+
+  const finalCandidateIds = Array.isArray(record.finalCandidates)
+    ? unique(record.finalCandidates
+      .map((candidate) => (candidate && typeof candidate === "object" ? (candidate as { identifier?: unknown }).identifier : undefined))
+      .filter((identifier): identifier is string => typeof identifier === "string")
+      .map((identifier) => identifier.trim())
+      .filter(Boolean))
+    : [];
+
+  return {
+    assessmentStatus: assessment.assessmentStatus,
+    recommendedAction: assessment.recommendedAction,
+    selectedIssueId: typeof assessment.selectedIssueId === "string" && assessment.selectedIssueId.trim()
+      ? assessment.selectedIssueId.trim()
+      : undefined,
+    reasonSummary: assessment.reasonSummary.trim(),
+    extraQueries: unique(asStringArray(record.extraQueries)),
+    finalCandidateIds,
+  };
 }
 
 function buildLexicalOnlyAssessment(requestText: string, candidates: LinearDuplicateCandidate[]): ResolvedDuplicateCandidateAssessment {

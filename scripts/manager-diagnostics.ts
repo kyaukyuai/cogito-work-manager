@@ -79,6 +79,14 @@ function buildThreadDiagnosticsCliView(
             queryKind: diagnostics.lastAgentTurn.queryKind,
             queryScope: diagnostics.lastAgentTurn.queryScope,
             currentDateTimeJst: diagnostics.lastAgentTurn.currentDateTimeJst,
+            duplicateResolutions: diagnostics.lastAgentTurn.duplicateResolutions?.map((entry) => ({
+              assessmentStatus: entry.assessmentStatus,
+              recommendedAction: entry.recommendedAction,
+              selectedIssueId: entry.selectedIssueId,
+              reasonSummary: entry.reasonSummary,
+              extraQueries: entry.extraQueries,
+              finalCandidateIds: entry.finalCandidateIds,
+            })),
             technicalFailure: diagnostics.lastAgentTurn.technicalFailure,
           }
         : undefined,

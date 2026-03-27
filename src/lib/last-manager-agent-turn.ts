@@ -2,9 +2,12 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ThreadPaths } from "./thread-workspace.js";
 import type { ManagerIntentReport, PendingClarificationDecisionReport, TaskExecutionDecisionReport } from "./manager-command-commit.js";
+import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 
 export type LastManagerReplyPath = "agent" | "reply-planner" | "fallback";
 export type LastManagerConversationKind = "greeting" | "smalltalk" | "other";
+
+export interface LastManagerDuplicateResolution extends LinearDuplicateResolutionSummary {}
 
 export interface LastManagerAgentTurn {
   recordedAt: string;
@@ -23,12 +26,60 @@ export interface LastManagerAgentTurn {
   taskExecutionTargetIssueId?: string;
   taskExecutionTargetIssueIdentifier?: string;
   taskExecutionSummary?: string;
+  duplicateResolutions?: LastManagerDuplicateResolution[];
   missingQuerySnapshot?: boolean;
   technicalFailure?: string;
 }
 
 function buildLastManagerAgentTurnPath(paths: ThreadPaths): string {
   return join(paths.scratchDir, "last-manager-agent-turn.json");
+}
+
+function parseLastManagerDuplicateResolutions(value: unknown): LastManagerDuplicateResolution[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const duplicateResolutions = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const assessmentStatus = record.assessmentStatus;
+    const recommendedAction = record.recommendedAction;
+    const reasonSummary = record.reasonSummary;
+    if (
+      (assessmentStatus !== "exact" && assessmentStatus !== "fuzzy" && assessmentStatus !== "no_match" && assessmentStatus !== "unavailable")
+      || (recommendedAction !== "link_existing" && recommendedAction !== "clarify" && recommendedAction !== "create_new")
+      || typeof reasonSummary !== "string"
+      || !reasonSummary.trim()
+    ) {
+      return [];
+    }
+
+    return [{
+      assessmentStatus,
+      recommendedAction,
+      selectedIssueId: typeof record.selectedIssueId === "string" && record.selectedIssueId.trim()
+        ? record.selectedIssueId.trim()
+        : undefined,
+      reasonSummary: reasonSummary.trim(),
+      extraQueries: Array.isArray(record.extraQueries)
+        ? record.extraQueries
+          .filter((query): query is string => typeof query === "string")
+          .map((query) => query.trim())
+          .filter(Boolean)
+        : [],
+      finalCandidateIds: Array.isArray(record.finalCandidateIds)
+        ? record.finalCandidateIds
+          .filter((identifier): identifier is string => typeof identifier === "string")
+          .map((identifier) => identifier.trim())
+          .filter(Boolean)
+        : [],
+    } satisfies LastManagerDuplicateResolution];
+  });
+
+  return duplicateResolutions.length > 0 ? duplicateResolutions : undefined;
 }
 
 export async function loadLastManagerAgentTurn(
@@ -76,6 +127,7 @@ export async function loadLastManagerAgentTurn(
       taskExecutionSummary: typeof parsed.taskExecutionSummary === "string"
         ? parsed.taskExecutionSummary
         : undefined,
+      duplicateResolutions: parseLastManagerDuplicateResolutions(parsed.duplicateResolutions),
       missingQuerySnapshot: parsed.missingQuerySnapshot === true,
       technicalFailure: typeof parsed.technicalFailure === "string" ? parsed.technicalFailure : undefined,
     };

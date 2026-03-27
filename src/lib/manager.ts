@@ -82,6 +82,7 @@ import {
 import { getSlackThreadContext } from "./slack-context.js";
 import { saveLastManagerAgentTurn } from "./last-manager-agent-turn.js";
 import { buildSlackVisibleLlmFailureNotice } from "./llm-failure.js";
+import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 import type { SystemPaths } from "./system-workspace.js";
 import { buildThreadPaths, ensureThreadWorkspace, type ThreadPaths } from "./thread-workspace.js";
 import {
@@ -171,6 +172,7 @@ export interface ManagerHandleResult {
       taskExecutionTargetIssueId?: string;
       taskExecutionTargetIssueIdentifier?: string;
       taskExecutionSummary?: string;
+      duplicateResolutions?: LinearDuplicateResolutionSummary[];
       missingQuerySnapshot?: boolean;
       technicalFailure?: string;
     };
@@ -1728,6 +1730,7 @@ export async function handleManagerMessage(
       taskExecutionTargetIssueId: agentTurn.taskExecutionDecision?.targetIssueId,
       taskExecutionTargetIssueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
       taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
+      duplicateResolutions: agentTurn.duplicateResolutions,
       missingQuerySnapshot,
     });
 
@@ -1755,6 +1758,7 @@ export async function handleManagerMessage(
           taskExecutionTargetIssueId: agentTurn.taskExecutionDecision?.targetIssueId,
           taskExecutionTargetIssueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
           taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
+          duplicateResolutions: agentTurn.duplicateResolutions,
           missingQuerySnapshot,
         },
       },
