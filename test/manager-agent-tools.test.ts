@@ -393,6 +393,12 @@ describe("manager agent tools", () => {
     expect(tools.some((entry) => entry.name === "propose_link_existing_issue")).toBe(true);
   });
 
+  it("includes an LLM-assisted duplicate resolution tool", async () => {
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+
+    expect(tools.some((entry) => entry.name === "linear_resolve_duplicate_candidates")).toBe(true);
+  });
+
   it("includes duplicate candidate search with deterministic multi-query recall", async () => {
     linearMocks.searchLinearIssues.mockImplementation(async ({ query }: { query: string }) => {
       if (/chatgpt/.test(query) || /プロジェクト 招待/.test(query)) {
@@ -427,5 +433,131 @@ describe("manager agent tools", () => {
         matchedTokenCount: 4,
       },
     ]);
+  });
+
+  it("skips LLM duplicate recall when deterministic search finds one exact lexical match", async () => {
+    linearMocks.searchLinearIssues.mockImplementation(async () => [{
+      id: "issue-87",
+      identifier: "AIC-87",
+      title: "金澤さんにMTG定例名を確認する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-87",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      updatedAt: "2026-03-27T06:00:00.000Z",
+      relations: [],
+      inverseRelations: [],
+    }]);
+    const runDuplicateRecallTurn = vi.fn();
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools(), { runDuplicateRecallTurn });
+    const tool = tools.find((entry) => entry.name === "linear_resolve_duplicate_candidates");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-duplicate-resolve-exact", {
+      text: "金澤さんにMTG定例名を確認する",
+    });
+
+    expect(runDuplicateRecallTurn).not.toHaveBeenCalled();
+    expect(result.details).toMatchObject({
+      assessment: {
+        assessmentStatus: "exact",
+        recommendedAction: "link_existing",
+        selectedIssueId: "AIC-87",
+      },
+      finalCandidates: [
+        expect.objectContaining({ identifier: "AIC-87" }),
+      ],
+    });
+  });
+
+  it("uses LLM duplicate recall extra queries to surface an existing issue", async () => {
+    linearMocks.searchLinearIssues.mockImplementation(async ({ query }: { query: string }) => {
+      if (query === "角井 chatgpt 招待") {
+        return [{
+          id: "issue-61",
+          identifier: "AIC-61",
+          title: "金澤さんのChatGPTプロジェクトに角井さんを招待してもらう",
+          url: "https://linear.app/kyaukyuai/issue/AIC-61",
+          state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+          updatedAt: "2026-03-27T06:00:00.000Z",
+          relations: [],
+          inverseRelations: [],
+        }];
+      }
+      return [];
+    });
+    const runDuplicateRecallTurn = vi.fn()
+      .mockResolvedValueOnce({
+        assessmentStatus: "no_match",
+        recommendedAction: "create_new",
+        reasonSummary: "追加の lexical query を試したいです。",
+        missingSlots: [],
+        extraQueries: ["角井 chatgpt 招待"],
+      })
+      .mockResolvedValueOnce({
+        assessmentStatus: "exact",
+        recommendedAction: "link_existing",
+        selectedIssueId: "AIC-61",
+        reasonSummary: "角井さん招待まで含む既存 issue に一致します。",
+        missingSlots: [],
+        extraQueries: [],
+      });
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools(), { runDuplicateRecallTurn });
+    const tool = tools.find((entry) => entry.name === "linear_resolve_duplicate_candidates");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-duplicate-resolve-extra-query", {
+      text: "金澤さんのChatGPTのプロジェクト招待",
+    });
+
+    expect(runDuplicateRecallTurn).toHaveBeenCalledTimes(2);
+    expect(result.details).toMatchObject({
+      extraQueries: ["角井 chatgpt 招待"],
+      assessment: {
+        assessmentStatus: "exact",
+        recommendedAction: "link_existing",
+        selectedIssueId: "AIC-61",
+      },
+      finalCandidates: [
+        expect.objectContaining({ identifier: "AIC-61" }),
+      ],
+    });
+  });
+
+  it("falls back to lexical-only unavailable assessment when LLM duplicate recall fails", async () => {
+    linearMocks.searchLinearIssues.mockImplementation(async ({ query }: { query: string }) => {
+      if (/chatgpt/.test(query)) {
+        return [{
+          id: "issue-61",
+          identifier: "AIC-61",
+          title: "金澤さんのChatGPTプロジェクトに角井さんを招待してもらう",
+          url: "https://linear.app/kyaukyuai/issue/AIC-61",
+          state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+          updatedAt: "2026-03-27T06:00:00.000Z",
+          relations: [],
+          inverseRelations: [],
+        }];
+      }
+      return [];
+    });
+    const runDuplicateRecallTurn = vi.fn().mockRejectedValue(new Error("planner failed"));
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools(), { runDuplicateRecallTurn });
+    const tool = tools.find((entry) => entry.name === "linear_resolve_duplicate_candidates");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-duplicate-resolve-failure", {
+      text: "金澤さんのChatGPTのプロジェクト招待",
+    });
+
+    expect(result.details).toMatchObject({
+      assessment: {
+        assessmentStatus: "unavailable",
+        recommendedAction: "clarify",
+      },
+      finalCandidates: [
+        expect.objectContaining({ identifier: "AIC-61" }),
+      ],
+    });
   });
 });

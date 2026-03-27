@@ -21,6 +21,11 @@ import {
 } from "../src/planners/research-synthesis/index.js";
 import { buildPersonalizationExtractionPrompt } from "../src/planners/personalization-extraction/index.js";
 import { buildTaskPlanningPrompt, parseTaskPlanningReply, runTaskPlanningTurnWithExecutor } from "../src/planners/task-intake/index.js";
+import {
+  buildDuplicateRecallPrompt,
+  parseDuplicateRecallReply,
+  runDuplicateRecallTurnWithExecutor,
+} from "../src/planners/duplicate-recall/index.js";
 import type { AppConfig } from "../src/lib/config.js";
 import { DEFAULT_HEARTBEAT_PROMPT } from "../src/lib/heartbeat.js";
 import { createLinearCustomTools } from "../src/lib/linear-tools.js";
@@ -121,9 +126,11 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For single-issue create proposals, decide explicitly whether the issue should stay standalone or attach under the existing thread parent issue.");
     expect(prompt).toContain("Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.");
     expect(prompt).toContain("Express that duplicate decision in propose_create_issue with duplicateHandling=reuse-existing, reuse-and-attach-parent, clarify, or create-new.");
-    expect(prompt).toContain("For create_work duplicate checks, inspect each requested item first with linear_find_duplicate_candidates before you choose create-new, reuse, or clarify.");
-    expect(prompt).toContain("Use linear_search_issues or linear_get_issue_facts only as follow-up inspection after duplicate candidates point to a likely existing issue.");
-    expect(prompt).toContain("If one requested item should reuse an existing issue, inspect it first with linear_find_duplicate_candidates and then use propose_link_existing_issue.");
+    expect(prompt).toContain("For create_work duplicate checks, inspect each requested item first with linear_resolve_duplicate_candidates before you choose create-new, reuse, or clarify.");
+    expect(prompt).toContain("linear_resolve_duplicate_candidates already performs deterministic lexical recall first and may add LLM-assisted duplicate assessment when lexical recall is empty or ambiguous.");
+    expect(prompt).toContain("Use linear_find_duplicate_candidates only when you need extra raw lexical candidate inspection after linear_resolve_duplicate_candidates.");
+    expect(prompt).toContain("Use linear_search_issues or linear_get_issue_facts only as follow-up inspection after duplicate resolution points to a likely existing issue.");
+    expect(prompt).toContain("If one requested item should reuse an existing issue, inspect it first with linear_resolve_duplicate_candidates and then use propose_link_existing_issue.");
     expect(prompt).toContain("Do not mention an existing issue reuse like AIC-123 を使います in the public reply unless the turn also includes a matching propose_link_existing_issue proposal.");
     expect(prompt).toContain("If duplicate candidates are near-match but actor, target, destination, invited person, or other key slot differs or is missing, prefer clarification instead of auto-reusing or creating a new issue.");
     expect(prompt).toContain("For multi-item create_work requests, decide item by item whether each item should create a new issue, link to an existing issue, or ask for clarification.");
@@ -831,6 +838,19 @@ describe("prompt helpers", () => {
       },
     );
 
+    await runDuplicateRecallTurnWithExecutor(
+      async (_prompt, systemPrompt) => {
+        systemPrompts.duplicateRecall = systemPrompt;
+        return '{"assessmentStatus":"fuzzy","recommendedAction":"clarify","reasonSummary":"角井さん招待かどうかが不足しています。","missingSlots":["invited_person"],"extraQueries":["角井 chatgpt 招待"]}';
+      },
+      {
+        requestText: "金澤さんのChatGPTのプロジェクト招待",
+        initialCandidates: [],
+        workspaceAgents: "一覧系の返答は 5 件までに絞る。",
+        workspaceMemory: "社内では task より issue という表現を優先する。",
+      },
+    );
+
     await runFollowupResolutionTurnWithExecutor(
       async (_prompt, systemPrompt) => {
         systemPrompts.followup = systemPrompt;
@@ -922,6 +942,74 @@ describe("prompt helpers", () => {
       description: "## Slack source\n原文\n\n訂正:\n新しい意図\n\n## 完了条件\n- 実行単位で完了できる状態にする",
       dueDate: undefined,
       assigneeHint: undefined,
+    });
+  });
+
+  it("builds and parses duplicate recall prompts", async () => {
+    const prompt = buildDuplicateRecallPrompt({
+      requestText: "金澤さんのChatGPTのプロジェクト招待",
+      initialCandidates: [
+        {
+          identifier: "AIC-61",
+          title: "金澤さんのChatGPTプロジェクトに角井さんを招待してもらう",
+          url: "https://linear.app/kyaukyuai/issue/AIC-61",
+          state: "Backlog",
+          stateType: "unstarted",
+          updatedAt: "2026-03-27T06:00:00.000Z",
+          normalizedTitle: "金澤さんのchatgptプロジェクトに角井さんを招待してもらう",
+          matchedQueries: ["金澤 chatgpt プロジェクト", "プロジェクト 招待"],
+          matchedTokenCount: 4,
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Reply with a single JSON object only.");
+    expect(prompt).toContain('"assessmentStatus":"exact"|"fuzzy"|"no_match"');
+    expect(prompt).toContain("If actor, target person, destination channel, invited person, or another key slot differs or is missing, return assessmentStatus=fuzzy");
+    expect(prompt).toContain("Current duplicate candidates:");
+    expect(prompt).toContain("AIC-61: 金澤さんのChatGPTプロジェクトに角井さんを招待してもらう");
+
+    const parsed = parseDuplicateRecallReply(`\`\`\`json
+{"assessmentStatus":"fuzzy","recommendedAction":"clarify","reasonSummary":"招待される人が不足しています。","missingSlots":["invited_person"],"extraQueries":["角井 chatgpt 招待"]}
+\`\`\``);
+
+    expect(parsed).toEqual({
+      assessmentStatus: "fuzzy",
+      recommendedAction: "clarify",
+      reasonSummary: "招待される人が不足しています。",
+      missingSlots: ["invited_person"],
+      extraQueries: ["角井 chatgpt 招待"],
+    });
+
+    expect(() => parseDuplicateRecallReply('{"assessmentStatus":"exact","recommendedAction":"link_existing","reasonSummary":"不足"}')).toThrow(/selectedIssueId/i);
+
+    const result = await runDuplicateRecallTurnWithExecutor(
+      async () => '{"assessmentStatus":"exact","recommendedAction":"link_existing","selectedIssueId":"AIC-87","reasonSummary":"既存の確認 task に一致します。","missingSlots":[],"extraQueries":[]}',
+      {
+        requestText: "金澤さんにMTG定例名を確認する",
+        initialCandidates: [
+          {
+            identifier: "AIC-87",
+            title: "金澤さんに収集すべきMTG定例名を確認する",
+            url: "https://linear.app/kyaukyuai/issue/AIC-87",
+            state: "Backlog",
+            stateType: "unstarted",
+            updatedAt: "2026-03-27T06:00:00.000Z",
+            normalizedTitle: "金澤さんに収集すべきmtg定例名を確認する",
+            matchedQueries: ["金澤 mtg 定例名 確認"],
+            matchedTokenCount: 4,
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual({
+      assessmentStatus: "exact",
+      recommendedAction: "link_existing",
+      selectedIssueId: "AIC-87",
+      reasonSummary: "既存の確認 task に一致します。",
+      missingSlots: [],
+      extraQueries: [],
     });
   });
 

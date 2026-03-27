@@ -19,6 +19,7 @@ export interface LinearDuplicateCandidate {
 export interface FindLinearDuplicateCandidatesInput {
   text: string;
   limit?: number;
+  queriesOverride?: string[];
 }
 
 export interface DuplicateCandidateQueryResult {
@@ -149,6 +150,10 @@ function extractDuplicateSearchTokens(text: string, mode: "broad" | "core"): str
   }));
 }
 
+export function getDuplicateCandidateCoreTokens(text: string): string[] {
+  return extractDuplicateSearchTokens(text, "core");
+}
+
 export function buildDuplicateCandidateQueryVariants(text: string): string[] {
   const broadTokens = extractDuplicateSearchTokens(text, "broad");
   const coreTokens = extractDuplicateSearchTokens(text, "core");
@@ -173,6 +178,21 @@ export function buildDuplicateCandidateQueryVariants(text: string): string[] {
   }
 
   return unique(queries).slice(0, DUPLICATE_QUERY_LIMIT);
+}
+
+export function isExactLexicalDuplicateCandidateMatch(
+  requestText: string,
+  candidate: Pick<LinearDuplicateCandidate, "title" | "matchedTokenCount">,
+): boolean {
+  const requestTokens = getDuplicateCandidateCoreTokens(requestText);
+  if (requestTokens.length === 0) {
+    return false;
+  }
+
+  const candidateTokens = getDuplicateCandidateCoreTokens(candidate.title);
+  const hasAllRequestTokens = candidate.matchedTokenCount >= requestTokens.length;
+  const hasOnlyRequestTokens = candidateTokens.every((token) => requestTokens.includes(token));
+  return hasAllRequestTokens && hasOnlyRequestTokens;
 }
 
 function countMatchedTokens(requestText: string, issue: LinearIssue): number {
@@ -236,17 +256,19 @@ export function mergeDuplicateCandidateQueryResults(args: {
     .slice(0, args.limit ?? DEFAULT_DUPLICATE_CANDIDATE_LIMIT);
 }
 
-export async function findLinearDuplicateCandidates(
+export async function findLinearDuplicateCandidateQueryResults(
   input: FindLinearDuplicateCandidatesInput,
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
-): Promise<LinearDuplicateCandidate[]> {
-  const queries = buildDuplicateCandidateQueryVariants(input.text);
+): Promise<DuplicateCandidateQueryResult[]> {
+  const queries = input.queriesOverride?.length
+    ? unique(input.queriesOverride.map((query) => query.trim()).filter(Boolean)).slice(0, DUPLICATE_QUERY_LIMIT)
+    : buildDuplicateCandidateQueryVariants(input.text);
   if (queries.length === 0) {
     return [];
   }
 
-  const queryResults = await Promise.all(queries.map(async (query) => ({
+  return Promise.all(queries.map(async (query) => ({
     query,
     issues: await searchLinearIssues(
       {
@@ -257,7 +279,14 @@ export async function findLinearDuplicateCandidates(
       signal,
     ),
   })));
+}
 
+export async function findLinearDuplicateCandidates(
+  input: FindLinearDuplicateCandidatesInput,
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<LinearDuplicateCandidate[]> {
+  const queryResults = await findLinearDuplicateCandidateQueryResults(input, env, signal);
   return mergeDuplicateCandidateQueryResults({
     requestText: input.text,
     queryResults,

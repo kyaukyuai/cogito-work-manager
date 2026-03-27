@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDuplicateCandidateQueryVariants,
+  isExactLexicalDuplicateCandidateMatch,
   mergeDuplicateCandidateQueryResults,
 } from "../src/lib/linear-duplicate-candidates.js";
 
@@ -75,5 +76,23 @@ describe("linear duplicate candidates", () => {
         matchedTokenCount: 2,
       },
     ]);
+  });
+
+  it("treats extra slot tokens as non-exact lexical matches", () => {
+    expect(isExactLexicalDuplicateCandidateMatch(
+      "金澤さんにMTG定例名を確認する",
+      {
+        title: "金澤さんにMTG定例名を確認する",
+        matchedTokenCount: 4,
+      },
+    )).toBe(true);
+
+    expect(isExactLexicalDuplicateCandidateMatch(
+      "金澤さんのChatGPTのプロジェクト招待",
+      {
+        title: "金澤さんのChatGPTプロジェクトに角井さんを招待してもらう",
+        matchedTokenCount: 4,
+      },
+    )).toBe(false);
   });
 });

@@ -36,6 +36,11 @@ import {
   type TaskPlanningResult,
 } from "../planners/task-intake/index.js";
 import {
+  runDuplicateRecallTurnWithExecutor,
+  type DuplicateRecallInput,
+  type DuplicateRecallResult,
+} from "../planners/duplicate-recall/index.js";
+import {
   runPersonalizationExtractionTurnWithExecutor,
   type PersonalizationExtractionInput,
   type PersonalizationExtractionResult,
@@ -391,9 +396,11 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Express that decision in propose_create_issue with threadParentHandling=attach or ignore whenever a thread parent issue exists.",
     "When search results suggest an existing duplicate, decide explicitly whether to reuse it, reattach it to the chosen parent, ask for clarification, or create a genuinely new issue.",
     "Express that duplicate decision in propose_create_issue with duplicateHandling=reuse-existing, reuse-and-attach-parent, clarify, or create-new.",
-    "For create_work duplicate checks, inspect each requested item first with linear_find_duplicate_candidates before you choose create-new, reuse, or clarify.",
-    "Use linear_search_issues or linear_get_issue_facts only as follow-up inspection after duplicate candidates point to a likely existing issue.",
-    "If one requested item should reuse an existing issue, inspect it first with linear_find_duplicate_candidates and then use propose_link_existing_issue.",
+    "For create_work duplicate checks, inspect each requested item first with linear_resolve_duplicate_candidates before you choose create-new, reuse, or clarify.",
+    "linear_resolve_duplicate_candidates already performs deterministic lexical recall first and may add LLM-assisted duplicate assessment when lexical recall is empty or ambiguous.",
+    "Use linear_find_duplicate_candidates only when you need extra raw lexical candidate inspection after linear_resolve_duplicate_candidates.",
+    "Use linear_search_issues or linear_get_issue_facts only as follow-up inspection after duplicate resolution points to a likely existing issue.",
+    "If one requested item should reuse an existing issue, inspect it first with linear_resolve_duplicate_candidates and then use propose_link_existing_issue.",
     "Do not mention an existing issue reuse like AIC-123 を使います in the public reply unless the turn also includes a matching propose_link_existing_issue proposal.",
     "If duplicate candidates are near-match but actor, target, destination, invited person, or other key slot differs or is missing, prefer clarification instead of auto-reusing or creating a new issue.",
     "For multi-item create_work requests, decide item by item whether each item should create a new issue, link to an existing issue, or ask for clarification.",
@@ -717,7 +724,9 @@ async function createThreadRuntime(config: AppConfig, paths: ThreadPaths): Promi
     sessionManager,
     settingsManager,
     tools: [],
-    customTools: createManagerAgentTools(config, shared.managerRepositories),
+    customTools: createManagerAgentTools(config, shared.managerRepositories, {
+      runDuplicateRecallTurn: async (input) => runDuplicateRecallTurn(config, paths, input),
+    }),
   });
   session.agent.streamFn = wrapStreamFnWithMaxOutputTokens(
     session.agent.streamFn,
@@ -1237,6 +1246,28 @@ export async function runTaskPlanningTurn(
 ): Promise<TaskPlanningResult> {
   const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
   return runTaskPlanningTurnWithExecutor(
+    (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
+      config,
+      paths,
+      prompt,
+      systemPrompt,
+      sessionSuffix,
+    ),
+    {
+      ...input,
+      workspaceAgents,
+      workspaceMemory,
+    },
+  );
+}
+
+export async function runDuplicateRecallTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: DuplicateRecallInput,
+): Promise<DuplicateRecallResult> {
+  const { workspaceAgents, workspaceMemory } = await loadPromptCustomization(config);
+  return runDuplicateRecallTurnWithExecutor(
     (prompt, systemPrompt, sessionSuffix) => runIsolatedPromptTurn(
       config,
       paths,
