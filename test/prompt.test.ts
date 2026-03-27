@@ -34,13 +34,10 @@ import {
   WEBHOOK_INITIAL_PROPOSAL_MARKER,
 } from "../src/orchestrators/webhooks/initial-proposal-comment.js";
 import {
-  buildAgentPrompt,
   buildManagerAgentPrompt,
   buildManagerSystemPromptInput,
   buildSystemPrompt,
-  type ThreadPromptContext,
-} from "../src/lib/pi-session.js";
-import type { ThreadPaths } from "../src/lib/thread-workspace.js";
+} from "../src/runtime/manager-prompts.js";
 
 const config: AppConfig = {
   slackAppToken: "xapp-test",
@@ -69,14 +66,6 @@ const config: AppConfig = {
   workgraphHealthWarnActiveEvents: 200,
   workgraphAutoCompactMaxActiveEvents: 500,
   logLevel: "info",
-};
-
-const threadPaths: ThreadPaths = {
-  rootDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345",
-  sessionFile: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/session.jsonl",
-  logFile: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/log.jsonl",
-  attachmentsDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/attachments",
-  scratchDir: "/tmp/cogito-work-manager/threads/C0ALAMDRB9V/12345/scratch",
 };
 
 describe("prompt helpers", () => {
@@ -268,45 +257,6 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("契約・稟議系は先に依頼先と期限を確認する。");
     expect(prompt).toContain("Notion agenda template:");
     expect(prompt).toContain("## 目的");
-  });
-
-  it("embeds thread-linked issue context into the runtime prompt", () => {
-    const context: ThreadPromptContext = {
-      lastResolvedIssueId: "AIC-17",
-      parentIssueId: "AIC-11",
-      childIssueIds: ["AIC-17", "AIC-18"],
-      duplicateReuse: true,
-      pendingClarification: true,
-      preferredIssueIds: ["AIC-17", "AIC-18", "AIC-11"],
-      candidateIssues: [
-        { issueId: "AIC-17", title: "調査: ログイン画面の不具合" },
-        { issueId: "AIC-11", title: "ログイン画面の不具合修正" },
-      ],
-    };
-
-    const prompt = buildAgentPrompt(
-      {
-        channelId: "C0ALAMDRB9V",
-        userId: "U123",
-        text: "進捗です。原因は再現できています",
-        rootThreadTs: "12345.678",
-        intent: "task_request",
-        attachments: [],
-      },
-      config,
-      threadPaths,
-      context,
-    );
-
-    expect(prompt).toContain("Thread-linked issue context:");
-    expect(prompt).toContain("- lastResolvedIssueId: AIC-17");
-    expect(prompt).toContain("- parentIssueId: AIC-11");
-    expect(prompt).toContain("- childIssueIds: AIC-17, AIC-18");
-    expect(prompt).toContain("- duplicateReuse: yes");
-    expect(prompt).toContain("- pendingClarification: yes");
-    expect(prompt).toContain("- preferredIssueIds: AIC-17, AIC-18, AIC-11");
-    expect(prompt).toContain("- AIC-17 / 調査: ログイン画面の不具合");
-    expect(prompt).toContain("- AIC-11 / ログイン画面の不具合修正");
   });
 
   it("adds concise continuation guidance to the manager runtime prompt", () => {
