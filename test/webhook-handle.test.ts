@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { handleIssueCreatedWebhook } from "../src/orchestrators/webhooks/handle-issue-created.js";
+import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
 
 const mocks = vi.hoisted(() => ({
   runManagerSystemTurn: vi.fn(),
@@ -195,6 +196,24 @@ describe("handleIssueCreatedWebhook", () => {
     await expect(handleIssueCreatedWebhook(args)).resolves.toMatchObject({
       status: "failed",
       reason: "validation failed",
+    });
+  });
+
+  it("returns provider-aware Slack reply while keeping the raw reason for LLM failures", async () => {
+    mocks.runManagerSystemTurn.mockRejectedValueOnce(new LlmProviderFailureError({
+      kind: "provider",
+      provider: "anthropic",
+      statusCode: 429,
+      providerErrorType: "rate_limit_error",
+      publicSummary: "Anthropic 429 rate_limit_error",
+      technicalMessage: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_123\"}",
+      requestId: "req_test_123",
+    }));
+
+    await expect(handleIssueCreatedWebhook(args)).resolves.toMatchObject({
+      status: "failed",
+      reason: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_123\"}",
+      reply: "LLM 側のエラーです。Anthropic 429 rate_limit_error が発生しました。",
     });
   });
 });

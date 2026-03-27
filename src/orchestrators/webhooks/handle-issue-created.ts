@@ -1,5 +1,6 @@
 import { mergeSystemReply } from "../../lib/system-slack-reply.js";
 import { handlePersonalizationUpdate } from "../personalization/handle-personalization.js";
+import { buildSlackVisibleLlmFailureNotice } from "../../lib/llm-failure.js";
 import {
   runManagerSystemTurn,
   type ManagerAgentTurnResult,
@@ -199,7 +200,7 @@ export async function handleIssueCreatedWebhook(
       status: "failed",
       createdIssueIds: [],
       reason: message,
-      reply: `新規 issue の webhook 自動処理に失敗しました。 ${message}`.trim(),
+      reply: buildSlackVisibleLlmFailureNotice(error) ?? `処理に失敗しました。 ${message}`.trim(),
     };
   }
 }

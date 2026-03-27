@@ -9,6 +9,7 @@ import {
   handleManagerMessageLegacy,
 } from "../src/lib/manager.js";
 import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
+import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
 import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -530,6 +531,43 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     });
   });
 
+  it("prepends an LLM provider error summary when the legacy reply planner falls back", async () => {
+    piSessionMocks.runManagerReplyTurn.mockRejectedValueOnce(new LlmProviderFailureError({
+      kind: "provider",
+      provider: "anthropic",
+      statusCode: 429,
+      providerErrorType: "rate_limit_error",
+      publicSummary: "Anthropic 429 rate_limit_error",
+      technicalMessage: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_legacy\"}",
+      requestId: "req_test_legacy",
+    }));
+
+    const result = await handleManagerMessageLegacy(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-conversation-legacy-llm",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんにちは",
+      },
+      new Date("2026-03-19T04:07:00.000Z"),
+    );
+
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-conversation-legacy-llm"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("LLM 側のエラーです。Anthropic 429 rate_limit_error が発生しました。");
+    expect(result.reply).toContain("確認したいことや進めたい task があれば、そのまま送ってください。");
+    expect(lastTurn).toMatchObject({
+      replyPath: "fallback",
+      technicalFailure: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_legacy\"}",
+    });
+  });
+
   it("returns a safety-only conversation reply when the manager agent fails technically", async () => {
     piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
 
@@ -554,6 +592,36 @@ describe("handleManagerMessage conversation and query-context flow", () => {
       action: "conversation",
     });
     expect(result.diagnostics?.router.technicalFailure).toContain("agent failure");
+  });
+
+  it("prepends an LLM provider error summary before the safety-only reply", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new LlmProviderFailureError({
+      kind: "provider",
+      provider: "anthropic",
+      statusCode: 429,
+      providerErrorType: "rate_limit_error",
+      publicSummary: "Anthropic 429 rate_limit_error",
+      technicalMessage: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_123\"}",
+      requestId: "req_test_123",
+    }));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-router-fallback-llm",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "こんばんは",
+      },
+      new Date("2026-03-19T12:01:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("LLM 側のエラーです。Anthropic 429 rate_limit_error が発生しました。");
+    expect(result.reply).toContain("確認したいことや進めたい task があれば、そのまま送ってください。");
+    expect(result.diagnostics?.router?.technicalFailure).toContain("\"request_id\":\"req_test_123\"");
   });
 
   it("keeps the safety-only fallback conversation reply neutral in the morning", async () => {

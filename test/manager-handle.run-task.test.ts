@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleManagerMessage } from "../src/lib/manager.js";
+import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
 import { loadPendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -384,6 +385,39 @@ describe("handleManagerMessage run_task flow", () => {
       intent: "run_task",
       lastUserMessage: "AIC-52 を実行して",
       missingDecisionSummary: "manager agent explicit run_task misclassified as query",
+    });
+  });
+
+  it("prepends an LLM provider error summary before the run_task fallback reply", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new LlmProviderFailureError({
+      kind: "provider",
+      provider: "anthropic",
+      statusCode: 429,
+      providerErrorType: "rate_limit_error",
+      publicSummary: "Anthropic 429 rate_limit_error",
+      technicalMessage: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_run_task\"}",
+      requestId: "req_test_run_task",
+    }));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-run-task-llm-fallback",
+        messageTs: "msg-run-task-llm-fallback-1",
+        userId: "U1",
+        text: "AIC-52 を実行して",
+      },
+      new Date("2026-03-24T08:41:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("LLM 側のエラーです。Anthropic 429 rate_limit_error が発生しました。");
+    expect(result.reply).toContain("AIC-52 に対して何を実行したいかを安全に確定できないため");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "fallback",
+      technicalFailure: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_run_task\"}",
     });
   });
 });

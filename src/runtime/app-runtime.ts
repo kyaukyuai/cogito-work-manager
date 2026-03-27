@@ -16,6 +16,7 @@ import {
 import type { Logger } from "../lib/logger.js";
 import { handleManagerMessage } from "../lib/manager.js";
 import { commitManagerCommandProposals } from "../lib/manager-command-commit.js";
+import { buildSlackVisibleLlmFailureNotice } from "../lib/llm-failure.js";
 import { handleIssueCreatedWebhook } from "../orchestrators/webhooks/handle-issue-created.js";
 import { handlePersonalizationUpdate } from "../orchestrators/personalization/handle-personalization.js";
 import { reconcileAwaitingFollowupsWithCurrentLinear } from "../orchestrators/review/review-data.js";
@@ -86,6 +87,24 @@ function extractSchedulerRunCommitSummary(rawReply: string, postedReply: string)
     .replace(/\s+/g, " ")
     .trim();
   return collapsed || undefined;
+}
+
+function buildSlackVisibleFailureReply(args: {
+  error: unknown;
+  fallbackReply: string;
+  includeTechnicalMessage?: boolean;
+}): string {
+  const llmFailureNotice = buildSlackVisibleLlmFailureNotice(args.error);
+  if (llmFailureNotice) {
+    return [llmFailureNotice, args.fallbackReply].filter(Boolean).join("\n\n");
+  }
+
+  if (!args.includeTechnicalMessage) {
+    return args.fallbackReply;
+  }
+
+  const technicalMessage = args.error instanceof Error ? args.error.message : String(args.error);
+  return [args.fallbackReply, technicalMessage].filter(Boolean).join("\n\n");
 }
 
 async function downloadAttachments(
@@ -224,8 +243,8 @@ export function createAppRuntimeHandlers(args: {
             const errorMessage = error instanceof Error ? error.message : String(error);
             return {
               status: "error" as const,
-              persistedSummary: errorMessage,
-              commitSummary: errorMessage,
+              persistedSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
+              commitSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
             };
           }
         },
@@ -279,7 +298,10 @@ export function createAppRuntimeHandlers(args: {
         threadTs: task.input.rootThreadTs,
         error: error instanceof Error ? error.message : String(error),
       });
-      return task.fallback();
+      return buildSlackVisibleFailureReply({
+        error,
+        fallbackReply: await task.fallback(),
+      });
     }
   }
 
@@ -426,8 +448,8 @@ export function createAppRuntimeHandlers(args: {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             status: "error" as const,
-            persistedSummary: errorMessage,
-            commitSummary: errorMessage,
+            persistedSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
+            commitSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
           };
         }
       },
@@ -561,8 +583,8 @@ export function createAppRuntimeHandlers(args: {
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 return {
                   status: "error" as const,
-                  persistedSummary: errorMessage,
-                  commitSummary: errorMessage,
+                  persistedSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
+                  commitSummary: buildSlackVisibleLlmFailureNotice(error) ?? errorMessage,
                 };
               }
             },
@@ -653,7 +675,11 @@ export function createAppRuntimeHandlers(args: {
         const reply = await sendSlackReply(args.webClient, {
           channel: message.channelId,
           threadTs: message.rootThreadTs,
-          reply: `処理に失敗しました。設定や Linear 連携を確認してください。\n\n${errorMessage}`,
+          reply: buildSlackVisibleFailureReply({
+            error,
+            fallbackReply: "処理に失敗しました。設定や Linear 連携を確認してください。",
+            includeTechnicalMessage: true,
+          }),
           linearWorkspace: args.config.linearWorkspace,
           updateTs: pendingReplyTs,
         });
@@ -767,7 +793,13 @@ export function createAppRuntimeHandlers(args: {
         const currentPolicy = await args.managerRepositories.policy.load();
         await sendSlackReply(args.webClient, {
           channel: currentPolicy.controlRoomChannelId,
-          reply: `${parsedEvent.event.issueIdentifier} の webhook 自動処理に失敗しました。\n\n${errorMessage}`,
+          reply: `${parsedEvent.event.issueIdentifier} の webhook 自動処理に失敗しました。\n\n${
+            buildSlackVisibleFailureReply({
+              error,
+              fallbackReply: "処理に失敗しました。設定や Linear 連携を確認してください。",
+              includeTechnicalMessage: true,
+            })
+          }`,
           linearWorkspace: args.config.linearWorkspace,
         }).catch((notifyError) => {
           args.logger.error("Failed to notify control room about webhook failure", {

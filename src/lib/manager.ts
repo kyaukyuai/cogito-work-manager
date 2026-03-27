@@ -78,6 +78,7 @@ import {
 } from "../state/workgraph/queries.js";
 import { getSlackThreadContext } from "./slack-context.js";
 import { saveLastManagerAgentTurn } from "./last-manager-agent-turn.js";
+import { buildSlackVisibleLlmFailureNotice } from "./llm-failure.js";
 import type { SystemPaths } from "./system-workspace.js";
 import { buildThreadPaths, ensureThreadWorkspace, type ThreadPaths } from "./thread-workspace.js";
 import {
@@ -323,6 +324,14 @@ function buildFallbackConversationReply(
     return "確認したいことがあれば、そのまま続けて送ってください。状況確認でも task 追加でも大丈夫です。";
   }
   return "必要なことがあれば、そのまま続けて送ってください。状況確認でも task の相談でも対応します。";
+}
+
+function prependLlmFailureNotice(reply: string, error: unknown): string {
+  const llmFailureNotice = buildSlackVisibleLlmFailureNotice(error);
+  if (!llmFailureNotice) {
+    return reply;
+  }
+  return composeSlackReply([llmFailureNotice, reply]);
 }
 
 function buildSafetyQueryReply(): string {
@@ -767,7 +776,10 @@ async function buildConversationReply(
     };
   } catch (error) {
     return {
-      reply: buildFallbackConversationReply(conversationKind, capabilityQuery),
+      reply: prependLlmFailureNotice(
+        buildFallbackConversationReply(conversationKind, capabilityQuery),
+        error,
+      ),
       replyPath: "fallback",
       technicalFailure: error instanceof Error ? error.message : String(error),
     };
@@ -1657,7 +1669,7 @@ export async function handleManagerMessage(
     }
     return {
       handled: true,
-      reply: safetyFallback.reply,
+      reply: prependLlmFailureNotice(safetyFallback.reply, error),
       diagnostics: {
         agent: {
           source: "fallback",

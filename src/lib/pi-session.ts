@@ -46,6 +46,7 @@ import {
   detectSlackOutboundPostRequest,
 } from "../orchestrators/shared/slack-conversation.js";
 import { selectFinalAssistantText } from "../runtime/assistant-text.js";
+import { findAssistantLlmFailure, LlmProviderFailureError } from "./llm-failure.js";
 import { createManagerAgentTools } from "./manager-agent-tools.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
@@ -620,8 +621,13 @@ async function runIsolatedPromptTurn(
   try {
     await session.prompt(prompt);
     await session.agent.waitForIdle();
-    const text = selectFinalAssistantText(session.messages as unknown[], deltas);
+    const messages = session.messages as unknown[];
+    const text = selectFinalAssistantText(messages, deltas);
     if (!text) {
+      const llmFailure = findAssistantLlmFailure(messages);
+      if (llmFailure) {
+        throw new LlmProviderFailureError(llmFailure);
+      }
       throw new Error("Agent finished without producing a research synthesis reply");
     }
     return text;
@@ -1299,6 +1305,10 @@ async function runStructuredPromptTurn(
     const newMessages = (runtime.session.messages as unknown[]).slice(messageCountBefore);
     const reply = selectFinalAssistantText(newMessages, deltas);
     if (!reply) {
+      const llmFailure = findAssistantLlmFailure(newMessages);
+      if (llmFailure) {
+        throw new LlmProviderFailureError(llmFailure);
+      }
       throw new Error("Agent finished without producing a reply");
     }
 
@@ -1376,6 +1386,10 @@ async function runPromptTurn(config: AppConfig, paths: ThreadPaths, prompt: stri
     const newMessages = (runtime.session.messages as unknown[]).slice(messageCountBefore);
     const text = selectFinalAssistantText(newMessages, deltas);
     if (!text) {
+      const llmFailure = findAssistantLlmFailure(newMessages);
+      if (llmFailure) {
+        throw new LlmProviderFailureError(llmFailure);
+      }
       throw new Error("Agent finished without producing a reply");
     }
 
