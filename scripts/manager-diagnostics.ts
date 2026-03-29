@@ -7,7 +7,7 @@ import {
   buildManagerWorkgraphDiagnostics,
   buildManagerWorkspaceMemoryDiagnostics,
 } from "../src/lib/manager-diagnostics.js";
-import { DEFAULT_BOT_MODEL, type AppConfig } from "../src/lib/config.js";
+import { loadConfig, type AppConfig } from "../src/lib/config.js";
 import { buildExternalBoundaryDiagnostics } from "../src/lib/external-boundary-diagnostics.js";
 import { ensureManagerStateFiles, loadWebhookDeliveries } from "../src/lib/manager-state.js";
 import { buildLlmDiagnosticsFromConfig } from "../src/runtime/llm-runtime-config.js";
@@ -32,39 +32,16 @@ function parseCommand(value: string | undefined): Command {
 }
 
 function buildRuntimeConfig(workspaceDir: string): AppConfig {
-  return {
-    slackAppToken: process.env.SLACK_APP_TOKEN ?? "diagnostics",
-    slackBotToken: process.env.SLACK_BOT_TOKEN ?? "diagnostics",
-    slackAllowedChannelIds: new Set(
-      (process.env.SLACK_ALLOWED_CHANNEL_IDS ?? "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ),
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-    linearApiKey: process.env.LINEAR_API_KEY ?? "",
-    linearWorkspace: process.env.LINEAR_WORKSPACE ?? "",
-    linearTeamKey: process.env.LINEAR_TEAM_KEY ?? "",
-    notionApiToken: process.env.NOTION_API_TOKEN,
-    notionAgendaParentPageId: process.env.NOTION_AGENDA_PARENT_PAGE_ID,
-    botModel: process.env.BOT_MODEL ?? DEFAULT_BOT_MODEL,
-    botThinkingLevel: (process.env.BOT_THINKING_LEVEL as AppConfig["botThinkingLevel"] | undefined) ?? "minimal",
-    botMaxOutputTokens: process.env.BOT_MAX_OUTPUT_TOKENS ? Number(process.env.BOT_MAX_OUTPUT_TOKENS) : undefined,
-    botRetryMaxRetries: Number(process.env.BOT_RETRY_MAX_RETRIES ?? 1),
-    workspaceDir,
-    linearWebhookEnabled: process.env.LINEAR_WEBHOOK_ENABLED === "true",
-    linearWebhookPublicUrl: process.env.LINEAR_WEBHOOK_PUBLIC_URL,
-    linearWebhookSecret: process.env.LINEAR_WEBHOOK_SECRET,
-    linearWebhookPort: Number(process.env.LINEAR_WEBHOOK_PORT ?? 8787),
-    linearWebhookPath: process.env.LINEAR_WEBHOOK_PATH ?? "/hooks/linear",
-    heartbeatIntervalMin: Number(process.env.HEARTBEAT_INTERVAL_MIN ?? 30),
-    heartbeatActiveLookbackHours: Number(process.env.HEARTBEAT_ACTIVE_LOOKBACK_HOURS ?? 24),
-    schedulerPollSec: Number(process.env.SCHEDULER_POLL_SEC ?? 30),
-    workgraphMaintenanceIntervalMin: Number(process.env.WORKGRAPH_MAINTENANCE_INTERVAL_MIN ?? 15),
-    workgraphHealthWarnActiveEvents: Number(process.env.WORKGRAPH_HEALTH_WARN_ACTIVE_EVENTS ?? 200),
-    workgraphAutoCompactMaxActiveEvents: Number(process.env.WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS ?? 500),
-    logLevel: (process.env.LOG_LEVEL as AppConfig["logLevel"] | undefined) ?? "info",
-  };
+  return loadConfig({
+    SLACK_APP_TOKEN: "diagnostics",
+    SLACK_BOT_TOKEN: "diagnostics",
+    SLACK_ALLOWED_CHANNEL_IDS: "C0DIAGNOSTICS",
+    LINEAR_API_KEY: "diagnostics",
+    LINEAR_WORKSPACE: "diagnostics",
+    LINEAR_TEAM_KEY: "AIC",
+    ...process.env,
+    WORKSPACE_DIR: workspaceDir,
+  });
 }
 
 function buildThreadDiagnosticsCliView(

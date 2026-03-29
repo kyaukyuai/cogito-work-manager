@@ -360,4 +360,28 @@ esac
     });
     expect(diagnostics.operatorSummary.commands).toContain("npm run manager:diagnostics -- boundaries /workspace");
   });
+
+  it("prints prettified config validation errors for invalid diagnostics env", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-invalid-env-"));
+    tempDirs.push(cwd);
+
+    await writeFile(join(cwd, ".env"), [
+      "LINEAR_WEBHOOK_ENABLED=maybe",
+      "",
+    ].join("\n"), "utf8");
+
+    try {
+      await execFileAsync(tsxBin, [diagnosticsScript, "state-files", "./workspace"], {
+        cwd,
+        env: process.env,
+      });
+      throw new Error("expected diagnostics command to fail");
+    } catch (error) {
+      const stderr = error instanceof Error && "stderr" in error
+        ? String((error as Error & { stderr?: string }).stderr ?? "")
+        : "";
+      expect(stderr).toContain("Invalid environment configuration.");
+      expect(stderr).toContain("LINEAR_WEBHOOK_ENABLED");
+    }
+  });
 });

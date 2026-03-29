@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "manager:diagnostics": "tsx scripts/manager-diagnostics.ts",
     "workgraph:health": "tsx scripts/workgraph-maintenance.ts health",
     "workgraph:snapshot": "tsx scripts/workgraph-maintenance.ts snapshot",
@@ -19,17 +20,18 @@
     "node": ">=22.0.0"
   },
   "dependencies": {
-    "@mariozechner/pi-ai": "0.58.3",
-    "@mariozechner/pi-coding-agent": "0.58.3",
+    "@mariozechner/pi-ai": "^0.63.2",
+    "@mariozechner/pi-coding-agent": "^0.63.2",
     "@slack/socket-mode": "^2.0.6",
     "@slack/web-api": "^7.15.0",
-    "dotenv": "^16.6.1",
-    "zod": "^3.25.76"
+    "dotenv": "^17.3.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/node": "^22.18.0",
+    "@types/node": "^25.5.0",
+    "@vitest/coverage-v8": "^4.1.2",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
   }
 }

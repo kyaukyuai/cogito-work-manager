@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BOT_MODEL, loadConfig } from "../src/lib/config.js";
+import { ConfigValidationError, DEFAULT_BOT_MODEL, loadConfig } from "../src/lib/config.js";
 
 const baseEnv = {
   SLACK_APP_TOKEN: "xapp-test",
@@ -41,6 +41,22 @@ describe("loadConfig", () => {
     expect(config.linearWebhookSecret).toBe("secret-1");
   });
 
+  it("accepts env-style boolean strings for webhook automation", () => {
+    const enabledConfig = loadConfig({
+      ...baseEnv,
+      LINEAR_WEBHOOK_ENABLED: "yes",
+      LINEAR_WEBHOOK_PUBLIC_URL: "https://example.com",
+      LINEAR_WEBHOOK_SECRET: "secret-1",
+    });
+    const disabledConfig = loadConfig({
+      ...baseEnv,
+      LINEAR_WEBHOOK_ENABLED: "off",
+    });
+
+    expect(enabledConfig.linearWebhookEnabled).toBe(true);
+    expect(disabledConfig.linearWebhookEnabled).toBe(false);
+  });
+
   it("parses llm runtime overrides", () => {
     const config = loadConfig({
       ...baseEnv,
@@ -69,5 +85,20 @@ describe("loadConfig", () => {
       ...baseEnv,
       BOT_RETRY_MAX_RETRIES: "-1",
     })).toThrow();
+  });
+
+  it("throws a prettified config validation error", () => {
+    try {
+      loadConfig({
+        ...baseEnv,
+        LINEAR_WEBHOOK_ENABLED: "maybe",
+      });
+      throw new Error("expected config validation to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigValidationError);
+      expect((error as Error).message).toContain("Invalid environment configuration.");
+      expect((error as Error).message).toContain("LINEAR_WEBHOOK_ENABLED");
+      expect((error as Error).stack).toBeUndefined();
+    }
   });
 });
