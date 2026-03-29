@@ -31,6 +31,7 @@ async function assertFileRemoved(filePath: string) {
 afterEach(() => {
   execFileMock.mockReset();
   vi.resetModules();
+  vi.useRealTimers();
 });
 
 describe("linear write path hardening", () => {
@@ -150,6 +151,68 @@ describe("linear write path hardening", () => {
 
     expect(commentFilePath).toBeTruthy();
     await assertFileRemoved(commentFilePath);
+  });
+
+  it("splits managed updates with comments into update and comment commands", async () => {
+    const commands: string[][] = [];
+    mockExecFileSuccess(async (args) => {
+      commands.push(args);
+      if (args[0] === "issue" && args[1] === "update") {
+        expect(args).not.toContain("--comment");
+        return {
+          stdout: JSON.stringify({ id: "issue-1", identifier: "AIC-1", title: "Updated issue" }),
+        };
+      }
+      expect(args.slice(0, 3)).toEqual(["issue", "comment", "add"]);
+      return {
+        stdout: JSON.stringify({ id: "comment-1", body: "done" }),
+      };
+    });
+    const { updateManagedLinearIssue } = await import("../src/lib/linear.js");
+
+    await updateManagedLinearIssue(
+      {
+        issueId: "AIC-1",
+        state: "Done",
+        comment: "完了しました",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    );
+
+    expect(commands).toHaveLength(2);
+    expect(commands[0]?.slice(0, 2)).toEqual(["issue", "update"]);
+    expect(commands[1]?.slice(0, 3)).toEqual(["issue", "comment", "add"]);
+  });
+
+  it("times out hung linear commands instead of waiting forever", async () => {
+    vi.useFakeTimers();
+    execFileMock.mockImplementation((_: string, __: string[], options: { signal?: AbortSignal }, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      options.signal?.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        callback(error);
+      }, { once: true });
+      return {} as never;
+    });
+    const { LINEAR_COMMAND_TIMEOUT_MS, updateManagedLinearIssue } = await import("../src/lib/linear.js");
+
+    const promise = updateManagedLinearIssue(
+      {
+        issueId: "AIC-1",
+        state: "Done",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    );
+
+    const expectation = expect(promise).rejects.toThrow(`timed out after ${LINEAR_COMMAND_TIMEOUT_MS}ms`);
+    await vi.advanceTimersByTimeAsync(LINEAR_COMMAND_TIMEOUT_MS);
+    await expectation;
   });
 
   it("keeps repeated relation add calls as successful no-op capable operations", async () => {

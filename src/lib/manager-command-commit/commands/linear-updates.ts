@@ -151,6 +151,36 @@ function normalizeCompletedStateAlias(state: string | undefined): string | undef
   return normalized;
 }
 
+async function runLoggedUpdateIssueStatusStep<T>(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssueStatusProposal,
+  step: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  args.logger?.info("update_issue_status step started", {
+    issueId: proposal.issueId,
+    signal: proposal.signal,
+    step,
+  });
+  try {
+    const result = await action();
+    args.logger?.info("update_issue_status step completed", {
+      issueId: proposal.issueId,
+      signal: proposal.signal,
+      step,
+    });
+    return result;
+  } catch (error) {
+    args.logger?.error("update_issue_status step failed", {
+      issueId: proposal.issueId,
+      signal: proposal.signal,
+      step,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 export function buildStatusSourceComment(
   message: ManagerCommitMessageContext | ManagerCommitSystemContext,
   heading: string,
@@ -190,49 +220,61 @@ export async function commitUpdateIssueStatusProposal(
   if (proposal.signal === "progress") {
     const progressComment = proposal.commentBody ?? buildStatusSourceComment(message, "## Progress source");
     if (proposal.dueDate || proposal.state) {
-      updatedIssues.push(await updateManagedLinearIssue(
+      const normalizedProgressComment = progressComment.startsWith("## Progress update")
+        ? progressComment
+        : `## Progress update\n${progressComment.trim()}`;
+      updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", () => updateManagedLinearIssue(
         {
           issueId: proposal.issueId,
           state: proposal.state,
           dueDate: proposal.dueDate,
-          comment: progressComment.startsWith("## Progress update")
-            ? progressComment
-            : `## Progress update\n${progressComment.trim()}`,
         },
+        args.env,
+      )));
+      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearComment(
+        proposal.issueId,
+        normalizedProgressComment,
         args.env,
       ));
     } else {
-      await addLinearProgressComment(
+      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearProgressComment(
         proposal.issueId,
         progressComment,
         args.env,
-      );
-      updatedIssues.push(await getLinearIssue(proposal.issueId, args.env));
+      ));
+      updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "reload_issue", () => getLinearIssue(
+        proposal.issueId,
+        args.env,
+      )));
     }
   } else if (proposal.signal === "completed") {
-    updatedIssues.push(await updateManagedLinearIssue(
+    updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", () => updateManagedLinearIssue(
       {
         issueId: proposal.issueId,
         state: normalizedCompletedState ?? "completed",
         dueDate: proposal.dueDate,
-        comment: proposal.commentBody ?? buildStatusSourceComment(message, "## Completion source"),
       },
+      args.env,
+    )));
+    await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearComment(
+      proposal.issueId,
+      proposal.commentBody ?? buildStatusSourceComment(message, "## Completion source"),
       args.env,
     ));
   } else {
-    const blocked = await markLinearIssueBlocked(
+    const blocked = await runLoggedUpdateIssueStatusStep(args, proposal, "blocked_update", () => markLinearIssueBlocked(
       proposal.issueId,
       proposal.commentBody ?? buildStatusSourceComment(message, "## Blocked source"),
       args.env,
-    );
+    ));
     const blockedIssue = proposal.dueDate
-      ? await updateManagedLinearIssue(
+      ? await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", () => updateManagedLinearIssue(
           {
             issueId: proposal.issueId,
             dueDate: proposal.dueDate,
           },
           args.env,
-        )
+        ))
       : blocked.issue;
     updatedIssues.push(blockedIssue);
     blockedStateByIssueId.set(proposal.issueId, blocked.blockedStateApplied);
@@ -254,8 +296,8 @@ export async function commitUpdateIssueStatusProposal(
     message.text,
     args.now,
   );
-  await args.repositories.followups.save(nextFollowups);
-  await recordIssueSignals(args.repositories.workgraph, {
+  await runLoggedUpdateIssueStatusStep(args, proposal, "save_followups", () => args.repositories.followups.save(nextFollowups));
+  await runLoggedUpdateIssueStatusStep(args, proposal, "record_issue_signals", () => recordIssueSignals(args.repositories.workgraph, {
     occurredAt,
     source: {
       channelId: message.channelId,
@@ -269,15 +311,15 @@ export async function commitUpdateIssueStatusProposal(
       blockedStateApplied: blockedStateByIssueId.get(issue.identifier),
       dueDate: issue.dueDate ?? undefined,
     })),
-  });
-  await recordFollowupTransitions(args.repositories.workgraph, followups, nextFollowups, {
+  }));
+  await runLoggedUpdateIssueStatusStep(args, proposal, "record_followup_transitions", () => recordFollowupTransitions(args.repositories.workgraph, followups, nextFollowups, {
     occurredAt,
     source: {
       channelId: message.channelId,
       rootThreadTs: message.rootThreadTs,
       messageTs: message.messageTs,
     },
-  });
+  }));
 
   return {
     commandType: proposal.commandType,

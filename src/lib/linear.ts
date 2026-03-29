@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+export const LINEAR_COMMAND_TIMEOUT_MS = 30_000;
 
 export interface LinearCommandEnv {
   LINEAR_API_KEY?: string;
@@ -716,13 +717,60 @@ class LinearCommandError extends Error {
   }
 }
 
+class LinearCommandTimeoutError extends LinearCommandError {
+  readonly timeoutMs: number;
+
+  constructor(message: string, stdout: string, stderr: string, combined: string, timeoutMs: number) {
+    super(message, stdout, stderr, combined);
+    this.name = "LinearCommandTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+function createLinearCommandAbortSignal(signal?: AbortSignal): {
+  signal: AbortSignal;
+  timedOut: () => boolean;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const timeout = setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, LINEAR_COMMAND_TIMEOUT_MS);
+
+  const handleAbort = () => {
+    controller.abort(signal?.reason);
+  };
+
+  if (signal) {
+    if (signal.aborted) {
+      handleAbort();
+    } else {
+      signal.addEventListener("abort", handleAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    timedOut: () => didTimeout,
+    cleanup: () => {
+      clearTimeout(timeout);
+      if (signal) {
+        signal.removeEventListener("abort", handleAbort);
+      }
+    },
+  };
+}
+
 async function execLinear(
   args: string[],
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; combined: string }> {
+  const abortContext = createLinearCommandAbortSignal(signal);
   try {
-    const result = await execFileAsync("linear", args, { env, signal });
+    const result = await execFileAsync("linear", args, { env, signal: abortContext.signal });
     const stdout = stripAnsi(result.stdout ?? "").trim();
     const stderr = stripAnsi(result.stderr ?? "").trim();
     const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
@@ -732,7 +780,18 @@ async function execLinear(
     const stderr = stripAnsi(String((error as { stderr?: string }).stderr ?? "")).trim();
     const message = error instanceof Error ? error.message : String(error);
     const combined = [stdout, stderr, message].filter(Boolean).join("\n").trim();
+    if (abortContext.timedOut() && !signal?.aborted) {
+      throw new LinearCommandTimeoutError(
+        `linear ${args.join(" ")} timed out after ${LINEAR_COMMAND_TIMEOUT_MS}ms`,
+        stdout,
+        stderr,
+        combined,
+        LINEAR_COMMAND_TIMEOUT_MS,
+      );
+    }
     throw new LinearCommandError(combined || `linear ${args.join(" ")} failed`, stdout, stderr, combined);
+  } finally {
+    abortContext.cleanup();
   }
 }
 
@@ -849,7 +908,6 @@ function buildManagedUpdateIssueArgs(
   if (input.priority != null) args.push("--priority", String(input.priority));
   if (assignee?.trim()) args.push("--assignee", assignee.trim());
   if (input.parent?.trim()) args.push("--parent", input.parent.trim());
-  if (input.comment?.trim()) args.push("--comment", input.comment.trim());
   if (input.parent === null) {
     throw new Error("Clearing parent relationships is not supported by linear-cli v2.4.0");
   }
@@ -1403,24 +1461,50 @@ export async function updateManagedLinearIssue(
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
 ): Promise<LinearIssue> {
+  const comment = input.comment?.trim();
+  const updateInput = comment ? { ...input, comment: undefined } : input;
   const assignee = await resolveAssigneeSpecifier(env, input.assignee, signal);
   const executeUpdate = async (descriptionFilePath?: string) =>
     execLinearJson<CliIssuePayload>(
-      buildManagedUpdateIssueArgs(input, env, assignee, { descriptionFilePath }),
+      buildManagedUpdateIssueArgs(updateInput, env, assignee, { descriptionFilePath }),
       env,
       signal,
     );
-  const payload = hasMultilineLinearText(input.description)
-    ? await withTemporaryLinearTextFile(
-        "cogito-work-manager-linear-update-",
-        "description.md",
-        input.description!.trim(),
-        (descriptionFilePath) => executeUpdate(descriptionFilePath),
-      )
-    : await executeUpdate();
-  const issue = normalizeLinearIssuePayload(payload);
+
+  const hasUpdateFields = Boolean(
+    updateInput.title?.trim()
+      || updateInput.description?.trim()
+      || updateInput.state?.trim()
+      || updateInput.dueDate?.trim()
+      || updateInput.clearDueDate
+      || input.assignee?.trim()
+      || updateInput.priority != null
+      || updateInput.parent?.trim()
+      || updateInput.parent === null,
+  );
+
+  let issue: LinearIssue | undefined;
+  if (hasUpdateFields) {
+    const payload = hasMultilineLinearText(updateInput.description)
+      ? await withTemporaryLinearTextFile(
+          "cogito-work-manager-linear-update-",
+          "description.md",
+          updateInput.description!.trim(),
+          (descriptionFilePath) => executeUpdate(descriptionFilePath),
+        )
+      : await executeUpdate();
+    issue = normalizeLinearIssuePayload(payload);
+    if (!issue) {
+      throw new Error("Linear issue update returned no issue");
+    }
+  }
+
+  if (comment) {
+    await addLinearComment(input.issueId, comment, env, signal);
+  }
+
   if (!issue) {
-    throw new Error("Linear issue update returned no issue");
+    issue = await getLinearIssue(input.issueId, env, signal);
   }
   return issue;
 }
@@ -1450,7 +1534,9 @@ export async function updateLinearIssueStateWithComment(
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
 ): Promise<LinearIssue> {
-  return updateManagedLinearIssue({ issueId, state, comment }, env, signal);
+  const issue = await updateManagedLinearIssue({ issueId, state }, env, signal);
+  await addLinearComment(issueId, comment, env, signal);
+  return issue;
 }
 
 export async function addLinearComment(

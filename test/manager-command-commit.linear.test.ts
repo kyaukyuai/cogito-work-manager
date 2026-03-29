@@ -115,7 +115,7 @@ describe("manager command commit linear", () => {
     expect(linearMocks.addLinearProgressComment).not.toHaveBeenCalled();
   });
 
-  it("commits completed status updates with a single update-and-comment call", async () => {
+  it("commits completed status updates with split update and comment calls", async () => {
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-1",
       identifier: "AIC-501",
@@ -153,11 +153,14 @@ describe("manager command commit linear", () => {
       expect.objectContaining({
         issueId: "AIC-501",
         state: "completed",
-        comment: expect.stringContaining("## Completion source"),
       }),
       expect.any(Object),
     );
-    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-501",
+      expect.stringContaining("## Completion source"),
+      expect.any(Object),
+    );
     expect(result.committed[0]?.publicReply).toBe("AIC-501 を完了にしました。");
   });
 
@@ -200,8 +203,12 @@ describe("manager command commit linear", () => {
       expect.objectContaining({
         issueId: "AIC-60",
         state: "Canceled",
-        comment: expect.stringContaining("## Completion source"),
       }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-60",
+      expect.stringContaining("## Completion source"),
       expect.any(Object),
     );
     expect(result.committed[0]?.summary).toContain("Canceled に変更しました。");
@@ -249,8 +256,12 @@ describe("manager command commit linear", () => {
       expect.objectContaining({
         issueId: "AIC-38",
         dueDate: "2026-03-27",
-        comment: expect.stringContaining("## Progress update"),
       }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-38",
+      expect.stringContaining("## Progress update"),
       expect.any(Object),
     );
     expect(linearMocks.addLinearProgressComment).not.toHaveBeenCalled();

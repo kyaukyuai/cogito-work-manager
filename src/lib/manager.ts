@@ -1330,6 +1330,7 @@ export async function handleManagerMessage(
     runSchedulerJobNow?: CommitManagerCommandArgs["runSchedulerJobNow"];
     postSlackMessage?: CommitManagerCommandArgs["postSlackMessage"];
     managerAgentObserver?: ManagerAgentTurnObserver;
+    logger?: CommitManagerCommandArgs["logger"];
   },
 ): Promise<ManagerHandleResult> {
   const repositories = isManagerRepositories(repositoriesOrNow)
@@ -1391,6 +1392,7 @@ export async function handleManagerMessage(
         ownerMapConfirmationMode: "confirm",
         runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
         postSlackMessage: runtimeActions?.postSlackMessage,
+        logger: runtimeActions?.logger,
       });
       if (confirmCommitResult.committed.length > 0 && confirmCommitResult.rejected.length === 0) {
         await clearPendingManagerConfirmation(paths);
@@ -1455,6 +1457,7 @@ export async function handleManagerMessage(
       env,
       runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
       postSlackMessage: runtimeActions?.postSlackMessage,
+      logger: runtimeActions?.logger,
     });
     const agentIntent = agentTurn.intentReport?.intent;
     const extractedQuerySnapshot = agentIntent === "query"
@@ -1537,25 +1540,73 @@ export async function handleManagerMessage(
       || agentIntent === "heartbeat"
       || agentIntent === "scheduler"
     ) {
+      runtimeActions?.logger?.info("manager persistence step started", {
+        step: "persist_mutation_query_continuation",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
       await persistQueryContinuationForAction({
         paths,
         action: "mutation",
         messageText: message.text,
         now,
       });
+      runtimeActions?.logger?.info("manager persistence step completed", {
+        step: "persist_mutation_query_continuation",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
+      runtimeActions?.logger?.info("manager persistence step started", {
+        step: "apply_committed_thread_notion_page_target",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
       await applyCommittedThreadNotionPageTarget({
         paths,
         committed: commitResult.committed,
         now,
+      });
+      runtimeActions?.logger?.info("manager persistence step completed", {
+        step: "apply_committed_thread_notion_page_target",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
       });
     }
 
     const pendingPersistence = agentTurn.pendingClarificationDecision?.persistence;
     const commitSucceeded = commitResult.committed.length > 0;
     if (commitSucceeded && pendingManagerClarification) {
+      runtimeActions?.logger?.info("manager persistence step started", {
+        step: "clear_pending_manager_clarification",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
       await clearPendingManagerClarification(paths);
+      runtimeActions?.logger?.info("manager persistence step completed", {
+        step: "clear_pending_manager_clarification",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
     } else if (pendingPersistence === "clear") {
+      runtimeActions?.logger?.info("manager persistence step started", {
+        step: "clear_pending_manager_clarification",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
       await clearPendingManagerClarification(paths);
+      runtimeActions?.logger?.info("manager persistence step completed", {
+        step: "clear_pending_manager_clarification",
+        channelId: message.channelId,
+        threadTs: message.rootThreadTs,
+        intent: agentIntent,
+      });
     } else if (pendingPersistence === "replace" && isMutableIntent(agentIntent)) {
       await persistPendingManagerClarification({
         paths,
@@ -1611,6 +1662,12 @@ export async function handleManagerMessage(
       // Personalization updates are silent and must not affect the main reply path.
     }
 
+    runtimeActions?.logger?.info("manager persistence step started", {
+      step: "save_last_manager_agent_turn",
+      channelId: message.channelId,
+      threadTs: message.rootThreadTs,
+      intent: agentIntent,
+    });
     await saveLastManagerAgentTurn(paths, {
       recordedAt: now.toISOString(),
       replyPath: "agent",
@@ -1630,6 +1687,12 @@ export async function handleManagerMessage(
       taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
       duplicateResolutions: agentTurn.duplicateResolutions,
       missingQuerySnapshot,
+    });
+    runtimeActions?.logger?.info("manager persistence step completed", {
+      step: "save_last_manager_agent_turn",
+      channelId: message.channelId,
+      threadTs: message.rootThreadTs,
+      intent: agentIntent,
     });
 
     return {

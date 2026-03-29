@@ -159,6 +159,7 @@ export function createSlackMessageHandler(args: {
               }
             },
             postSlackMessage: executeSlackMentionPost,
+            logger: args.logger,
             managerAgentObserver: {
               onIntentReport: (report) => {
                 observedIntent = report.intent;
