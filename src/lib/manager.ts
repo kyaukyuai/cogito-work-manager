@@ -382,6 +382,30 @@ function originalMessageForPendingClarification(
   return messageText;
 }
 
+function validatePendingClarificationDecision(args: {
+  messageText: string;
+  pendingClarification?: PendingManagerClarification;
+  intent?: ManagerIntentReport["intent"];
+  queryKind?: ManagerIntentReport["queryKind"];
+  pendingDecision?: PendingClarificationDecisionReport;
+}): void {
+  if (!args.pendingClarification) {
+    return;
+  }
+  if (!isPendingManagerClarificationStatusQuestion(args.messageText)) {
+    return;
+  }
+  if (args.pendingDecision?.decision !== "status_question") {
+    throw new Error("manager agent pending clarification status question misclassified");
+  }
+  if (args.pendingDecision.persistence !== "keep") {
+    throw new Error("manager agent pending clarification status question missing keep persistence");
+  }
+  if (args.intent === "query" && args.queryKind === "list-active") {
+    throw new Error("manager agent pending clarification status question misclassified as list-active query");
+  }
+}
+
 async function persistPendingManagerClarification(args: {
   paths: ThreadPaths;
   intent: "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" | "post_slack_message";
@@ -1437,6 +1461,13 @@ export async function handleManagerMessage(
     if (pendingManagerClarification && !agentTurn.pendingClarificationDecision) {
       throw new Error("manager agent missing pending clarification decision");
     }
+    validatePendingClarificationDecision({
+      messageText: message.text,
+      pendingClarification: pendingManagerClarification,
+      intent: agentTurn.intentReport?.intent,
+      queryKind: agentTurn.intentReport?.queryKind,
+      pendingDecision: agentTurn.pendingClarificationDecision,
+    });
     if (explicitRunTaskIssueIdentifier && agentTurn.intentReport?.intent === "query") {
       throw new Error("manager agent explicit run_task misclassified as query");
     }

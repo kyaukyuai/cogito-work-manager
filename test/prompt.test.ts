@@ -107,6 +107,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("If the user does not specify a channel for a custom scheduler job, default it to the control room channel.");
     expect(prompt).toContain("If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.");
     expect(prompt).toContain("Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.");
+    expect(prompt).toContain("For ambiguous follow-ups like どういう状況ですか, 今どうなっていますか, or その後どうですか in a thread with pending clarification, do not default to a fresh list-active query. Treat them as status_question first.");
+    expect(prompt).toContain("When a pending clarification status question has threadParentIssueId or relatedIssueIds, inspect the most relevant related issue first and answer its current status before asking for more detail.");
     expect(prompt).toContain("For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.");
     expect(prompt).toContain("For reference-material query replies, also include referenceItems in report_query_snapshot with id, title, url, and source for each page, document, or database you surfaced.");
     expect(prompt).toContain("A query reply without report_query_snapshot is unsafe and will be rejected by the manager.");

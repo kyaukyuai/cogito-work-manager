@@ -161,6 +161,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When a message describes a bug, UX issue, or rendering problem and ends by asking to create a task, classify it as create_work and propose a task instead of drifting into query mode.",
     "If the latest message is an intent correction like という意図です, そういう意味です, つまり, or そうではなく and a pending manager clarification context exists, report continue_pending and usually persistence=keep or replace depending on whether the pending clarification should stay unchanged or be overwritten.",
     "If the latest message asks what is happening with the pending clarification, report status_question and persistence=keep.",
+    "For ambiguous follow-ups like どういう状況ですか, 今どうなっていますか, or その後どうですか in a thread with pending clarification, do not default to a fresh list-active query. Treat them as status_question first.",
+    "When a pending clarification status question has threadParentIssueId or relatedIssueIds, inspect the most relevant related issue first and answer its current status before asking for more detail.",
     "If a pending manager clarification context exists but the latest message is a new query, new task, or new update request, report new_request and usually persistence=clear unless you intentionally replace it with a new pending clarification.",
     "Do not rely on the manager to pre-merge pending clarification text for you. If you decide continue_pending, combine the original request and the latest message yourself when reasoning.",
     "When quoted transcript or previous bot output appears inside a create request, summarize the actual problem in the title and use the transcript as supporting description only.",
@@ -319,6 +321,7 @@ function buildManagerReplyStyleHints(
 
   if (pendingClarification?.intent === "create_work") {
     hints.push("If the latest message looks like a clarification or intent correction, treat it as a continuation of the pending create request, not as a new topic.");
+    hints.push("If the latest message is a short status question like どういう状況ですか or 今どうなっていますか, treat it as pending clarification status first, not as a fresh list query.");
   }
 
   if (capabilityQuery?.type === "slack-outbound-mention") {
