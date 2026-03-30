@@ -342,4 +342,125 @@ describe("slack message handler", () => {
       }),
     );
   });
+
+  it("hydrates attachments from Slack thread history even when subtype is missing", async () => {
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("# Soul\n不足分を追記する"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let pendingJob: Promise<void> | undefined;
+
+    managerMocks.handleManagerMessage.mockResolvedValue({
+      handled: true,
+      reply: "添付を確認しました。",
+      diagnostics: {
+        agent: {
+          source: "agent",
+          intent: "query",
+          toolCalls: [],
+          proposalCount: 0,
+          invalidProposalCount: 0,
+          committedCommands: [],
+          commitRejections: [],
+          missingQuerySnapshot: false,
+        },
+      },
+    });
+    webClient.conversations.replies.mockResolvedValue({
+      messages: [
+        {
+          ts: "1774852504.304879",
+          files: [
+            {
+              id: "F999",
+              name: "kanazawa_clone_soul (1).md",
+              mimetype: "text/plain",
+              url_private_download: "https://files.example/kanazawa_clone_soul.md",
+            },
+          ],
+        },
+      ],
+    });
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn().mockResolvedValue({ heartbeatEnabled: false, heartbeatIntervalMin: 30, heartbeatActiveLookbackHours: 24 }) },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "1774852504.304879",
+      thread_ts: "1774851744.248639",
+      text: "一部不足があったので、追加しておいて。",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+    await pendingJob;
+
+    expect(webClient.conversations.replies).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "1774851744.248639",
+      inclusive: true,
+      limit: 200,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("https://files.example/kanazawa_clone_soul.md", expect.any(Object));
+    expect(managerMocks.handleManagerMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        attachments: [
+          expect.objectContaining({
+            name: "kanazawa_clone_soul (1).md",
+            kind: "document",
+            extractionStatus: "completed",
+          }),
+        ],
+      }),
+      expect.anything(),
+      undefined,
+      expect.anything(),
+    );
+    expect(threadWorkspaceMocks.appendThreadLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "user",
+        attachments: [
+          expect.objectContaining({
+            name: "kanazawa_clone_soul (1).md",
+            kind: "document",
+            catalogId: expect.any(String),
+          }),
+        ],
+      }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "Hydrated Slack attachment metadata from thread history",
+      expect.objectContaining({
+        channelId: "C123",
+        threadTs: "1774851744.248639",
+        messageTs: "1774852504.304879",
+      }),
+    );
+  });
 });
