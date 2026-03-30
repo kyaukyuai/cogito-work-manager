@@ -323,6 +323,81 @@ describe("manager command commit linear", () => {
     expect(result.committed[0]?.summary).toBe("AIC-64 にコメントを追加しました。");
   });
 
+  it("recovers timed-out assignee updates when reload shows the requested assignee", async () => {
+    linearMocks.assignLinearIssue
+      .mockRejectedValueOnce(
+        createLinearTimeoutError("linear issue update AIC-86 --json --assignee m.tahira@opt.ne.jp timed out after 30000ms"),
+      )
+      .mockRejectedValueOnce(
+        createLinearTimeoutError("linear issue update AIC-87 --json --assignee m.tahira@opt.ne.jp timed out after 30000ms"),
+      );
+    linearMocks.getLinearIssue
+      .mockResolvedValueOnce({
+        id: "issue-86",
+        identifier: "AIC-86",
+        title: "OPT 向け契約書確認",
+        assignee: {
+          id: "user-2",
+          name: "m.tahira",
+          displayName: "m.tahira",
+          email: "m.tahira@opt.ne.jp",
+        },
+        relations: [],
+        inverseRelations: [],
+      })
+      .mockResolvedValueOnce({
+        id: "issue-87",
+        identifier: "AIC-87",
+        title: "契約フロー確認",
+        assignee: {
+          id: "user-2",
+          name: "m.tahira",
+          displayName: "m.tahira",
+          email: "m.tahira@opt.ne.jp",
+        },
+        relations: [],
+        inverseRelations: [],
+      });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "assign_issue",
+          issueId: "AIC-86",
+          assignee: "m.tahira",
+          reasonSummary: "田平さんに担当を移す",
+        },
+        {
+          commandType: "assign_issue",
+          issueId: "AIC-87",
+          assignee: "m.tahira",
+          reasonSummary: "田平さんに担当を移す",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-assign-timeout-recovery",
+        messageTs: "msg-assign-timeout-recovery-1",
+        userId: "U1",
+        text: "AIC86, 87 を田平さんアサインにして",
+      },
+      now: new Date("2026-03-30T04:20:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(2);
+    expect(linearMocks.assignLinearIssue).toHaveBeenNthCalledWith(1, "AIC-86", "m.tahira", expect.any(Object));
+    expect(linearMocks.assignLinearIssue).toHaveBeenNthCalledWith(2, "AIC-87", "m.tahira", expect.any(Object));
+    expect(linearMocks.getLinearIssue).toHaveBeenNthCalledWith(1, "AIC-86", expect.any(Object));
+    expect(linearMocks.getLinearIssue).toHaveBeenNthCalledWith(2, "AIC-87", expect.any(Object));
+    expect(result.committed[0]?.summary).toBe("AIC-86 の担当を m.tahira に更新しました。");
+    expect(result.committed[1]?.summary).toBe("AIC-87 の担当を m.tahira に更新しました。");
+  });
+
   it("commits progress updates with a due date in one update call and records the new due date", async () => {
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-38",

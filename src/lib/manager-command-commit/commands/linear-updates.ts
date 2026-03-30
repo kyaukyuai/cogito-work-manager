@@ -213,6 +213,37 @@ function hasRecoveredComment(issue: LinearIssue, expectedBody: string): boolean 
   return (issue.comments ?? []).some((comment) => comment.body.trim() === normalizedExpected);
 }
 
+function normalizeAssigneeValue(value: string | undefined | null): string {
+  return (value ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function matchesRecoveredAssignee(issue: LinearIssue, expectedAssignee: string): boolean {
+  const normalizedExpected = normalizeAssigneeValue(expectedAssignee);
+  if (!normalizedExpected) {
+    return false;
+  }
+
+  const candidates = new Set<string>();
+  for (const value of [
+    issue.assignee?.displayName,
+    issue.assignee?.name,
+    issue.assignee?.email,
+    issue.assignee?.id,
+  ]) {
+    const normalized = normalizeAssigneeValue(value);
+    if (normalized) {
+      candidates.add(normalized);
+    }
+  }
+
+  const email = normalizeAssigneeValue(issue.assignee?.email);
+  if (email.includes("@")) {
+    candidates.add(email.split("@")[0] ?? "");
+  }
+
+  return candidates.has(normalizedExpected);
+}
+
 async function recoverIssueUpdateAfterTimeout(args: {
   commitArgs: CommitManagerCommandArgs;
   proposal: UpdateIssueStatusProposal;
@@ -261,6 +292,28 @@ async function recoverCommentAfterTimeout(args: {
     timeoutMs: error.timeoutMs,
     recoveredCommentLength: expectedBody.trim().length,
   });
+}
+
+async function recoverAssignIssueAfterTimeout(args: {
+  commitArgs: CommitManagerCommandArgs;
+  proposal: AssignIssueProposal;
+  error: unknown;
+}): Promise<LinearIssue> {
+  const { commitArgs, proposal, error } = args;
+  if (!isLinearCommandTimeoutError(error)) {
+    throw error;
+  }
+  const issue = await getLinearIssue(proposal.issueId, commitArgs.env);
+  if (!matchesRecoveredAssignee(issue, proposal.assignee)) {
+    throw error;
+  }
+  commitArgs.logger?.warn("assign_issue recovered after timeout", {
+    issueId: proposal.issueId,
+    assignee: proposal.assignee,
+    recoveredAssignee: issue.assignee?.displayName ?? issue.assignee?.name ?? issue.assignee?.email ?? undefined,
+    timeoutMs: error.timeoutMs,
+  });
+  return issue;
 }
 
 export function buildStatusSourceComment(
@@ -481,11 +534,22 @@ export async function commitAssignIssueProposal(
   args: CommitManagerCommandArgs,
   proposal: AssignIssueProposal,
 ): Promise<ManagerCommandHandlerResult> {
-  const issue = await assignLinearIssue(proposal.issueId, proposal.assignee, args.env);
+  const issue = await (async () => {
+    try {
+      return await assignLinearIssue(proposal.issueId, proposal.assignee, args.env);
+    } catch (error) {
+      return recoverAssignIssueAfterTimeout({
+        commitArgs: args,
+        proposal,
+        error,
+      });
+    }
+  })();
+  const assigneeLabel = issue.assignee?.displayName ?? issue.assignee?.name ?? issue.assignee?.email ?? proposal.assignee;
   return {
     commandType: proposal.commandType,
     issueIds: [issue.identifier],
-    summary: `${issue.identifier} の担当を ${proposal.assignee} に更新しました。`,
+    summary: `${issue.identifier} の担当を ${assigneeLabel} に更新しました。`,
   };
 }
 
