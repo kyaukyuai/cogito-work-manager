@@ -42,6 +42,13 @@ vi.mock("../src/lib/slack-context.js", () => ({
   getSlackThreadContext: slackContextMocks.getSlackThreadContext,
 }));
 
+function createLinearTimeoutError(message: string): Error & { timeoutMs: number } {
+  const error = new Error(message) as Error & { timeoutMs: number };
+  error.name = "LinearCommandTimeoutError";
+  error.timeoutMs = 30_000;
+  return error;
+}
+
 describe("manager command commit linear", () => {
   let testContext: ManagerCommandCommitTestContext;
 
@@ -214,6 +221,106 @@ describe("manager command commit linear", () => {
     expect(result.committed[0]?.summary).toContain("Canceled に変更しました。");
     expect(result.committed[0]?.summary).not.toContain("完了として反映しました。");
     expect(result.committed[0]?.publicReply).toBe("AIC-60 を Canceled にしました。");
+  });
+
+  it("recovers a timed-out status update by reloading the updated issue", async () => {
+    linearMocks.updateManagedLinearIssue.mockRejectedValueOnce(
+      createLinearTimeoutError("linear issue update AIC-67 --json --state Canceled timed out after 30000ms"),
+    );
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-67",
+      identifier: "AIC-67",
+      title: "田平さんがCogitと連携できる環境確認",
+      state: { id: "state-canceled", name: "Canceled", type: "canceled" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-67",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "現時点で作業がないため Canceled にする",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-timeout-recovery-status",
+        messageTs: "msg-timeout-recovery-status-1",
+        userId: "U1",
+        text: "AIC-67 は現時点では作業なしなのでクローズで大丈夫です",
+      },
+      now: new Date("2026-03-30T00:05:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.getLinearIssue).toHaveBeenCalledWith("AIC-67", expect.any(Object));
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-67",
+      expect.stringContaining("## Completion source"),
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.publicReply).toBe("AIC-67 を Canceled にしました。");
+  });
+
+  it("recovers a timed-out add_comment proposal when the comment is already visible on reload", async () => {
+    linearMocks.addLinearComment.mockRejectedValueOnce(
+      createLinearTimeoutError("linear comment create AIC-64 timed out after 30000ms"),
+    );
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-64",
+      identifier: "AIC-64",
+      title: "田平さん招待・環境構築対応",
+      comments: [
+        {
+          id: "comment-1",
+          body: "## Close condition\n- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+        },
+      ],
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-64",
+          body: "## Close condition\n- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+          reasonSummary: "将来クローズ条件を残す",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-timeout-recovery-comment",
+        messageTs: "msg-timeout-recovery-comment-1",
+        userId: "U1",
+        text: "AIC-64 にクローズ条件を残しておいて",
+      },
+      now: new Date("2026-03-30T00:05:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.getLinearIssue).toHaveBeenCalledWith(
+      "AIC-64",
+      expect.any(Object),
+      undefined,
+      { includeComments: true },
+    );
+    expect(result.committed[0]?.summary).toBe("AIC-64 にコメントを追加しました。");
   });
 
   it("commits progress updates with a due date in one update call and records the new due date", async () => {

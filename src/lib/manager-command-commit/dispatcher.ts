@@ -121,6 +121,19 @@ async function dispatchValidatedProposal(
   return handler(args, proposal);
 }
 
+function formatProposalExecutionFailure(proposal: ManagerCommandProposal, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const targetIssueId = "issueId" in proposal ? proposal.issueId : undefined;
+  switch (proposal.commandType) {
+    case "update_issue_status":
+      return `${targetIssueId ?? "issue"} の状態更新を完了できませんでした: ${message}`;
+    case "add_comment":
+      return `${targetIssueId ?? "issue"} へのコメント追加を完了できませんでした: ${message}`;
+    default:
+      return `${proposal.commandType} の実行を完了できませんでした: ${message}`;
+  }
+}
+
 export async function commitManagerCommandProposals(args: CommitManagerCommandArgs): Promise<ManagerCommitResult> {
   const deduped = new Map<string, ManagerCommandProposal>();
   for (const proposal of args.proposals) {
@@ -236,11 +249,18 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
       continue;
     }
 
-    const result = await dispatchValidatedProposal(commitArgs, proposal);
-    if ("reason" in result) {
-      rejected.push(result);
-    } else {
-      committed.push(result);
+    try {
+      const result = await dispatchValidatedProposal(commitArgs, proposal);
+      if ("reason" in result) {
+        rejected.push(result);
+      } else {
+        committed.push(result);
+      }
+    } catch (error) {
+      rejected.push({
+        proposal,
+        reason: formatProposalExecutionFailure(proposal, error),
+      });
     }
   }
 
