@@ -3,9 +3,17 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import {
+  compareLinearCliVersions,
+  extractLinearCliVersion,
+  parseLinearCliCapabilitiesPayload,
+  REQUIRED_LINEAR_CLI_VERSION,
+  validateLinearCliCapabilities,
+} from "../gateways/linear/capabilities.js";
 
 const execFileAsync = promisify(execFile);
 export const LINEAR_COMMAND_TIMEOUT_MS = 30_000;
+export const LINEAR_CLI_WRITE_TIMEOUT_MS = 25_000;
 
 export interface LinearCommandEnv {
   LINEAR_API_KEY?: string;
@@ -687,44 +695,124 @@ function formatIssueResultOutput(issue: LinearIssue, action: string): string {
   return lines.join("\n");
 }
 
-function normalizeVersion(version: string): number[] {
-  const match = version.match(/(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return [0, 0, 0];
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParts = normalizeVersion(left);
-  const rightParts = normalizeVersion(right);
-  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
-    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (delta !== 0) return delta;
-  }
-  return 0;
-}
-
 class LinearCommandError extends Error {
   readonly stdout: string;
   readonly stderr: string;
   readonly combined: string;
+  readonly errorType?: string;
+  readonly errorDetails?: Record<string, unknown>;
 
-  constructor(message: string, stdout: string, stderr: string, combined: string) {
+  constructor(
+    message: string,
+    stdout: string,
+    stderr: string,
+    combined: string,
+    options?: {
+      errorType?: string;
+      errorDetails?: Record<string, unknown>;
+    },
+  ) {
     super(message);
     this.name = "LinearCommandError";
     this.stdout = stdout;
     this.stderr = stderr;
     this.combined = combined;
+    this.errorType = options?.errorType;
+    this.errorDetails = options?.errorDetails;
   }
 }
 
 class LinearCommandTimeoutError extends LinearCommandError {
   readonly timeoutMs: number;
 
-  constructor(message: string, stdout: string, stderr: string, combined: string, timeoutMs: number) {
-    super(message, stdout, stderr, combined);
+  constructor(
+    message: string,
+    stdout: string,
+    stderr: string,
+    combined: string,
+    timeoutMs: number,
+    options?: {
+      errorType?: string;
+      errorDetails?: Record<string, unknown>;
+    },
+  ) {
+    super(message, stdout, stderr, combined, options);
     this.name = "LinearCommandTimeoutError";
     this.timeoutMs = timeoutMs;
   }
+}
+
+function isHighValueIssueWriteCommand(args: string[]): boolean {
+  if (args[0] !== "issue") {
+    return false;
+  }
+
+  if (args[1] === "create" || args[1] === "update" || args[1] === "create-batch") {
+    return true;
+  }
+
+  if (args[1] === "comment" && args[2] === "add") {
+    return true;
+  }
+
+  return args[1] === "relation" && (args[2] === "add" || args[2] === "delete");
+}
+
+function buildLinearChildEnv(env: LinearCommandEnv, args: string[]): NodeJS.ProcessEnv {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  if (!childEnv.LINEAR_WRITE_TIMEOUT_MS?.trim() && isHighValueIssueWriteCommand(args)) {
+    childEnv.LINEAR_WRITE_TIMEOUT_MS = String(LINEAR_CLI_WRITE_TIMEOUT_MS);
+  }
+  return childEnv;
+}
+
+function parseCliJsonErrorEnvelope(raw: string): CliJsonErrorEnvelope | undefined {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed) || parsed.success !== false) {
+      return undefined;
+    }
+    return parsed as unknown as CliJsonErrorEnvelope;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCliTimeoutMs(details: Record<string, unknown> | undefined): number | undefined {
+  return typeof details?.timeoutMs === "number" && Number.isFinite(details.timeoutMs)
+    ? details.timeoutMs
+    : undefined;
+}
+
+function buildLinearCommandErrorFromCliEnvelope(args: string[], stdout: string, stderr: string, combined: string): Error {
+  const raw = stdout || stderr || combined;
+  const envelope = raw ? parseCliJsonErrorEnvelope(raw) : undefined;
+  const error = isRecord(envelope?.error) ? envelope.error : undefined;
+  const details = isRecord(error?.details) ? error.details : undefined;
+  const errorType = toStringOrUndefined(error?.type);
+  const message = toStringOrUndefined(error?.message) ?? (combined || `linear ${args.join(" ")} failed`);
+
+  if (
+    errorType === "timeout_error"
+    || toStringOrUndefined(details?.failureMode) === "timeout_waiting_for_confirmation"
+  ) {
+    return new LinearCommandTimeoutError(
+      message,
+      stdout,
+      stderr,
+      combined,
+      resolveCliTimeoutMs(details) ?? LINEAR_CLI_WRITE_TIMEOUT_MS,
+      {
+        errorType,
+        errorDetails: details,
+      },
+    );
+  }
+
+  return new LinearCommandError(message, stdout, stderr, combined, {
+    errorType,
+    errorDetails: details,
+  });
 }
 
 function createLinearCommandAbortSignal(signal?: AbortSignal): {
@@ -769,8 +857,9 @@ async function execLinear(
   signal?: AbortSignal,
 ): Promise<{ stdout: string; stderr: string; combined: string }> {
   const abortContext = createLinearCommandAbortSignal(signal);
+  const childEnv = buildLinearChildEnv(env, args);
   try {
-    const result = await execFileAsync("linear", args, { env, signal: abortContext.signal });
+    const result = await execFileAsync("linear", args, { env: childEnv, signal: abortContext.signal });
     const stdout = stripAnsi(result.stdout ?? "").trim();
     const stderr = stripAnsi(result.stderr ?? "").trim();
     const combined = [stdout, stderr].filter(Boolean).join("\n").trim();
@@ -789,7 +878,7 @@ async function execLinear(
         LINEAR_COMMAND_TIMEOUT_MS,
       );
     }
-    throw new LinearCommandError(combined || `linear ${args.join(" ")} failed`, stdout, stderr, combined);
+    throw buildLinearCommandErrorFromCliEnvelope(args, stdout, stderr, combined);
   } finally {
     abortContext.cleanup();
   }
@@ -1251,8 +1340,9 @@ async function loadIssueRelations(
 export async function verifyLinearCli(teamKey: string): Promise<void> {
   const versionResult = await execLinear(["--version"], process.env);
   const version = versionResult.stdout || versionResult.stderr;
-  if (compareVersions(version, "2.9.1") < 0) {
-    throw new Error(`linear-cli v2.9.1 or newer is required. Current version: ${version || "unknown"}`);
+  const normalizedVersion = extractLinearCliVersion(version) ?? version;
+  if (compareLinearCliVersions(normalizedVersion, REQUIRED_LINEAR_CLI_VERSION) < 0) {
+    throw new Error(`linear-cli v${REQUIRED_LINEAR_CLI_VERSION} or newer is required. Current version: ${version || "unknown"}`);
   }
 
   const whoami = await execLinear(["auth", "whoami"], process.env);
@@ -1260,13 +1350,16 @@ export async function verifyLinearCli(teamKey: string): Promise<void> {
     throw new Error("linear auth whoami returned empty output");
   }
 
-  await execLinear(["issue", "children", "--help"], process.env);
-  await execLinear(["issue", "parent", "--help"], process.env);
-  await execLinear(["issue", "create-batch", "--help"], process.env);
-  await execLinear(["team", "members", "--help"], process.env);
-  await execLinear(["webhook", "list", "--help"], process.env);
-  await execLinear(["webhook", "create", "--help"], process.env);
-  await execLinear(["webhook", "update", "--help"], process.env);
+  const capabilities = await execLinear(["capabilities", "--json"], process.env);
+  const parsedCapabilities = parseLinearCliCapabilitiesPayload(capabilities.stdout || capabilities.stderr);
+  if (!parsedCapabilities) {
+    throw new Error("linear capabilities --json returned an invalid payload");
+  }
+
+  const capabilityErrors = validateLinearCliCapabilities(parsedCapabilities);
+  if (capabilityErrors.length > 0) {
+    throw new Error(`linear capabilities --json is missing required runtime surface: ${capabilityErrors.join(" | ")}`);
+  }
 
   const teamList = await execLinear(["team", "list"], process.env);
   const lines = teamList.stdout

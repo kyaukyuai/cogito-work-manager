@@ -1,10 +1,17 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  collectOptionalV4ReadSurface,
+  compareLinearCliVersions,
+  extractLinearCliVersion,
+  parseLinearCliCapabilitiesPayload,
+  REQUIRED_LINEAR_CLI_VERSION,
+  validateLinearCliCapabilities,
+} from "../gateways/linear/capabilities.js";
 import type { AppConfig } from "./config.js";
 import { buildNotionShellCommand, buildSearchNotionArgs } from "./notion.js";
 
 const execFileAsync = promisify(execFile);
-const REQUIRED_LINEAR_VERSION = "2.9.1";
 
 export type ExternalBoundaryStatus = "ok" | "warning" | "failed" | "disabled" | "skipped";
 
@@ -126,7 +133,7 @@ async function buildLinearBoundaryDiagnostics(
     });
     return {
       status: "failed",
-      requiredVersion: REQUIRED_LINEAR_VERSION,
+      requiredVersion: REQUIRED_LINEAR_CLI_VERSION,
       steps,
     };
   }
@@ -139,27 +146,27 @@ async function buildLinearBoundaryDiagnostics(
     });
     return {
       status: "failed",
-      requiredVersion: REQUIRED_LINEAR_VERSION,
+      requiredVersion: REQUIRED_LINEAR_CLI_VERSION,
       steps,
     };
   }
 
   try {
     const versionResult = await runner.execFile("linear", ["--version"], env);
-    version = extractVersion(versionResult.combined);
-    const versionStatus = version && compareVersions(version, REQUIRED_LINEAR_VERSION) >= 0 ? "ok" : "failed";
+    version = extractLinearCliVersion(versionResult.combined);
+    const versionStatus = version && compareLinearCliVersions(version, REQUIRED_LINEAR_CLI_VERSION) >= 0 ? "ok" : "failed";
     steps.push({
       name: "cli-version",
       status: versionStatus,
       detail: version
-        ? `linear-cli ${version} を検出しました。required >= ${REQUIRED_LINEAR_VERSION}`
+        ? `linear-cli ${version} を検出しました。required >= ${REQUIRED_LINEAR_CLI_VERSION}`
         : `linear --version の出力から version を抽出できませんでした: ${versionResult.combined || "empty output"}`,
     });
     if (versionStatus === "failed") {
       return {
         status: "failed",
         version,
-        requiredVersion: REQUIRED_LINEAR_VERSION,
+        requiredVersion: REQUIRED_LINEAR_CLI_VERSION,
         steps,
       };
     }
@@ -171,7 +178,7 @@ async function buildLinearBoundaryDiagnostics(
     });
     return {
       status: "failed",
-      requiredVersion: REQUIRED_LINEAR_VERSION,
+      requiredVersion: REQUIRED_LINEAR_CLI_VERSION,
       steps,
     };
   }
@@ -191,30 +198,33 @@ async function buildLinearBoundaryDiagnostics(
     });
   }
 
-  const helpCommands = [
-    ["issue", "children", "--help"],
-    ["issue", "parent", "--help"],
-    ["issue", "create-batch", "--help"],
-    ["team", "members", "--help"],
-    ["webhook", "list", "--help"],
-    ["webhook", "create", "--help"],
-    ["webhook", "update", "--help"],
-  ] as const;
-  const helpFailures: string[] = [];
-  for (const command of helpCommands) {
-    try {
-      await runner.execFile("linear", [...command], env);
-    } catch (error) {
-      helpFailures.push(`${command.join(" ")}: ${error instanceof Error ? error.message : String(error)}`);
+  try {
+    const capabilitiesResult = await runner.execFile("linear", ["capabilities", "--json"], env);
+    const payload = parseLinearCliCapabilitiesPayload(capabilitiesResult.stdout || capabilitiesResult.stderr);
+    if (!payload) {
+      steps.push({
+        name: "capabilities-json",
+        status: "failed",
+        detail: "linear capabilities --json の payload を parse できませんでした。",
+      });
+    } else {
+      const capabilityErrors = validateLinearCliCapabilities(payload);
+      const optionalSurface = collectOptionalV4ReadSurface(payload);
+      steps.push({
+        name: "capabilities-json",
+        status: capabilityErrors.length === 0 ? "ok" : "failed",
+        detail: capabilityErrors.length === 0
+          ? `schema=${payload.schemaVersion}, automation.latest=${payload.contractVersions.automation.latest}, optional v4 read surface=${optionalSurface.join(", ") || "none"}`
+          : capabilityErrors.join(" | "),
+      });
     }
+  } catch (error) {
+    steps.push({
+      name: "capabilities-json",
+      status: "failed",
+      detail: error instanceof Error ? error.message : String(error),
+    });
   }
-  steps.push({
-    name: "required-command-surface",
-    status: helpFailures.length === 0 ? "ok" : "failed",
-    detail: helpFailures.length === 0
-      ? "issue children/parent/create-batch, team members, webhook list/create/update が利用可能です。"
-      : helpFailures.join(" | "),
-  });
 
   try {
     const teamList = await runner.execFile("linear", ["team", "list"], env);
@@ -242,7 +252,7 @@ async function buildLinearBoundaryDiagnostics(
   return {
     status: combineStatuses(steps.map((step) => step.status)),
     version,
-    requiredVersion: REQUIRED_LINEAR_VERSION,
+    requiredVersion: REQUIRED_LINEAR_CLI_VERSION,
     steps,
   };
 }
@@ -342,7 +352,7 @@ function buildWebResearchBoundaryDiagnostics(): WebResearchBoundaryDiagnostics {
 
 function buildOperatorSummary(status: ExternalBoundaryStatus): string {
   if (status === "failed") {
-    return "外部境界に失敗があります。CLI binary / auth / required command surface を確認してください。";
+    return "外部境界に失敗があります。CLI binary / auth / capabilities surface を確認してください。";
   }
   if (status === "warning") {
     return "外部境界に警告があります。設定値と optional integration の状態を確認してください。";
@@ -361,25 +371,4 @@ function combineStatuses(statuses: ExternalBoundaryStatus[]): ExternalBoundarySt
   return statuses.reduce<ExternalBoundaryStatus>((current, next) => (
     severity[next] > severity[current] ? next : current
   ), "ok");
-}
-
-function extractVersion(raw: string): string | undefined {
-  const match = raw.match(/(\d+\.\d+\.\d+)/);
-  return match?.[1];
-}
-
-function normalizeVersion(raw: string): number[] {
-  const match = raw.match(/(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return [0, 0, 0];
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParts = normalizeVersion(left);
-  const rightParts = normalizeVersion(right);
-  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
-    const delta = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
-    if (delta !== 0) return delta;
-  }
-  return 0;
 }

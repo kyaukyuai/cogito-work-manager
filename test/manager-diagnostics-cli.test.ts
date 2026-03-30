@@ -357,13 +357,41 @@ describe("manager diagnostics cli", () => {
 set -eu
 case "$*" in
   "--version")
-    echo "linear-cli v2.9.1"
+    echo "linear-cli v2.11.0"
     ;;
   "auth whoami")
     echo "diagnostics-user"
     ;;
-  "issue children --help"|"issue parent --help"|"issue create-batch --help"|"team members --help"|"webhook list --help"|"webhook create --help"|"webhook update --help")
-    echo "ok"
+  "capabilities --json")
+    cat <<'JSON'
+{
+  "schemaVersion": "v1",
+  "cli": { "version": "2.11.0" },
+  "contractVersions": {
+    "automation": { "latest": "v4" }
+  },
+  "commands": [
+    { "path": "linear capabilities", "json": { "supported": true, "contractVersion": null }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue list", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue view", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue create", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear issue update", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear issue comment add", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear issue relation add", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear issue relation list", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue parent", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue children", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear issue create-batch", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear team members", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear webhook list", "json": { "supported": true, "contractVersion": "v3" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear webhook create", "json": { "supported": true, "contractVersion": null }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear webhook update", "json": { "supported": true, "contractVersion": null }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear label list", "json": { "supported": true, "contractVersion": "v4" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear user list", "json": { "supported": true, "contractVersion": "v4" }, "dryRun": { "supported": false, "contractVersion": null } },
+    { "path": "linear workflow-state list", "json": { "supported": true, "contractVersion": "v4" }, "dryRun": { "supported": false, "contractVersion": null } }
+  ]
+}
+JSON
     ;;
   "team list")
     printf '%s\\n' "AIC Alpha Team" "OPS Ops Team"
@@ -429,12 +457,12 @@ esac
     expect(diagnostics.overallStatus).toBe("ok");
     expect(diagnostics.linear).toMatchObject({
       status: "ok",
-      version: "2.9.1",
+      version: "2.11.0",
     });
     expect(diagnostics.linear.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "cli-version", status: "ok" }),
       expect.objectContaining({ name: "auth-whoami", status: "ok" }),
-      expect.objectContaining({ name: "required-command-surface", status: "ok" }),
+      expect.objectContaining({ name: "capabilities-json", status: "ok" }),
       expect.objectContaining({ name: "team-list", status: "ok" }),
     ]));
     expect(diagnostics.notion.status).toBe("ok");
