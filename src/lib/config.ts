@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { ZodError, z } from "zod";
 
 export const DEFAULT_BOT_MODEL = "claude-sonnet-4-6";
 
@@ -15,13 +15,9 @@ export type BotThinkingLevel = typeof BOT_THINKING_LEVEL_VALUES[number];
 
 const booleanishSchema = z.preprocess((value) => {
   if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
-  }
+  if (typeof value === "string") return value.trim();
   return value;
-}, z.boolean());
+}, z.union([z.boolean(), z.stringbool()]));
 
 const optionalPositiveIntSchema = z.preprocess((value) => {
   if (value === undefined || value === null) return undefined;
@@ -112,37 +108,55 @@ export interface AppConfig {
   logLevel: "debug" | "info" | "warn" | "error";
 }
 
+function formatConfigValidationError(error: ZodError): string {
+  return `Invalid environment configuration.\n${z.prettifyError(error)}`;
+}
+
+export class ConfigValidationError extends Error {
+  readonly cause: ZodError;
+
+  constructor(error: ZodError) {
+    super(formatConfigValidationError(error));
+    this.name = "ConfigValidationError";
+    this.cause = error;
+    this.stack = undefined;
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = envSchema.parse(env);
+  const parsed = envSchema.safeParse(env);
+  if (!parsed.success) {
+    throw new ConfigValidationError(parsed.error);
+  }
 
   return {
-    slackAppToken: parsed.SLACK_APP_TOKEN,
-    slackBotToken: parsed.SLACK_BOT_TOKEN,
+    slackAppToken: parsed.data.SLACK_APP_TOKEN,
+    slackBotToken: parsed.data.SLACK_BOT_TOKEN,
     slackAllowedChannelIds: new Set(
-      parsed.SLACK_ALLOWED_CHANNEL_IDS.split(",").map((value) => value.trim()).filter(Boolean),
+      parsed.data.SLACK_ALLOWED_CHANNEL_IDS.split(",").map((value) => value.trim()).filter(Boolean),
     ),
-    anthropicApiKey: parsed.ANTHROPIC_API_KEY,
-    linearApiKey: parsed.LINEAR_API_KEY,
-    linearWorkspace: parsed.LINEAR_WORKSPACE,
-    linearTeamKey: parsed.LINEAR_TEAM_KEY,
-    notionApiToken: parsed.NOTION_API_TOKEN,
-    notionAgendaParentPageId: parsed.NOTION_AGENDA_PARENT_PAGE_ID,
-    botModel: parsed.BOT_MODEL,
-    botThinkingLevel: parsed.BOT_THINKING_LEVEL,
-    botMaxOutputTokens: parsed.BOT_MAX_OUTPUT_TOKENS,
-    botRetryMaxRetries: parsed.BOT_RETRY_MAX_RETRIES,
-    workspaceDir: parsed.WORKSPACE_DIR,
-    linearWebhookEnabled: parsed.LINEAR_WEBHOOK_ENABLED,
-    linearWebhookPublicUrl: parsed.LINEAR_WEBHOOK_PUBLIC_URL,
-    linearWebhookSecret: parsed.LINEAR_WEBHOOK_SECRET,
-    linearWebhookPort: parsed.LINEAR_WEBHOOK_PORT,
-    linearWebhookPath: parsed.LINEAR_WEBHOOK_PATH,
-    heartbeatIntervalMin: parsed.HEARTBEAT_INTERVAL_MIN,
-    heartbeatActiveLookbackHours: parsed.HEARTBEAT_ACTIVE_LOOKBACK_HOURS,
-    schedulerPollSec: parsed.SCHEDULER_POLL_SEC,
-    workgraphMaintenanceIntervalMin: parsed.WORKGRAPH_MAINTENANCE_INTERVAL_MIN,
-    workgraphHealthWarnActiveEvents: parsed.WORKGRAPH_HEALTH_WARN_ACTIVE_EVENTS,
-    workgraphAutoCompactMaxActiveEvents: parsed.WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS,
-    logLevel: parsed.LOG_LEVEL,
+    anthropicApiKey: parsed.data.ANTHROPIC_API_KEY,
+    linearApiKey: parsed.data.LINEAR_API_KEY,
+    linearWorkspace: parsed.data.LINEAR_WORKSPACE,
+    linearTeamKey: parsed.data.LINEAR_TEAM_KEY,
+    notionApiToken: parsed.data.NOTION_API_TOKEN,
+    notionAgendaParentPageId: parsed.data.NOTION_AGENDA_PARENT_PAGE_ID,
+    botModel: parsed.data.BOT_MODEL,
+    botThinkingLevel: parsed.data.BOT_THINKING_LEVEL,
+    botMaxOutputTokens: parsed.data.BOT_MAX_OUTPUT_TOKENS,
+    botRetryMaxRetries: parsed.data.BOT_RETRY_MAX_RETRIES,
+    workspaceDir: parsed.data.WORKSPACE_DIR,
+    linearWebhookEnabled: parsed.data.LINEAR_WEBHOOK_ENABLED,
+    linearWebhookPublicUrl: parsed.data.LINEAR_WEBHOOK_PUBLIC_URL,
+    linearWebhookSecret: parsed.data.LINEAR_WEBHOOK_SECRET,
+    linearWebhookPort: parsed.data.LINEAR_WEBHOOK_PORT,
+    linearWebhookPath: parsed.data.LINEAR_WEBHOOK_PATH,
+    heartbeatIntervalMin: parsed.data.HEARTBEAT_INTERVAL_MIN,
+    heartbeatActiveLookbackHours: parsed.data.HEARTBEAT_ACTIVE_LOOKBACK_HOURS,
+    schedulerPollSec: parsed.data.SCHEDULER_POLL_SEC,
+    workgraphMaintenanceIntervalMin: parsed.data.WORKGRAPH_MAINTENANCE_INTERVAL_MIN,
+    workgraphHealthWarnActiveEvents: parsed.data.WORKGRAPH_HEALTH_WARN_ACTIVE_EVENTS,
+    workgraphAutoCompactMaxActiveEvents: parsed.data.WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS,
+    logLevel: parsed.data.LOG_LEVEL,
   };
 }
