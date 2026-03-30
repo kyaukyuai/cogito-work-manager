@@ -1,0 +1,37 @@
+{
+  "name": "mixed-scope-correction",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U1",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "mixed-scope-correction",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-mixed-scope-correction",
+      "messageTs": "msg-mixed-scope-correction-1",
+      "userId": "U1",
+      "text": "ですね！議事録からタスク作成させたのも合ってズレていますね、OPT役員Slackへは金澤クローンを招待して、情報収集の仕組み自体は、AIC-85 で考えます！",
+      "now": "2026-03-30T04:24:41.603Z",
+      "beforeScenario": "mixed-scope-correction",
+      "expect": {
+        "handled": true,
+        "replyIncludes": [
+          "AIC-85 にコメントを追加しました。"
+        ],
+        "replyExcludes": [
+          "AIC-86",
+          "更新する issue ID を明記してください"
+        ]
+      }
+    }
+  ]
+}

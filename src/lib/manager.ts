@@ -346,14 +346,33 @@ function buildSafetyQueryReply(): string {
   return "いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。";
 }
 
-function buildCommitRejectionReply(rejections: string[]): string | undefined {
+function buildSpecialCommitRejectionReply(
+  rejection: ManagerProposalRejection,
+): string | undefined {
+  if (
+    rejection.proposal.commandType === "update_issue_status"
+    && /このメッセージでは .+ が明示されていますが、更新提案は .+ でした。更新する issue ID を明記してください。/.test(rejection.reason)
+  ) {
+    if (rejection.proposal.signal === "completed") {
+      return `${rejection.proposal.issueId} の扱いはまだ変えていません。キャンセルするか内容修正かだけ補足してください。`;
+    }
+    return `${rejection.proposal.issueId} の扱いはまだ変えていません。更新したい issue ID と内容を短く補足してください。`;
+  }
+  return undefined;
+}
+
+function buildCommitRejectionReply(rejections: ManagerProposalRejection[]): string | undefined {
   if (rejections.length === 0) return undefined;
   if (rejections.length === 1) {
-    return `今回は ${rejections[0]} ため、すぐには確定できませんでした。必要なら少し補足してください。`;
+    const specialReply = buildSpecialCommitRejectionReply(rejections[0]);
+    if (specialReply) {
+      return specialReply;
+    }
+    return `今回は ${rejections[0]!.reason} ため、すぐには確定できませんでした。必要なら少し補足してください。`;
   }
   return composeSlackReply([
     "いくつか確認したい点があり、そのままでは確定できませんでした。",
-    formatSlackBullets(rejections),
+    formatSlackBullets(rejections.map((entry) => buildSpecialCommitRejectionReply(entry) ?? entry.reason)),
     "必要なら少し補足してください。",
   ]);
 }
@@ -579,7 +598,7 @@ function buildGroundedCreateWorkClarificationReply(args: {
 function buildPartialSuccessfulMutationReply(args: {
   intent: ManagerIntentReport["intent"] | undefined;
   committed: ManagerCommittedCommand[];
-  commitRejections: string[];
+  commitRejections: ManagerProposalRejection[];
 }): string | undefined {
   if (
     !isMutableIntent(args.intent)
@@ -897,7 +916,7 @@ async function applyCommittedThreadNotionPageTarget(args: {
 function mergeAgentReplyWithCommit(args: {
   agentReply: string;
   commitSummaries: string[];
-  commitRejections: string[];
+  commitRejections: ManagerProposalRejection[];
   preferCommittedPublicReply?: boolean;
   preferRejectionReply?: boolean;
 }): string {
@@ -1483,7 +1502,7 @@ export async function handleManagerMessage(
       return {
         handled: true,
         reply: confirmCommitResult.replySummaries.join(" ")
-          || buildCommitRejectionReply(confirmCommitResult.rejected.map((entry) => entry.reason))
+          || buildCommitRejectionReply(confirmCommitResult.rejected)
           || "owner-map.json の変更を確定できませんでした。",
         diagnostics: {
           agent: {
@@ -1558,7 +1577,6 @@ export async function handleManagerMessage(
       ? extractedQuerySnapshot
       : undefined;
     const missingQuerySnapshot = agentIntent === "query" && !completeQuerySnapshot;
-    const commitRejectionReasons = commitResult.rejected.map((entry) => entry.reason);
     const preferRejectionReply = isMutableIntent(agentIntent)
       && commitResult.committed.length === 0
       && commitResult.rejected.length > 0;
@@ -1566,17 +1584,17 @@ export async function handleManagerMessage(
       intent: agentIntent,
       agentReply: agentTurn.reply,
       committed: commitResult.committed,
-      commitRejections: commitRejectionReasons,
+      commitRejections: commitResult.rejected.map((entry) => entry.reason),
     });
     const groundedCreateWorkReply = buildGroundedCreateWorkReply({
       intent: agentIntent,
       committed: commitResult.committed,
-      commitRejections: commitRejectionReasons,
+      commitRejections: commitResult.rejected.map((entry) => entry.reason),
     });
     const partialSuccessfulMutationReply = buildPartialSuccessfulMutationReply({
       intent: agentIntent,
       committed: commitResult.committed,
-      commitRejections: commitRejectionReasons,
+      commitRejections: commitResult.rejected,
     });
     const groundedCreateWorkClarificationReply = buildGroundedCreateWorkClarificationReply({
       intent: agentIntent,
@@ -1589,7 +1607,7 @@ export async function handleManagerMessage(
       : compactSuccessfulMutationReply ?? partialSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
           agentReply: agentTurn.reply,
           commitSummaries: commitResult.replySummaries,
-          commitRejections: commitRejectionReasons,
+          commitRejections: commitResult.rejected,
           preferCommittedPublicReply: shouldPreferCommittedPublicReply(agentIntent),
           preferRejectionReply,
         });

@@ -122,6 +122,39 @@ describe("manager command commit linear", () => {
     expect(linearMocks.addLinearProgressComment).not.toHaveBeenCalled();
   });
 
+  it("keeps cross-issue destructive updates strict when only another explicit issue is named", async () => {
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-86",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "AIC-86 を Canceled にする",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scope-correction-validator",
+        messageTs: "msg-scope-correction-validator-1",
+        userId: "U1",
+        text: "情報収集の仕組み自体は、AIC-85 で考えます！",
+      },
+      now: new Date("2026-03-30T04:24:41.603Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("AIC-85");
+    expect(result.rejected[0]?.reason).toContain("AIC-86");
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
+  });
+
   it("commits completed status updates with split update and comment calls", async () => {
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-1",
