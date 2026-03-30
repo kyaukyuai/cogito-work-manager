@@ -1213,6 +1213,148 @@ describe("handleManagerMessage update flows", () => {
     );
   });
 
+  it("treats scope correction phrasing as a comment on the explicit issue without cross-issue cancel", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-85 にコメントを追加しました。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.88,
+              summary: "AIC-85 に方針メモを残す",
+            },
+          },
+        },
+        {
+          toolName: "propose_add_comment",
+          details: {
+            proposal: {
+              commandType: "add_comment",
+              issueId: "AIC-85",
+              body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う\n- OPT役員Slack への招待対象は金澤クローンで進める",
+              reasonSummary: "AIC-85 側へ検討スコープを寄せる",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-85",
+          body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う\n- OPT役員Slack への招待対象は金澤クローンで進める",
+          reasonSummary: "AIC-85 側へ検討スコープを寄せる",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.88,
+        summary: "AIC-85 に方針メモを残す",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scope-correction-comment-only",
+        messageTs: "msg-scope-correction-comment-only-1",
+        userId: "U1",
+        text: "ですね！議事録からタスク作成させたのも合ってズレていますね、OPT役員Slackへは金澤クローンを招待して、情報収集の仕組み自体は、AIC-85 で考えます！",
+      },
+      new Date("2026-03-30T04:24:41.603Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toBe("AIC-85 にコメントを追加しました。");
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-85",
+      expect.stringContaining("情報収集の仕組みは AIC-85 で扱う"),
+      expect.any(Object),
+    );
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+  });
+
+  it("allows mixed cancel and scope-correction comment when both issue ids and cancel intent are explicit", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-86 を Canceled にしました。AIC-85 にコメントを追加しました。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.92,
+              summary: "AIC-86 を Canceled にし、AIC-85 に方針コメントを残す",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-86",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "AIC-86 は不要なので Canceled にする",
+        },
+        {
+          commandType: "add_comment",
+          issueId: "AIC-85",
+          body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う",
+          reasonSummary: "AIC-85 へ検討スコープを寄せる",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.92,
+        summary: "AIC-86 を Canceled にし、AIC-85 に方針コメントを残す",
+      },
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-86",
+      identifier: "AIC-86",
+      title: "OPT役員Slack への招待",
+      url: "https://linear.app/kyaukyuai/issue/AIC-86",
+      state: { id: "state-canceled", name: "Canceled", type: "canceled" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scope-correction-mixed-explicit",
+        messageTs: "msg-scope-correction-mixed-explicit-1",
+        userId: "U1",
+        text: "AIC-86 はキャンセルして、情報収集の仕組みは AIC-85 で考える",
+      },
+      new Date("2026-03-30T04:30:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-86 を Canceled にしました。");
+    expect(result.reply).toContain("AIC-85 にコメントを追加しました。");
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-86",
+        state: "Canceled",
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-85",
+      expect.stringContaining("AIC-85 で扱う"),
+      expect.any(Object),
+    );
+  });
+
   it("keeps the agent reply path when one mixed-update proposal succeeds and another fails", async () => {
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
       reply: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
@@ -1303,6 +1445,64 @@ describe("handleManagerMessage update flows", () => {
         }),
       ],
     });
+  });
+
+  it("rewrites explicit-issue mismatch rejections into a short clarify after partial success", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-85 にコメントを追加しました。AIC-86 を Canceled にします。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-85 にコメントし、AIC-86 を Canceled にする",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-85",
+          body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う",
+          reasonSummary: "AIC-85 側へスコープを寄せる",
+        },
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-86",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "AIC-86 を Canceled にする",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.9,
+        summary: "AIC-85 にコメントし、AIC-86 を Canceled にする",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-scope-correction-partial-success",
+        messageTs: "msg-scope-correction-partial-success-1",
+        userId: "U1",
+        text: "ですね！議事録からタスク作成させたのも合ってズレていますね、OPT役員Slackへは金澤クローンを招待して、情報収集の仕組み自体は、AIC-85 で考えます！",
+      },
+      new Date("2026-03-30T04:24:41.603Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-85 にコメントを追加しました。");
+    expect(result.reply).toContain("AIC-86 の扱いはまだ変えていません。キャンセルするか内容修正かだけ補足してください。");
+    expect(result.reply).not.toContain("このメッセージでは AIC-85 が明示されていますが、更新提案は AIC-86 でした。");
+    expect(result.reply).not.toContain("すぐには確定できませんでした。");
   });
 
   it("suppresses contradictory success text when a mutation proposal is rejected", async () => {

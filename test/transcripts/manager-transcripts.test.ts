@@ -652,6 +652,49 @@ describe("manager transcript fixtures", () => {
           });
           linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
           return;
+        case "mixed-scope-correction":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "AIC-85 にコメントを追加しました。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "update_progress",
+                    confidence: 0.89,
+                    summary: "AIC-85 に方針メモを残す",
+                  },
+                },
+              },
+              {
+                toolName: "propose_add_comment",
+                details: {
+                  proposal: {
+                    commandType: "add_comment",
+                    issueId: "AIC-85",
+                    body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う\n- OPT役員Slack への招待対象は金澤クローンで進める",
+                    reasonSummary: "AIC-85 側へ検討スコープを寄せる",
+                  },
+                },
+              },
+            ],
+            proposals: [
+              {
+                commandType: "add_comment",
+                issueId: "AIC-85",
+                body: "## Scope correction\n- 情報収集の仕組みは AIC-85 で扱う\n- OPT役員Slack への招待対象は金澤クローンで進める",
+                reasonSummary: "AIC-85 側へ検討スコープを寄せる",
+              },
+            ],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.89,
+              summary: "AIC-85 に方針メモを残す",
+            },
+          });
+          linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+          return;
         default:
       }
     };

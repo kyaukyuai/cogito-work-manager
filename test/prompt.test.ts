@@ -135,6 +135,8 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Do not use Cancelled for Linear issue state updates; use the exact state name Canceled.");
     expect(prompt).toContain("When the user states a future close condition such as X が終わったら AIC-123 はクローズ, do not mark the issue completed now.");
     expect(prompt).toContain("For future close conditions or completion criteria on an existing issue, use propose_add_comment on the issue that would be closed later so the close condition is recorded without changing status.");
+    expect(prompt).toContain("When the user redirects scope with phrases like AIC-85 で考える, AIC-85 で検討する, or AIC-85 側で持つ, treat that as a scope-correction note for the explicit issue and default to propose_add_comment on that issue.");
+    expect(prompt).toContain("Only propose a destructive status change for AIC-86 when the same message explicitly names AIC-86 and also uses an explicit cancel or close verb such as キャンセル, クローズ, 不要, or 取り下げ.");
     expect(prompt).toContain("When the user says an existing issue has no remaining work, no action is needed, or should be canceled, treat that issue as an immediate cancel request and use propose_update_issue_status with signal=completed and state=Canceled.");
     expect(prompt).toContain("A single update message may combine an immediate cancel for one issue and a future close-condition comment for another issue; emit both proposals when both intents are explicit.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
@@ -372,6 +374,22 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("workspace_get_owner_map");
     expect(prompt).toContain("destination=current-thread");
     expect(prompt).toContain("propose_post_slack_message");
+  });
+
+  it("adds scope correction hints when the latest message redirects work to another issue", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "情報収集の仕組み自体は、AIC-85 で考えます！",
+      currentDate: "2026-03-30",
+    });
+
+    expect(prompt).toContain("Scope correction hints:");
+    expect(prompt).toContain("Treat the explicit issue in that scope-correction phrase as the default comment target");
+    expect(prompt).toContain("Do not infer that another issue should be canceled, completed, or closed unless that other issue is explicitly named");
   });
 
   it("includes current message attachment summaries in the manager prompt", () => {
