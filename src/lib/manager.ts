@@ -12,6 +12,7 @@ import {
   runManagerAgentTurn,
   type ManagerAgentTurnObserver,
 } from "./pi-session.js";
+import type { ManagerMessageAttachmentSummary } from "../runtime/manager-prompts.js";
 import {
   buildRunTaskActionClarifyReply,
   buildRunTaskClarifyReply,
@@ -142,6 +143,7 @@ export interface ManagerSlackMessage {
   messageTs: string;
   userId: string;
   text: string;
+  attachments?: ManagerMessageAttachmentSummary[];
 }
 
 export interface ManagerHandleResult {
@@ -1504,6 +1506,7 @@ export async function handleManagerMessage(
       messageTs: message.messageTs,
       userId: message.userId,
       text: message.text,
+      attachments: message.attachments,
       currentDate: currentDateInJst(now),
       currentDateTimeJst: currentDateTimeInJst(now),
       lastQueryContext,

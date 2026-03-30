@@ -27,19 +27,91 @@ export interface NormalizedSlackMessage {
 }
 
 export type TaskIntent = "task_request" | "conversation";
+export type SlackMessageIgnoreReason =
+  | "ignored_non_allowed_channel"
+  | "ignored_dm"
+  | "ignored_bot_message"
+  | "ignored_self_message"
+  | "ignored_unsupported_subtype"
+  | "ignored_empty_message"
+  | "ignored_other_user_mention_without_bot";
+
+export interface SlackMessageProcessability {
+  shouldProcess: boolean;
+  reason?: SlackMessageIgnoreReason;
+  mentionedUserIds: string[];
+  hasBotMention: boolean;
+}
+
+const USER_MENTION_PATTERN = /<@([A-Z0-9]+)>/g;
+
+function extractMentionedUserIds(text: string | undefined): string[] {
+  if (!text) return [];
+
+  const mentionedUserIds = new Set<string>();
+  let match: RegExpExecArray | null = USER_MENTION_PATTERN.exec(text);
+  while (match) {
+    if (match[1]) {
+      mentionedUserIds.add(match[1]);
+    }
+    match = USER_MENTION_PATTERN.exec(text);
+  }
+  USER_MENTION_PATTERN.lastIndex = 0;
+
+  return Array.from(mentionedUserIds);
+}
+
+export function analyzeSlackMessageProcessability(
+  event: RawSlackMessageEvent,
+  botUserId: string,
+  allowedChannelIds: Set<string>,
+): SlackMessageProcessability {
+  if (!allowedChannelIds.has(event.channel)) {
+    return { shouldProcess: false, reason: "ignored_non_allowed_channel", mentionedUserIds: [], hasBotMention: false };
+  }
+  if (event.channel_type === "im") {
+    return { shouldProcess: false, reason: "ignored_dm", mentionedUserIds: [], hasBotMention: false };
+  }
+  if (event.bot_id) {
+    return { shouldProcess: false, reason: "ignored_bot_message", mentionedUserIds: [], hasBotMention: false };
+  }
+  if (!event.user || event.user === botUserId) {
+    return { shouldProcess: false, reason: "ignored_self_message", mentionedUserIds: [], hasBotMention: false };
+  }
+  if (event.subtype !== undefined && event.subtype !== "file_share") {
+    return { shouldProcess: false, reason: "ignored_unsupported_subtype", mentionedUserIds: [], hasBotMention: false };
+  }
+
+  const text = (event.text ?? "").trim();
+  if (!text && (!event.files || event.files.length === 0)) {
+    return { shouldProcess: false, reason: "ignored_empty_message", mentionedUserIds: [], hasBotMention: false };
+  }
+
+  const mentionedUserIds = extractMentionedUserIds(text);
+  const hasBotMention = mentionedUserIds.includes(botUserId);
+  const hasNonBotUserMention = mentionedUserIds.some((userId) => userId !== botUserId);
+  if (hasNonBotUserMention && !hasBotMention) {
+    return {
+      shouldProcess: false,
+      reason: "ignored_other_user_mention_without_bot",
+      mentionedUserIds,
+      hasBotMention,
+    };
+  }
+
+  return {
+    shouldProcess: true,
+    mentionedUserIds,
+    hasBotMention,
+  };
+}
 
 export function isProcessableSlackMessage(
   event: RawSlackMessageEvent,
   botUserId: string,
   allowedChannelIds: Set<string>,
 ): boolean {
-  if (!allowedChannelIds.has(event.channel)) return false;
-  if (event.channel_type === "im") return false;
-  if (event.bot_id) return false;
-  if (!event.user || event.user === botUserId) return false;
-  if (event.subtype !== undefined && event.subtype !== "file_share") return false;
-  if (!(event.text ?? "").trim() && (!event.files || event.files.length === 0)) return false;
-  return true;
+  return analyzeSlackMessageProcessability(event, botUserId, allowedChannelIds).shouldProcess;
 }
 
 export function normalizeSlackMessage(event: RawSlackMessageEvent): NormalizedSlackMessage {

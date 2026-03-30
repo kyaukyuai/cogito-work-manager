@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { classifyTaskIntent, isProcessableSlackMessage, normalizeSlackMessage } from "../src/lib/slack.js";
+import {
+  analyzeSlackMessageProcessability,
+  classifyTaskIntent,
+  isProcessableSlackMessage,
+  normalizeSlackMessage,
+} from "../src/lib/slack.js";
 
 describe("slack helpers", () => {
   const allowed = new Set(["C123"]);
@@ -61,6 +66,38 @@ describe("slack helpers", () => {
         allowed,
       ),
     ).toBe(false);
+  });
+
+  it("rejects non-bot user mentions when Cogito is not mentioned", () => {
+    const analysis = analyzeSlackMessageProcessability(
+      {
+        channel: "C123",
+        user: "U123",
+        ts: "123.456",
+        text: "<@U456> 契約書ですがこちらご確認頂けますと！",
+      },
+      "UBOT",
+      allowed,
+    );
+
+    expect(analysis.shouldProcess).toBe(false);
+    expect(analysis.reason).toBe("ignored_other_user_mention_without_bot");
+    expect(analysis.mentionedUserIds).toEqual(["U456"]);
+  });
+
+  it("allows other-user mentions when Cogito is also mentioned", () => {
+    expect(
+      isProcessableSlackMessage(
+        {
+          channel: "C123",
+          user: "U123",
+          ts: "123.456",
+          text: "<@UBOT> <@U456> に確認依頼を送って",
+        },
+        "UBOT",
+        allowed,
+      ),
+    ).toBe(true);
   });
 
   it("normalizes root thread timestamp", () => {

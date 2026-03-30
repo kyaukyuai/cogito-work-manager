@@ -5,7 +5,11 @@ import { handleManagerMessage } from "../lib/manager.js";
 import type { ManagerIntentReport } from "../lib/manager-command-commit.js";
 import { buildSlackVisibleLlmFailureNotice } from "../lib/llm-failure.js";
 import { postSlackMentionMessage } from "../lib/slack-replies.js";
-import { isProcessableSlackMessage, normalizeSlackMessage, type RawSlackMessageEvent } from "../lib/slack.js";
+import {
+  analyzeSlackMessageProcessability,
+  normalizeSlackMessage,
+  type RawSlackMessageEvent,
+} from "../lib/slack.js";
 import {
   appendThreadLog,
   buildThreadPaths,
@@ -16,14 +20,15 @@ import type { AppConfig } from "../lib/config.js";
 import type { SystemPaths } from "../lib/system-workspace.js";
 import type { ManagerPolicy } from "../state/manager-state-contract.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
+import type { ManagerMessageAttachmentSummary } from "./manager-prompts.js";
 import {
   buildSlackVisibleFailureReply,
-  downloadAttachments,
   isReadOnlyStreamingIntent,
   type QueueLike,
 } from "./app-runtime-shared.js";
 import { createSlackReplyStreamController } from "../lib/slack-replies.js";
 import type { SystemTaskExecutor } from "./system-task-executor.js";
+import { ingestThreadAttachments } from "../gateways/slack-attachments/index.js";
 
 export function createSlackMessageHandler(args: {
   config: AppConfig;
@@ -63,7 +68,16 @@ export function createSlackMessageHandler(args: {
     heartbeatService?: HeartbeatService,
   ): Promise<void> {
     const rawEvent = event as RawSlackMessageEvent;
-    if (!isProcessableSlackMessage(rawEvent, botUserId, args.config.slackAllowedChannelIds)) {
+    const processability = analyzeSlackMessageProcessability(rawEvent, botUserId, args.config.slackAllowedChannelIds);
+    if (!processability.shouldProcess) {
+      if (processability.reason === "ignored_other_user_mention_without_bot") {
+        args.logger.info("Ignored Slack message with non-bot mention and no Cogito mention", {
+          channelId: rawEvent.channel,
+          threadTs: rawEvent.thread_ts ?? rawEvent.ts,
+          userId: rawEvent.user,
+          mentionedUserIds: processability.mentionedUserIds,
+        });
+      }
       return;
     }
 
@@ -107,10 +121,29 @@ export function createSlackMessageHandler(args: {
       await ensureThreadWorkspace(paths);
 
       let attachments: AttachmentRecord[] = [];
+      let attachmentSummaries: ManagerMessageAttachmentSummary[] = [];
       try {
-        attachments = await downloadAttachments(args.config.slackBotToken, paths.attachmentsDir, message.files);
+        const attachmentResult = await ingestThreadAttachments({
+          paths,
+          slackBotToken: args.config.slackBotToken,
+          webClient: args.webClient,
+          channelId: message.channelId,
+          rootThreadTs: message.rootThreadTs,
+          messageTs: message.ts,
+          subtype: rawEvent.subtype,
+          files: message.files,
+        });
+        attachments = attachmentResult.attachments;
+        attachmentSummaries = attachmentResult.summaries;
+        if (attachmentResult.usedHydratedSlackFiles) {
+          args.logger.info("Hydrated Slack attachment metadata from thread history", {
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+            messageTs: message.ts,
+          });
+        }
       } catch (error) {
-        args.logger.warn("Attachment download failed", {
+        args.logger.warn("Attachment ingest failed", {
           channelId: message.channelId,
           threadTs: message.rootThreadTs,
           error: error instanceof Error ? error.message : String(error),
@@ -136,6 +169,7 @@ export function createSlackMessageHandler(args: {
             messageTs: message.ts,
             userId: message.userId,
             text: message.text,
+            attachments: attachmentSummaries,
           },
           args.managerRepositories,
           undefined,

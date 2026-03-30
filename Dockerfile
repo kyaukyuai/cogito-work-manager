@@ -4,7 +4,7 @@ ARG LINEAR_CLI_VERSION=2.9.1
 ARG NOTION_CLI_VERSION=0.4.0
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates curl git gosu jq ripgrep tini xz-utils \
+  && apt-get install -y --no-install-recommends bash ca-certificates curl ffmpeg git gosu jq poppler-utils ripgrep tini xz-utils \
   && update-ca-certificates \
   && npm install -g "@kyaukyuai/linear-cli@${LINEAR_CLI_VERSION}" \
   && npm install -g "ntn@${NOTION_CLI_VERSION}" \

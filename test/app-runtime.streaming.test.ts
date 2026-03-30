@@ -14,6 +14,14 @@ const threadWorkspaceMocks = vi.hoisted(() => ({
   ensureThreadWorkspace: vi.fn(async () => undefined),
 }));
 
+const attachmentGatewayMocks = vi.hoisted(() => ({
+  ingestThreadAttachments: vi.fn().mockResolvedValue({
+    attachments: [],
+    summaries: [],
+    usedHydratedSlackFiles: false,
+  }),
+}));
+
 vi.mock("../src/lib/manager.js", () => ({
   handleManagerMessage: managerMocks.handleManagerMessage,
 }));
@@ -22,6 +30,10 @@ vi.mock("../src/lib/thread-workspace.js", () => ({
   appendThreadLog: threadWorkspaceMocks.appendThreadLog,
   buildThreadPaths: threadWorkspaceMocks.buildThreadPaths,
   ensureThreadWorkspace: threadWorkspaceMocks.ensureThreadWorkspace,
+}));
+
+vi.mock("../src/gateways/slack-attachments/index.js", () => ({
+  ingestThreadAttachments: attachmentGatewayMocks.ingestThreadAttachments,
 }));
 
 function buildConfig() {
@@ -99,6 +111,9 @@ async function flushQueue(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 describe("app runtime Slack streaming", () => {
@@ -109,6 +124,7 @@ describe("app runtime Slack streaming", () => {
     threadWorkspaceMocks.appendThreadLog.mockReset();
     threadWorkspaceMocks.buildThreadPaths.mockClear();
     threadWorkspaceMocks.ensureThreadWorkspace.mockClear();
+    attachmentGatewayMocks.ingestThreadAttachments.mockClear();
   });
 
   afterEach(() => {

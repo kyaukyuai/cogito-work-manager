@@ -13,6 +13,18 @@ import {
   WEBHOOK_INITIAL_PROPOSAL_MARKER,
 } from "../orchestrators/webhooks/initial-proposal-comment.js";
 
+export interface ManagerMessageAttachmentSummary {
+  attachmentId: string;
+  sourceMessageTs: string;
+  name: string;
+  mimeType?: string;
+  kind: "document" | "audio" | "video" | "other";
+  previewText?: string;
+  durationSec?: number;
+  extractionStatus: "pending" | "completed" | "failed" | "not_applicable" | "unavailable";
+  transcriptionStatus: "pending" | "completed" | "failed" | "not_applicable" | "unavailable";
+}
+
 export interface ManagerAgentInput {
   kind: "message";
   channelId: string;
@@ -20,6 +32,7 @@ export interface ManagerAgentInput {
   messageTs: string;
   userId: string;
   text: string;
+  attachments?: ManagerMessageAttachmentSummary[];
   currentDate: string;
   currentDateTimeJst?: string;
   lastQueryContext?: ThreadQueryContinuation;
@@ -186,6 +199,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When the user explicitly asks to update, replace, rewrite, edit, or reflect changes into HEARTBEAT.md, use intent=update_workspace_config, read the current file with workspace_get_heartbeat_prompt first, and then use propose_replace_workspace_text_file with target=heartbeat-prompt.",
     "When the user explicitly asks to update, change, edit, add to, or delete from owner-map.json, use intent=update_workspace_config, read the current file with workspace_get_owner_map first, and then use propose_update_owner_map with a structured operation instead of free-form JSON edits.",
     "When the user explicitly asks to mention someone and send a Slack message, use intent=post_slack_message instead of treating it as a capability query or a generic conversation.",
+    "If the latest message includes attachments and the user is asking to review a contract, document, PDF, video, or other reference material, inspect the attachment tools before answering.",
+    "Use slack_list_thread_attachments to inspect the current thread attachment inventory and slack_read_thread_attachment to read extracted text or transcript windows.",
+    "Do not treat a plain Slack thread message addressed to another person as intent=post_slack_message unless the user explicitly asks you to send or post a message on their behalf.",
     "Before proposing a Slack mention post, call workspace_get_owner_map and resolve exactly one target by exact-match on entry.id, linearAssignee, or slackUserId after trim, lowercase, and whitespace normalization.",
     "If owner-map resolution returns zero or multiple matches, ask one short clarification question instead of proposing a mutation.",
     "For explicit Slack mention posts, default destination=current-thread unless the user explicitly says control room. control-room-root posts go to the control room root message, not a new thread.",
@@ -508,6 +524,19 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- recordedAt: ${input.currentThreadNotionPageTarget.recordedAt}`,
       ]
     : ["- (none)"];
+  const attachmentLines = input.attachments && input.attachments.length > 0
+    ? input.attachments.map((attachment) => [
+        `- attachmentId: ${attachment.attachmentId}`,
+        `  sourceMessageTs: ${attachment.sourceMessageTs}`,
+        `  name: ${attachment.name}`,
+        `  mimeType: ${attachment.mimeType ?? "(none)"}`,
+        `  kind: ${attachment.kind}`,
+        `  extractionStatus: ${attachment.extractionStatus}`,
+        `  transcriptionStatus: ${attachment.transcriptionStatus}`,
+        typeof attachment.durationSec === "number" ? `  durationSec: ${attachment.durationSec}` : undefined,
+        attachment.previewText ? `  preview: ${attachment.previewText}` : undefined,
+      ].filter(Boolean).join("\n"))
+    : ["- (none)"];
   const workspaceAgentsSection = input.workspaceAgents
     ? [
         "",
@@ -541,6 +570,9 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "User message:",
     input.text || "(empty)",
+    "",
+    "Current message attachments:",
+    ...attachmentLines,
     "",
     "Last query continuation context:",
     ...lastQueryContextLines,

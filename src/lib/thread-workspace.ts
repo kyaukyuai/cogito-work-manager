@@ -12,9 +12,11 @@ export interface ThreadPaths {
 
 export interface AttachmentRecord {
   id?: string;
+  catalogId?: string;
   name: string;
   mimeType?: string;
   storedPath: string;
+  kind?: "document" | "audio" | "video" | "other";
 }
 
 export interface LogEntry {
