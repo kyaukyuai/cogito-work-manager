@@ -1,13 +1,38 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ThreadPaths } from "./thread-workspace.js";
-import type { ManagerIntentReport, PendingClarificationDecisionReport, TaskExecutionDecisionReport } from "./manager-command-commit.js";
+import type {
+  ManagerCommandProposal,
+  ManagerCommittedCommand,
+  ManagerIntentReport,
+  ManagerProposalRejection,
+  PendingClarificationDecisionReport,
+  TaskExecutionDecisionReport,
+} from "./manager-command-commit.js";
 import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 
 export type LastManagerReplyPath = "agent" | "reply-planner" | "fallback";
 export type LastManagerConversationKind = "greeting" | "smalltalk" | "other";
 
 export interface LastManagerDuplicateResolution extends LinearDuplicateResolutionSummary {}
+
+export interface LastManagerProposalSummary {
+  commandType: ManagerCommandProposal["commandType"];
+  targetSummary?: string;
+  detailSummary?: string;
+  reasonSummary?: string;
+}
+
+export interface LastManagerCommittedCommandSummary {
+  commandType: ManagerCommittedCommand["commandType"];
+  issueIds: string[];
+  summary: string;
+  publicReply?: string;
+}
+
+export interface LastManagerRejectedProposalSummary extends LastManagerProposalSummary {
+  reason: string;
+}
 
 export interface LastManagerAgentTurn {
   recordedAt: string;
@@ -26,6 +51,12 @@ export interface LastManagerAgentTurn {
   taskExecutionTargetIssueId?: string;
   taskExecutionTargetIssueIdentifier?: string;
   taskExecutionSummary?: string;
+  toolCalls?: string[];
+  proposalCount?: number;
+  invalidProposalCount?: number;
+  proposals?: LastManagerProposalSummary[];
+  committedCommands?: LastManagerCommittedCommandSummary[];
+  rejectedProposals?: LastManagerRejectedProposalSummary[];
   duplicateResolutions?: LastManagerDuplicateResolution[];
   missingQuerySnapshot?: boolean;
   technicalFailure?: string;
@@ -33,6 +64,175 @@ export interface LastManagerAgentTurn {
 
 function buildLastManagerAgentTurnPath(paths: ThreadPaths): string {
   return join(paths.scratchDir, "last-manager-agent-turn.json");
+}
+
+function isManagerCommandType(value: unknown): value is ManagerCommandProposal["commandType"] {
+  return value === "create_issue"
+    || value === "create_issue_batch"
+    || value === "link_existing_issue"
+    || value === "update_issue_status"
+    || value === "assign_issue"
+    || value === "add_comment"
+    || value === "add_relation"
+    || value === "set_issue_parent"
+    || value === "create_notion_agenda"
+    || value === "update_notion_page"
+    || value === "archive_notion_page"
+    || value === "update_workspace_memory"
+    || value === "replace_workspace_text_file"
+    || value === "update_owner_map"
+    || value === "resolve_followup"
+    || value === "review_followup"
+    || value === "create_scheduler_job"
+    || value === "update_scheduler_job"
+    || value === "delete_scheduler_job"
+    || value === "update_builtin_schedule"
+    || value === "run_scheduler_job_now"
+    || value === "post_slack_message";
+}
+
+function parseStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const entries = value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  return entries.length > 0 ? entries : undefined;
+}
+
+function truncateSingleLine(value: string, maxLength = 140): string {
+  const singleLine = value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function buildProposalTargetSummary(proposal: ManagerCommandProposal): string | undefined {
+  switch (proposal.commandType) {
+    case "create_issue":
+      return proposal.issue.title;
+    case "create_issue_batch":
+      return proposal.parent.title;
+    case "link_existing_issue":
+    case "update_issue_status":
+    case "assign_issue":
+    case "add_comment":
+    case "set_issue_parent":
+      return proposal.issueId;
+    case "add_relation":
+      return `${proposal.issueId} -> ${proposal.relatedIssueId}`;
+    default:
+      return undefined;
+  }
+}
+
+function buildProposalDetailSummary(proposal: ManagerCommandProposal): string | undefined {
+  switch (proposal.commandType) {
+    case "create_issue": {
+      const parts = [
+        proposal.issue.assigneeMode === "assign" ? `assignee=${proposal.issue.assignee}` : "assignee=unassigned",
+        proposal.issue.dueDate ? `due=${proposal.issue.dueDate}` : undefined,
+        proposal.issue.parent ? `parent=${proposal.issue.parent}` : undefined,
+        proposal.issue.state ? `state=${proposal.issue.state}` : undefined,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(" ") : undefined;
+    }
+    case "create_issue_batch":
+      return `children=${proposal.children.length} planningReason=${proposal.planningReason}`;
+    case "update_issue_status": {
+      const parts = [
+        `signal=${proposal.signal}`,
+        proposal.state ? `state=${proposal.state}` : undefined,
+        proposal.dueDate ? `due=${proposal.dueDate}` : undefined,
+        proposal.commentBody ? `comment=${truncateSingleLine(proposal.commentBody, 100)}` : undefined,
+      ].filter(Boolean);
+      return parts.join(" ");
+    }
+    case "assign_issue":
+      return `assignee=${proposal.assignee}`;
+    case "add_comment":
+      return truncateSingleLine(proposal.body, 100);
+    case "add_relation":
+      return `relation=${proposal.relationType}`;
+    case "set_issue_parent":
+      return `parent=${proposal.parentIssueId}`;
+    default:
+      return undefined;
+  }
+}
+
+function parseProposalSummaries(value: unknown): LastManagerProposalSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const proposals = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (!isManagerCommandType(record.commandType)) {
+      return [];
+    }
+    return [{
+      commandType: record.commandType,
+      targetSummary: typeof record.targetSummary === "string" ? record.targetSummary : undefined,
+      detailSummary: typeof record.detailSummary === "string" ? record.detailSummary : undefined,
+      reasonSummary: typeof record.reasonSummary === "string" ? record.reasonSummary : undefined,
+    } satisfies LastManagerProposalSummary];
+  });
+  return proposals.length > 0 ? proposals : undefined;
+}
+
+function parseCommittedCommandSummaries(value: unknown): LastManagerCommittedCommandSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const committed = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (!isManagerCommandType(record.commandType) || typeof record.summary !== "string") {
+      return [];
+    }
+    return [{
+      commandType: record.commandType,
+      issueIds: parseStringArray(record.issueIds) ?? [],
+      summary: record.summary,
+      publicReply: typeof record.publicReply === "string" ? record.publicReply : undefined,
+    } satisfies LastManagerCommittedCommandSummary];
+  });
+  return committed.length > 0 ? committed : undefined;
+}
+
+function parseRejectedProposalSummaries(value: unknown): LastManagerRejectedProposalSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const rejected = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (!isManagerCommandType(record.commandType) || typeof record.reason !== "string") {
+      return [];
+    }
+    return [{
+      commandType: record.commandType,
+      targetSummary: typeof record.targetSummary === "string" ? record.targetSummary : undefined,
+      detailSummary: typeof record.detailSummary === "string" ? record.detailSummary : undefined,
+      reasonSummary: typeof record.reasonSummary === "string" ? record.reasonSummary : undefined,
+      reason: record.reason,
+    } satisfies LastManagerRejectedProposalSummary];
+  });
+  return rejected.length > 0 ? rejected : undefined;
 }
 
 function parseLastManagerDuplicateResolutions(value: unknown): LastManagerDuplicateResolution[] | undefined {
@@ -127,6 +327,12 @@ export async function loadLastManagerAgentTurn(
       taskExecutionSummary: typeof parsed.taskExecutionSummary === "string"
         ? parsed.taskExecutionSummary
         : undefined,
+      toolCalls: parseStringArray(parsed.toolCalls),
+      proposalCount: typeof parsed.proposalCount === "number" ? parsed.proposalCount : undefined,
+      invalidProposalCount: typeof parsed.invalidProposalCount === "number" ? parsed.invalidProposalCount : undefined,
+      proposals: parseProposalSummaries(parsed.proposals),
+      committedCommands: parseCommittedCommandSummaries(parsed.committedCommands),
+      rejectedProposals: parseRejectedProposalSummaries(parsed.rejectedProposals),
       duplicateResolutions: parseLastManagerDuplicateResolutions(parsed.duplicateResolutions),
       missingQuerySnapshot: parsed.missingQuerySnapshot === true,
       technicalFailure: typeof parsed.technicalFailure === "string" ? parsed.technicalFailure : undefined,
@@ -155,4 +361,31 @@ export async function clearLastManagerAgentTurn(paths: ThreadPaths): Promise<voi
     }
     throw error;
   }
+}
+
+export function summarizeManagerProposal(proposal: ManagerCommandProposal): LastManagerProposalSummary {
+  return {
+    commandType: proposal.commandType,
+    targetSummary: buildProposalTargetSummary(proposal),
+    detailSummary: buildProposalDetailSummary(proposal),
+    reasonSummary: proposal.reasonSummary,
+  };
+}
+
+export function summarizeManagerCommittedCommand(command: ManagerCommittedCommand): LastManagerCommittedCommandSummary {
+  return {
+    commandType: command.commandType,
+    issueIds: [...command.issueIds],
+    summary: command.summary,
+    publicReply: command.publicReply,
+  };
+}
+
+export function summarizeManagerProposalRejection(
+  rejection: ManagerProposalRejection,
+): LastManagerRejectedProposalSummary {
+  return {
+    ...summarizeManagerProposal(rejection.proposal),
+    reason: rejection.reason,
+  };
 }

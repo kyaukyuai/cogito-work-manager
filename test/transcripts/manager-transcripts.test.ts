@@ -581,6 +581,77 @@ describe("manager transcript fixtures", () => {
             },
           });
           return;
+        case "mixed-cancel-close-condition":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "update_progress",
+                    confidence: 0.9,
+                    summary: "AIC-67 を Canceled にし、AIC-64 に将来クローズ条件をコメントで残す",
+                  },
+                },
+              },
+              {
+                toolName: "propose_update_issue_status",
+                details: {
+                  proposal: {
+                    commandType: "update_issue_status",
+                    issueId: "AIC-67",
+                    signal: "completed",
+                    state: "Canceled",
+                    reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+                  },
+                },
+              },
+              {
+                toolName: "propose_add_comment",
+                details: {
+                  proposal: {
+                    commandType: "add_comment",
+                    issueId: "AIC-64",
+                    body: "## Close condition\n- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+                    reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+                  },
+                },
+              },
+            ],
+            proposals: [
+              {
+                commandType: "update_issue_status",
+                issueId: "AIC-67",
+                signal: "completed",
+                state: "Canceled",
+                reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+              },
+              {
+                commandType: "add_comment",
+                issueId: "AIC-64",
+                body: "## Close condition\n- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+                reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+              },
+            ],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-67 を Canceled にし、AIC-64 に将来クローズ条件をコメントで残す",
+            },
+          });
+          linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+            id: "issue-67",
+            identifier: "AIC-67",
+            title: "田平さんがCogitと連携できる環境確認",
+            url: "https://linear.app/kyaukyuai/issue/AIC-67",
+            state: { id: "state-canceled", name: "Canceled", type: "canceled" },
+            relations: [],
+            inverseRelations: [],
+          });
+          linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+          return;
         default:
       }
     };

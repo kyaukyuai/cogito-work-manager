@@ -71,7 +71,12 @@ import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
   getThreadPlanningContext,
 } from "../state/workgraph/queries.js";
-import { saveLastManagerAgentTurn } from "./last-manager-agent-turn.js";
+import {
+  saveLastManagerAgentTurn,
+  summarizeManagerCommittedCommand,
+  summarizeManagerProposal,
+  summarizeManagerProposalRejection,
+} from "./last-manager-agent-turn.js";
 import { buildSlackVisibleLlmFailureNotice } from "./llm-failure.js";
 import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 import type { SystemPaths } from "./system-workspace.js";
@@ -1773,6 +1778,12 @@ export async function handleManagerMessage(
       taskExecutionTargetIssueId: agentTurn.taskExecutionDecision?.targetIssueId,
       taskExecutionTargetIssueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
       taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
+      toolCalls: agentTurn.toolCalls.map((call) => call.toolName),
+      proposalCount: agentTurn.proposals.length,
+      invalidProposalCount: agentTurn.invalidProposalCount,
+      proposals: agentTurn.proposals.map(summarizeManagerProposal),
+      committedCommands: commitResult.committed.map(summarizeManagerCommittedCommand),
+      rejectedProposals: commitResult.rejected.map(summarizeManagerProposalRejection),
       duplicateResolutions: agentTurn.duplicateResolutions,
       missingQuerySnapshot,
     });
@@ -1851,6 +1862,8 @@ export async function handleManagerMessage(
       pendingClarificationDecision: fallbackPendingDecision,
       pendingClarificationDecisionSummary: error instanceof Error ? error.message : String(error),
       pendingClarificationPersistence: pendingManagerClarification ? "keep" : undefined,
+      proposalCount: 0,
+      invalidProposalCount: 0,
       missingQuerySnapshot: false,
       technicalFailure: error instanceof Error ? error.message : String(error),
     });

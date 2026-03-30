@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AppConfig } from "./config.js";
 import {
   getLinearIssue,
@@ -93,6 +95,10 @@ export interface ManagerWorkspaceMemoryDiagnostics extends WorkspaceMemoryCovera
 
 export interface ManagerWorkgraphDiagnostics extends WorkgraphDiagnostics {}
 
+export interface ManagerThreadIncidentDiagnostics extends ManagerThreadDiagnostics {
+  lastReply?: string;
+}
+
 async function loadLinearIssueBestEffort(
   issueId: string,
   env: LinearCommandEnv,
@@ -101,6 +107,19 @@ async function loadLinearIssueBestEffort(
     return await getLinearIssue(issueId, env, undefined, { includeComments: true });
   } catch {
     return null;
+  }
+}
+
+async function loadLastReply(paths: ReturnType<typeof buildThreadPaths>): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(paths.scratchDir, "last-reply.txt"), "utf8");
+    const reply = raw.trimEnd();
+    return reply.length > 0 ? reply : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
   }
 }
 
@@ -175,6 +194,24 @@ export async function buildManagerIssueDiagnostics(args: {
     followup,
     slackThreadContext,
     linearIssue,
+  };
+}
+
+export async function buildManagerThreadIncidentDiagnostics(args: {
+  config: AppConfig;
+  repositories: Pick<ManagerRepositories, "ownerMap" | "workgraph">;
+  channelId: string;
+  rootThreadTs: string;
+}): Promise<ManagerThreadIncidentDiagnostics> {
+  const threadPaths = buildThreadPaths(args.config.workspaceDir, args.channelId, args.rootThreadTs);
+  const [diagnostics, lastReply] = await Promise.all([
+    buildManagerThreadDiagnostics(args),
+    loadLastReply(threadPaths),
+  ]);
+
+  return {
+    ...diagnostics,
+    lastReply,
   };
 }
 

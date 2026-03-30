@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildManagerIssueDiagnostics,
+  buildManagerThreadIncidentDiagnostics,
   buildManagerStateFileDiagnostics,
   buildManagerThreadDiagnostics,
   buildManagerWorkgraphDiagnostics,
@@ -259,6 +260,123 @@ describe("manager diagnostics", () => {
     expect(diagnostics.followup?.requestKind).toBe("status");
     expect(diagnostics.slackThreadContext?.entries).toHaveLength(1);
     expect(diagnostics.linearIssue?.identifier).toBe("AIC-970");
+  });
+
+  it("builds thread incident diagnostics with last reply and turn outcomes", async () => {
+    await recordPlanningOutcome(repositories.workgraph, {
+      occurredAt: "2026-03-30T00:00:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-incident-diagnostics",
+        messageTs: "msg-incident-1",
+      },
+      messageFingerprint: "diag-incident-seed",
+      childIssues: [
+        { issueId: "AIC-64", title: "田平さん招待環境構築対応", kind: "execution" },
+        { issueId: "AIC-67", title: "田平さんがCogitと連携できる環境確認", kind: "execution" },
+      ],
+      planningReason: "complex-request",
+      lastResolvedIssueId: "AIC-67",
+      originalText: "mixed incident replay seed",
+    });
+
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-incident-diagnostics");
+    await ensureThreadWorkspace(threadPaths);
+    await appendThreadLog(threadPaths, {
+      type: "user",
+      ts: "msg-incident-1",
+      threadTs: "thread-incident-diagnostics",
+      userId: "U1",
+      text: "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+    });
+    await appendThreadLog(threadPaths, {
+      type: "assistant",
+      ts: "msg-incident-2",
+      threadTs: "thread-incident-diagnostics",
+      text: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
+    });
+    await writeFile(join(threadPaths.scratchDir, "last-reply.txt"), "AIC-67 を Canceled にします。\n", "utf8");
+    await saveLastManagerAgentTurn(threadPaths, {
+      recordedAt: "2026-03-30T00:05:00.000Z",
+      replyPath: "agent",
+      intent: "update_progress",
+      currentDateTimeJst: "2026-03-30 09:05 JST",
+      toolCalls: ["report_manager_intent", "propose_update_issue_status", "propose_add_comment"],
+      proposalCount: 2,
+      invalidProposalCount: 0,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          targetSummary: "AIC-67",
+          detailSummary: "signal=completed state=Canceled",
+          reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+        },
+        {
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          detailSummary: "## Close condition - 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+          reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+        },
+      ],
+      committedCommands: [
+        {
+          commandType: "update_issue_status",
+          issueIds: ["AIC-67"],
+          summary: "AIC-67 を Canceled にしました。",
+        },
+      ],
+      rejectedProposals: [
+        {
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          detailSummary: "## Close condition - 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+          reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+          reason: "AIC-64 へのコメント追加を完了できませんでした: comment write failed",
+        },
+      ],
+      technicalFailure: "comment write failed",
+    });
+
+    const diagnostics = await buildManagerThreadIncidentDiagnostics({
+      config: { ...config, workspaceDir },
+      repositories,
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-incident-diagnostics",
+    });
+
+    expect(diagnostics.lastReply).toBe("AIC-67 を Canceled にします。");
+    expect(diagnostics.lastAgentTurn).toMatchObject({
+      replyPath: "agent",
+      intent: "update_progress",
+      proposalCount: 2,
+      invalidProposalCount: 0,
+      toolCalls: ["report_manager_intent", "propose_update_issue_status", "propose_add_comment"],
+      proposals: [
+        expect.objectContaining({
+          commandType: "update_issue_status",
+          targetSummary: "AIC-67",
+        }),
+        expect.objectContaining({
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+        }),
+      ],
+      committedCommands: [
+        expect.objectContaining({
+          commandType: "update_issue_status",
+          issueIds: ["AIC-67"],
+        }),
+      ],
+      rejectedProposals: [
+        expect.objectContaining({
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          reason: expect.stringContaining("comment write failed"),
+        }),
+      ],
+    });
+    expect(diagnostics.planningContext?.childIssues.map((issue) => issue.issueId)).toEqual(["AIC-64", "AIC-67"]);
+    expect(diagnostics.slackThreadContext.entries).toHaveLength(2);
   });
 
   it("builds state file diagnostics with classification summaries", async () => {
