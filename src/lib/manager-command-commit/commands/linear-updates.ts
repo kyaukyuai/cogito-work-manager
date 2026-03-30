@@ -25,6 +25,7 @@ import type {
   AssignIssueProposal,
   ManagerCommandHandlerResult,
   SetIssueParentProposal,
+  UpdateIssuePriorityProposal,
   UpdateIssueStatusProposal,
 } from "../contracts.js";
 import type {
@@ -83,6 +84,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
     ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
     ...queryShownIssueIds,
+    ...(explicitIssueIds.length === 0 && recentIssueIds.length === 1 ? recentIssueIds : []),
   ]);
 
   return {
@@ -96,20 +98,18 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
   };
 }
 
-async function validateUpdateIssueStatusProposal(
-  args: CommitManagerCommandArgs,
-  proposal: UpdateIssueStatusProposal,
-): Promise<string | undefined> {
-  const hints = await collectCommitIssueHints(args);
-
-  if (hints.explicitIssueIds.length > 0 && !hints.explicitIssueIds.includes(proposal.issueId)) {
-    return `このメッセージでは ${hints.explicitIssueIds.join(", ")} が明示されていますが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+function validateIssueTargetHints(
+  hints: CommitIssueHints,
+  proposalIssueId: string,
+): string | undefined {
+  if (hints.explicitIssueIds.length > 0 && !hints.explicitIssueIds.includes(proposalIssueId)) {
+    return `このメッセージでは ${hints.explicitIssueIds.join(", ")} が明示されていますが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
   }
 
   if (hints.explicitIssueIds.length === 0 && hints.recentIssueIds.length === 1) {
     const recentIssueId = hints.recentIssueIds[0];
-    if (recentIssueId && recentIssueId !== proposal.issueId) {
-      return `直近の会話では ${recentIssueId} を見ていましたが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+    if (recentIssueId && recentIssueId !== proposalIssueId) {
+      return `直近の会話では ${recentIssueId} を見ていましたが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
     }
   }
 
@@ -117,21 +117,35 @@ async function validateUpdateIssueStatusProposal(
     return "更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。";
   }
 
-  if (hints.candidateIssueIds.length === 1 && hints.candidateIssueIds[0] !== proposal.issueId) {
-    return `この thread で確認できる更新対象は ${hints.candidateIssueIds[0]} ですが、更新提案は ${proposal.issueId} でした。更新する issue ID を明記してください。`;
+  if (hints.candidateIssueIds.length === 1 && hints.candidateIssueIds[0] !== proposalIssueId) {
+    return `この thread で確認できる更新対象は ${hints.candidateIssueIds[0]} ですが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
   }
 
   if (
     hints.candidateIssueIds.length > 1
-    && !hints.explicitIssueIds.includes(proposal.issueId)
-    && proposal.issueId !== hints.latestFocusIssueId
-    && proposal.issueId !== hints.lastResolvedIssueId
-    && !hints.queryShownIssueIds.includes(proposal.issueId)
+    && !hints.explicitIssueIds.includes(proposalIssueId)
+    && proposalIssueId !== hints.latestFocusIssueId
+    && proposalIssueId !== hints.lastResolvedIssueId
+    && !hints.queryShownIssueIds.includes(proposalIssueId)
   ) {
     return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";
   }
 
   return undefined;
+}
+
+async function validateUpdateIssueStatusProposal(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssueStatusProposal,
+): Promise<string | undefined> {
+  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
+}
+
+async function validateUpdateIssuePriorityProposal(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssuePriorityProposal,
+): Promise<string | undefined> {
+  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
 }
 
 function normalizeCompletedStateAlias(state: string | undefined): string | undefined {
@@ -181,8 +195,42 @@ async function runLoggedUpdateIssueStatusStep<T>(
   }
 }
 
+async function runLoggedUpdateIssuePriorityStep<T>(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssuePriorityProposal,
+  step: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  args.logger?.info("update_issue_priority step started", {
+    issueId: proposal.issueId,
+    priority: proposal.priority,
+    step,
+  });
+  try {
+    const result = await action();
+    args.logger?.info("update_issue_priority step completed", {
+      issueId: proposal.issueId,
+      priority: proposal.priority,
+      step,
+    });
+    return result;
+  } catch (error) {
+    args.logger?.error("update_issue_priority step failed", {
+      issueId: proposal.issueId,
+      priority: proposal.priority,
+      step,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
 function normalizeIssueStateName(issue: LinearIssue): string | undefined {
   return issue.state?.name?.trim();
+}
+
+function normalizeIssuePriority(issue: LinearIssue): number | undefined {
+  return typeof issue.priority === "number" ? issue.priority : undefined;
 }
 
 function isLinearCommandTimeoutError(error: unknown): error is Error & { timeoutMs: number } {
@@ -206,6 +254,13 @@ function matchesRecoveredIssueUpdate(
     return false;
   }
   return true;
+}
+
+function matchesRecoveredIssuePriority(
+  issue: LinearIssue,
+  expectedPriority: number,
+): boolean {
+  return normalizeIssuePriority(issue) === expectedPriority;
 }
 
 function hasRecoveredComment(issue: LinearIssue, expectedBody: string): boolean {
@@ -314,6 +369,54 @@ async function recoverAssignIssueAfterTimeout(args: {
     timeoutMs: error.timeoutMs,
   });
   return issue;
+}
+
+async function recoverIssuePriorityAfterTimeout(args: {
+  commitArgs: CommitManagerCommandArgs;
+  proposal: UpdateIssuePriorityProposal;
+  error: unknown;
+}): Promise<LinearIssue> {
+  const { commitArgs, proposal, error } = args;
+  if (!isLinearCommandTimeoutError(error)) {
+    throw error;
+  }
+  const issue = await getLinearIssue(proposal.issueId, commitArgs.env);
+  if (!matchesRecoveredIssuePriority(issue, proposal.priority)) {
+    throw error;
+  }
+  commitArgs.logger?.warn("update_issue_priority recovered after timeout", {
+    issueId: proposal.issueId,
+    priority: proposal.priority,
+    recoveredPriority: normalizeIssuePriority(issue),
+    timeoutMs: error.timeoutMs,
+  });
+  return issue;
+}
+
+function formatPriorityLabel(priority: number): string {
+  switch (priority) {
+    case 1:
+      return "Urgent";
+    case 2:
+      return "High";
+    case 3:
+      return "Medium";
+    case 4:
+      return "Low";
+    default:
+      return `Priority ${priority}`;
+  }
+}
+
+function formatPriorityChangeVerb(args: {
+  beforePriority?: number;
+  afterPriority: number;
+}): string {
+  const { beforePriority, afterPriority } = args;
+  if (beforePriority == null || beforePriority === afterPriority) {
+    return "変更しました";
+  }
+  return afterPriority > beforePriority ? "下げました" : "上げました";
 }
 
 export function buildStatusSourceComment(
@@ -527,6 +630,78 @@ export async function commitUpdateIssueStatusProposal(
     publicReply: updatedIssues.length === 1
       ? formatCompactStatusReply(proposal.signal, updatedIssues[0], replyExtras)
       : undefined,
+  };
+}
+
+export async function commitUpdateIssuePriorityProposal(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssuePriorityProposal,
+): Promise<ManagerCommandHandlerResult> {
+  const rejectionReason = await validateUpdateIssuePriorityProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
+
+  const previousIssue = await runLoggedUpdateIssuePriorityStep(args, proposal, "load_issue_before_update", () => getLinearIssue(
+    proposal.issueId,
+    args.env,
+  ));
+  const updatedIssue = await runLoggedUpdateIssuePriorityStep(args, proposal, "update_issue", async () => {
+    try {
+      return await updateManagedLinearIssue(
+        {
+          issueId: proposal.issueId,
+          priority: proposal.priority,
+        },
+        args.env,
+      );
+    } catch (error) {
+      return recoverIssuePriorityAfterTimeout({
+        commitArgs: args,
+        proposal,
+        error,
+      });
+    }
+  });
+
+  if (proposal.commentBody) {
+    const commentBody = proposal.commentBody;
+    await runLoggedUpdateIssuePriorityStep(args, proposal, "add_comment", async () => {
+      try {
+        await addLinearComment(
+          proposal.issueId,
+          commentBody,
+          args.env,
+        );
+      } catch (error) {
+        await recoverCommentAfterTimeout({
+          commitArgs: args,
+          issueId: proposal.issueId,
+          expectedBody: commentBody,
+          step: "add_comment",
+          error,
+        });
+      }
+    });
+  }
+
+  const priorityLabel = formatPriorityLabel(proposal.priority);
+  const verb = formatPriorityChangeVerb({
+    beforePriority: normalizeIssuePriority(previousIssue),
+    afterPriority: proposal.priority,
+  });
+  const publicReply = proposal.commentBody
+    ? `${updatedIssue.identifier} の優先度を ${priorityLabel} に${verb}。理由はコメントに残しました。`
+    : `${updatedIssue.identifier} の優先度を ${priorityLabel} に${verb}。`;
+
+  return {
+    commandType: proposal.commandType,
+    issueIds: [updatedIssue.identifier],
+    summary: publicReply,
+    publicReply,
   };
 }
 

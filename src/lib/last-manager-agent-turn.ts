@@ -71,6 +71,7 @@ function isManagerCommandType(value: unknown): value is ManagerCommandProposal["
     || value === "create_issue_batch"
     || value === "link_existing_issue"
     || value === "update_issue_status"
+    || value === "update_issue_priority"
     || value === "assign_issue"
     || value === "add_comment"
     || value === "add_relation"
@@ -122,6 +123,7 @@ function buildProposalTargetSummary(proposal: ManagerCommandProposal): string | 
       return proposal.parent.title;
     case "link_existing_issue":
     case "update_issue_status":
+    case "update_issue_priority":
     case "assign_issue":
     case "add_comment":
     case "set_issue_parent":
@@ -151,6 +153,13 @@ function buildProposalDetailSummary(proposal: ManagerCommandProposal): string | 
         `signal=${proposal.signal}`,
         proposal.state ? `state=${proposal.state}` : undefined,
         proposal.dueDate ? `due=${proposal.dueDate}` : undefined,
+        proposal.commentBody ? `comment=${truncateSingleLine(proposal.commentBody, 100)}` : undefined,
+      ].filter(Boolean);
+      return parts.join(" ");
+    }
+    case "update_issue_priority": {
+      const parts = [
+        `priority=${proposal.priority}`,
         proposal.commentBody ? `comment=${truncateSingleLine(proposal.commentBody, 100)}` : undefined,
       ].filter(Boolean);
       return parts.join(" ");

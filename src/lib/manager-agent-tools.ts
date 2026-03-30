@@ -1344,6 +1344,21 @@ function createProposalTools(): ToolDefinition[] {
       }),
     }),
     createProposalTool({
+      name: "propose_update_issue_priority",
+      label: "Propose Update Issue Priority",
+      description: "Propose changing an issue priority without changing its state. This does not execute the mutation.",
+      promptSnippet: "Use this when the user asks to lower or raise priority, for example 後回し, 優先度を下げる, or 優先度を上げる.",
+      commandType: "update_issue_priority",
+      parameters: Type.Object({
+        issueId: Type.String({ description: "Issue identifier like AIC-123." }),
+        priority: Type.Number({ description: "Priority 1-4. Use Low=4 by default for vague deprioritize requests like 後回し or 優先度を下げて." }),
+        commentBody: Type.Optional(Type.String({ description: "Optional markdown comment to record the rationale." })),
+        reasonSummary: Type.String({ description: "Short reason for this proposal." }),
+        evidenceSummary: Type.Optional(Type.String({ description: "Short evidence summary." })),
+        dedupeKeyCandidate: Type.Optional(Type.String({ description: "Stable dedupe key when you can infer one." })),
+      }),
+    }),
+    createProposalTool({
       name: "propose_assign_issue",
       label: "Propose Assign Issue",
       description: "Propose changing an issue assignee. This does not execute the mutation.",

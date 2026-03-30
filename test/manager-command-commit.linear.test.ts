@@ -304,6 +304,256 @@ describe("manager command commit linear", () => {
     expect(result.committed[0]?.publicReply).toBe("AIC-67 を Canceled にしました。");
   });
 
+  it("accepts a follow-up priority update when the thread context points to one recent issue", async () => {
+    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-priority-followup",
+      entries: [
+        {
+          ts: "msg-priority-followup-0",
+          text: "AIC-87 は後回しということ",
+          userId: "U1",
+        },
+      ],
+    });
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-87",
+      identifier: "AIC-87",
+      title: "契約フロー確認",
+      priority: 2,
+      priorityLabel: "High",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-87",
+      identifier: "AIC-87",
+      title: "契約フロー確認",
+      priority: 4,
+      priorityLabel: "Low",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-87",
+          priority: 4,
+          reasonSummary: "後回しなので Low に下げる",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-priority-followup",
+        messageTs: "msg-priority-followup-1",
+        userId: "U1",
+        text: "後回しなので優先度も下げておいて",
+      },
+      now: new Date("2026-03-30T07:22:55.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.getLinearIssue).toHaveBeenCalledWith("AIC-87", expect.any(Object));
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-87",
+        priority: 4,
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.publicReply).toBe("AIC-87 の優先度を Low に下げました。");
+  });
+
+  it("keeps follow-up priority updates ambiguous when recent thread context mentions multiple issues", async () => {
+    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-priority-followup-ambiguous",
+      entries: [
+        {
+          ts: "msg-priority-followup-ambiguous-0",
+          text: "AIC-87 は後回しということ",
+          userId: "U1",
+        },
+        {
+          ts: "msg-priority-followup-ambiguous-1",
+          text: "AIC-88 も見ておいて",
+          userId: "U1",
+        },
+      ],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-87",
+          priority: 4,
+          reasonSummary: "後回しなので Low に下げる",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-priority-followup-ambiguous",
+        messageTs: "msg-priority-followup-ambiguous-2",
+        userId: "U1",
+        text: "優先度も下げておいて",
+      },
+      now: new Date("2026-03-30T07:22:55.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("issue ID");
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+  });
+
+  it("prefers an explicitly named issue over recent follow-up thread context for priority updates", async () => {
+    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-priority-followup-explicit",
+      entries: [
+        {
+          ts: "msg-priority-followup-explicit-0",
+          text: "AIC-87 は後回しということ",
+          userId: "U1",
+        },
+      ],
+    });
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-86",
+      identifier: "AIC-86",
+      title: "OPT 向け契約書確認",
+      priority: 2,
+      priorityLabel: "High",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-86",
+      identifier: "AIC-86",
+      title: "OPT 向け契約書確認",
+      priority: 4,
+      priorityLabel: "Low",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-86",
+          priority: 4,
+          reasonSummary: "AIC-86 の優先度を下げる",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-priority-followup-explicit",
+        messageTs: "msg-priority-followup-explicit-1",
+        userId: "U1",
+        text: "AIC-86 の優先度も下げておいて",
+      },
+      now: new Date("2026-03-30T07:24:55.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-86",
+        priority: 4,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("recovers a timed-out priority update by reloading the updated issue", async () => {
+    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-priority-timeout-recovery",
+      entries: [
+        {
+          ts: "msg-priority-timeout-recovery-0",
+          text: "AIC-87 は後回しということ",
+          userId: "U1",
+        },
+      ],
+    });
+    linearMocks.getLinearIssue
+      .mockResolvedValueOnce({
+        id: "issue-87",
+        identifier: "AIC-87",
+        title: "契約フロー確認",
+        priority: 2,
+        priorityLabel: "High",
+        state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+        relations: [],
+        inverseRelations: [],
+      })
+      .mockResolvedValueOnce({
+        id: "issue-87",
+        identifier: "AIC-87",
+        title: "契約フロー確認",
+        priority: 4,
+        priorityLabel: "Low",
+        state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+        relations: [],
+        inverseRelations: [],
+      });
+    linearMocks.updateManagedLinearIssue.mockRejectedValueOnce(
+      createLinearTimeoutError("linear issue update AIC-87 --json --priority 4 timed out after 30000ms"),
+    );
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-87",
+          priority: 4,
+          reasonSummary: "後回しなので Low に下げる",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-priority-timeout-recovery",
+        messageTs: "msg-priority-timeout-recovery-1",
+        userId: "U1",
+        text: "後回しなので優先度も下げておいて",
+      },
+      now: new Date("2026-03-30T07:22:55.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.getLinearIssue).toHaveBeenNthCalledWith(1, "AIC-87", expect.any(Object));
+    expect(linearMocks.getLinearIssue).toHaveBeenNthCalledWith(2, "AIC-87", expect.any(Object));
+    expect(result.committed[0]?.publicReply).toBe("AIC-87 の優先度を Low に下げました。");
+  });
+
   it("recovers a timed-out add_comment proposal when the comment is already visible on reload", async () => {
     linearMocks.addLinearComment.mockRejectedValueOnce(
       createLinearTimeoutError("linear comment create AIC-64 timed out after 30000ms"),

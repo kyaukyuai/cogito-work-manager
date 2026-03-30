@@ -16,6 +16,7 @@ export type {
   ManagerProposalRejection,
   PendingClarificationDecisionReport,
   TaskExecutionDecisionReport,
+  UpdateIssuePriorityProposal,
 } from "./manager-command-commit/contracts.js";
 export {
   extractDuplicateResolutionSummaries,

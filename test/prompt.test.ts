@@ -141,6 +141,10 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("A single update message may combine an immediate cancel for one issue and a future close-condition comment for another issue; emit both proposals when both intents are explicit.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
     expect(prompt).toContain("When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.");
+    expect(prompt).toContain("When the user asks to lower or raise priority on an existing issue, use propose_update_issue_priority instead of propose_update_issue_status.");
+    expect(prompt).toContain("Treat phrases like 後回し, 優先度を下げる, 優先度も下げて, or 優先度低めで as priority changes, not state changes.");
+    expect(prompt).toContain("When a deprioritize request does not specify a concrete target level, default to priority=4 (Low).");
+    expect(prompt).toContain("Priority changes must not change the issue state.");
     expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");
     expect(prompt).toContain("If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn");
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
@@ -390,6 +394,24 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Scope correction hints:");
     expect(prompt).toContain("Treat the explicit issue in that scope-correction phrase as the default comment target");
     expect(prompt).toContain("Do not infer that another issue should be canceled, completed, or closed unless that other issue is explicitly named");
+  });
+
+  it("adds priority update hints when the latest message asks to lower priority", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "後回しなので優先度も下げておいて",
+      currentDate: "2026-03-30",
+    });
+
+    expect(prompt).toContain("Priority update hints:");
+    expect(prompt).toContain("The latest message is asking for a priority change, not a state change.");
+    expect(prompt).toContain("Use propose_update_issue_priority and do not route this through propose_update_issue_status.");
+    expect(prompt).toContain("default to priority=4 (Low)");
+    expect(prompt).toContain("Priority-only changes must not change the issue state.");
   });
 
   it("includes current message attachment summaries in the manager prompt", () => {

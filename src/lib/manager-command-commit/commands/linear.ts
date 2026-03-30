@@ -6,6 +6,7 @@ export {
 } from "./linear-create.js";
 export {
   commitUpdateIssueStatusProposal,
+  commitUpdateIssuePriorityProposal,
   commitAssignIssueProposal,
   commitAddCommentProposal,
   commitAddRelationProposal,

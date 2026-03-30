@@ -346,6 +346,14 @@ function buildSafetyQueryReply(): string {
   return "いまは一覧や優先順位を安全に判断できないため、issue ID か条件をもう少し具体的に教えてください。";
 }
 
+function isIssueTargetClarificationReason(reason: string): boolean {
+  return /このメッセージでは .+ が明示されていますが、更新提案は .+ でした。更新する issue ID を明記してください。/.test(reason)
+    || /直近の会話では .+ を見ていましたが、更新提案は .+ でした。更新する issue ID を明記してください。/.test(reason)
+    || /この thread で確認できる更新対象は .+ ですが、更新提案は .+ でした。更新する issue ID を明記してください。/.test(reason)
+    || /更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。/.test(reason)
+    || /この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。/.test(reason);
+}
+
 function buildSpecialCommitRejectionReply(
   rejection: ManagerProposalRejection,
 ): string | undefined {
@@ -357,6 +365,9 @@ function buildSpecialCommitRejectionReply(
       return `${rejection.proposal.issueId} の扱いはまだ変えていません。キャンセルするか内容修正かだけ補足してください。`;
     }
     return `${rejection.proposal.issueId} の扱いはまだ変えていません。更新したい issue ID と内容を短く補足してください。`;
+  }
+  if (rejection.proposal.commandType === "update_issue_priority" && isIssueTargetClarificationReason(rejection.reason)) {
+    return `${rejection.proposal.issueId} の優先度はまだ変えていません。どの issue の優先度を下げるかだけ、AIC-123 の形で補足してください。`;
   }
   return undefined;
 }

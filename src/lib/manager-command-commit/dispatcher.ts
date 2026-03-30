@@ -19,6 +19,7 @@ import {
   commitAddRelationProposal,
   commitAssignIssueProposal,
   commitSetIssueParentProposal,
+  commitUpdateIssuePriorityProposal,
   commitUpdateIssueStatusProposal,
   fingerprintText,
 } from "./commands/linear.js";
@@ -62,6 +63,7 @@ const commandHandlers = {
   create_issue_batch: commitCreateIssueBatchProposal,
   link_existing_issue: commitLinkExistingIssueProposal,
   update_issue_status: commitUpdateIssueStatusProposal,
+  update_issue_priority: commitUpdateIssuePriorityProposal,
   assign_issue: commitAssignIssueProposal,
   add_comment: commitAddCommentProposal,
   add_relation: commitAddRelationProposal,
@@ -127,6 +129,8 @@ function formatProposalExecutionFailure(proposal: ManagerCommandProposal, error:
   switch (proposal.commandType) {
     case "update_issue_status":
       return `${targetIssueId ?? "issue"} の状態更新を完了できませんでした: ${message}`;
+    case "update_issue_priority":
+      return `${targetIssueId ?? "issue"} の優先度更新を完了できませんでした: ${message}`;
     case "add_comment":
       return `${targetIssueId ?? "issue"} へのコメント追加を完了できませんでした: ${message}`;
     default:

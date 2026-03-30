@@ -695,6 +695,129 @@ describe("manager transcript fixtures", () => {
           });
           linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
           return;
+        case "followup-priority-initial-note":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "AIC-87 にコメントを追加しました。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "update_progress",
+                    confidence: 0.86,
+                    summary: "AIC-87 に後回しメモを残す",
+                  },
+                },
+              },
+              {
+                toolName: "propose_add_comment",
+                details: {
+                  proposal: {
+                    commandType: "add_comment",
+                    issueId: "AIC-87",
+                    body: "## Scope note\n- 後回しで進める",
+                    reasonSummary: "AIC-87 を後回しとして記録する",
+                  },
+                },
+              },
+            ],
+            proposals: [
+              {
+                commandType: "add_comment",
+                issueId: "AIC-87",
+                body: "## Scope note\n- 後回しで進める",
+                reasonSummary: "AIC-87 を後回しとして記録する",
+              },
+            ],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.86,
+              summary: "AIC-87 に後回しメモを残す",
+            },
+          });
+          linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+          return;
+        case "followup-priority-downgrade":
+          piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+            reply: "AIC-87 の優先度を Low に下げます。",
+            toolCalls: [
+              {
+                toolName: "report_manager_intent",
+                details: {
+                  intentReport: {
+                    intent: "update_progress",
+                    confidence: 0.9,
+                    summary: "AIC-87 の優先度を Low に下げる",
+                  },
+                },
+              },
+              {
+                toolName: "propose_update_issue_priority",
+                details: {
+                  proposal: {
+                    commandType: "update_issue_priority",
+                    issueId: "AIC-87",
+                    priority: 4,
+                    reasonSummary: "後回しなので Low に下げる",
+                  },
+                },
+              },
+            ],
+            proposals: [
+              {
+                commandType: "update_issue_priority",
+                issueId: "AIC-87",
+                priority: 4,
+                reasonSummary: "後回しなので Low に下げる",
+              },
+            ],
+            invalidProposalCount: 0,
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-87 の優先度を Low に下げる",
+            },
+          });
+          slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+            channelId: "C0ALAMDRB9V",
+            rootThreadTs: "thread-followup-priority-downgrade-transcript",
+            entries: [
+              {
+                ts: "msg-followup-priority-note-1",
+                text: "AIC-87 は後回しということ",
+                userId: "U1",
+              },
+              {
+                ts: "reply-followup-priority-note-1",
+                text: "AIC-87 にコメントを追加しました。",
+                userId: "BOT",
+              },
+            ],
+          });
+          linearMocks.getLinearIssue.mockResolvedValueOnce({
+            id: "issue-87",
+            identifier: "AIC-87",
+            title: "契約フロー確認",
+            url: "https://linear.app/kyaukyuai/issue/AIC-87",
+            priority: 2,
+            priorityLabel: "High",
+            state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+            relations: [],
+            inverseRelations: [],
+          });
+          linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+            id: "issue-87",
+            identifier: "AIC-87",
+            title: "契約フロー確認",
+            url: "https://linear.app/kyaukyuai/issue/AIC-87",
+            priority: 4,
+            priorityLabel: "Low",
+            state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+            relations: [],
+            inverseRelations: [],
+          });
+          return;
         default:
       }
     };
