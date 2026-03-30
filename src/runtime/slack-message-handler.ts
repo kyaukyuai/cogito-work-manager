@@ -142,6 +142,18 @@ export function createSlackMessageHandler(args: {
             messageTs: message.ts,
           });
         }
+        for (const diagnostic of attachmentResult.diagnostics ?? []) {
+          const logPayload = {
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+            messageTs: message.ts,
+          };
+          if (diagnostic.level === "warn") {
+            args.logger.warn(diagnostic.message, logPayload);
+          } else {
+            args.logger.info(diagnostic.message, logPayload);
+          }
+        }
       } catch (error) {
         args.logger.warn("Attachment ingest failed", {
           channelId: message.channelId,

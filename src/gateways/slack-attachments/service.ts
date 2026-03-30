@@ -31,8 +31,14 @@ export const MAX_ATTACHMENT_WINDOW_LINES = 120;
 export const AUDIO_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 const MAX_TRANSCRIPTION_AUDIO_BYTES = 20 * 1024 * 1024;
 const MAX_TRANSCRIPTION_DURATION_SEC = 30 * 60;
+const ATTACHMENT_HISTORY_RETRY_DELAY_MS = 500;
 
 type SlackAttachmentMetadata = NonNullable<RawSlackMessageEvent["files"]>[number];
+
+export interface AttachmentIngestDiagnostic {
+  level: "info" | "warn";
+  message: string;
+}
 
 export interface IngestThreadAttachmentsArgs {
   paths: ThreadPaths;
@@ -49,6 +55,7 @@ export interface IngestThreadAttachmentsResult {
   attachments: AttachmentRecord[];
   summaries: ThreadAttachmentSummary[];
   usedHydratedSlackFiles: boolean;
+  diagnostics?: AttachmentIngestDiagnostic[];
 }
 
 export interface ThreadAttachmentReadResult {
@@ -121,6 +128,35 @@ function buildPreviewText(text: string): string | undefined {
     : normalized;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function hasDownloadableSlackFileUrl(file: SlackAttachmentMetadata): boolean {
+  return typeof file.url_private_download === "string" || typeof file.url_private === "string";
+}
+
+function normalizeSlackAttachmentMetadata(file: {
+  id?: string;
+  name?: string;
+  title?: string;
+  mimetype?: string;
+  filetype?: string;
+  url_private_download?: string;
+  url_private?: string;
+}): SlackAttachmentMetadata {
+  return {
+    id: file.id,
+    name: file.name ?? file.title ?? file.id ?? "attachment",
+    mimetype: file.mimetype,
+    filetype: file.filetype,
+    url_private_download: file.url_private_download,
+    url_private: file.url_private,
+  };
+}
+
 async function runCommand(command: string, args: string[]): Promise<string> {
   const result = await execFileAsync(command, args, {
     encoding: "utf8",
@@ -145,15 +181,9 @@ async function safeStatMtime(path: string): Promise<number | undefined> {
   }
 }
 
-async function hydrateSlackMessageFiles(
-  args: Pick<IngestThreadAttachmentsArgs, "webClient" | "channelId" | "rootThreadTs" | "messageTs" | "files">,
-): Promise<{ files: SlackAttachmentMetadata[]; usedHydratedSlackFiles: boolean }> {
-  if (args.files && args.files.length > 0) {
-    return { files: args.files, usedHydratedSlackFiles: false };
-  }
-
-  // Slack can omit both `files` and `subtype=file_share` on threaded replies even
-  // when the exact source message has files in conversations.replies history.
+async function loadSlackMessageFilesFromThreadHistory(
+  args: Pick<IngestThreadAttachmentsArgs, "webClient" | "channelId" | "rootThreadTs" | "messageTs">,
+): Promise<SlackAttachmentMetadata[]> {
   const result = await args.webClient.conversations.replies({
     channel: args.channelId,
     ts: args.rootThreadTs,
@@ -161,17 +191,70 @@ async function hydrateSlackMessageFiles(
     limit: 200,
   });
   const matched = result.messages?.find((message) => message.ts === args.messageTs);
-  const files = (matched?.files ?? []).map((file) => ({
-    id: file.id,
-    name: file.name ?? file.title ?? file.id ?? "attachment",
-    mimetype: file.mimetype,
-    filetype: file.filetype,
-    url_private_download: file.url_private_download,
-    url_private: file.url_private,
-  }));
+  return (matched?.files ?? []).map((file) => normalizeSlackAttachmentMetadata(file));
+}
+
+async function hydrateSlackMessageFiles(
+  args: Pick<IngestThreadAttachmentsArgs, "webClient" | "channelId" | "rootThreadTs" | "messageTs" | "files">,
+  options?: { forceThreadHistory?: boolean },
+): Promise<{ files: SlackAttachmentMetadata[]; usedHydratedSlackFiles: boolean; diagnostics: AttachmentIngestDiagnostic[] }> {
+  const diagnostics: AttachmentIngestDiagnostic[] = [];
+  const eventFiles = args.files ?? [];
+  const downloadReadyEventFiles = eventFiles.filter((file) => hasDownloadableSlackFileUrl(file));
+  const eventFilesAreDownloadReady = eventFiles.length > 0 && eventFiles.every((file) => hasDownloadableSlackFileUrl(file));
+
+  if (!options?.forceThreadHistory && eventFilesAreDownloadReady) {
+    return {
+      files: eventFiles,
+      usedHydratedSlackFiles: false,
+      diagnostics,
+    };
+  }
+
+  if (!options?.forceThreadHistory && eventFiles.length > 0) {
+    diagnostics.push({
+      level: "info",
+      message: "Attachment metadata incomplete on Slack event",
+    });
+  }
+
+  // Slack can omit both `files` and `subtype=file_share` on threaded replies even
+  // when the exact source message has files in conversations.replies history.
+  let files = await loadSlackMessageFilesFromThreadHistory(args);
+  if (files.length === 0) {
+    diagnostics.push({
+      level: "info",
+      message: "Attachment history hydration returned no files",
+    });
+    await delay(ATTACHMENT_HISTORY_RETRY_DELAY_MS);
+    files = await loadSlackMessageFilesFromThreadHistory(args);
+    if (files.length > 0) {
+      diagnostics.push({
+        level: "info",
+        message: "Attachment history hydration retry recovered files",
+      });
+    } else {
+      if (!options?.forceThreadHistory && downloadReadyEventFiles.length > 0) {
+        diagnostics.push({
+          level: "info",
+          message: "Attachment history hydration returned no files after retry; using download-ready Slack event attachments",
+        });
+        return {
+          files: downloadReadyEventFiles,
+          usedHydratedSlackFiles: false,
+          diagnostics,
+        };
+      }
+      diagnostics.push({
+        level: "warn",
+        message: "Attachment history hydration returned no files after retry",
+      });
+    }
+  }
   return {
     files,
     usedHydratedSlackFiles: files.length > 0,
+    diagnostics,
   };
 }
 
@@ -179,15 +262,27 @@ async function downloadSlackAttachments(
   token: string,
   attachmentsDir: string,
   files: SlackAttachmentMetadata[],
-): Promise<Array<AttachmentRecord & { sourceAttachmentId?: string }>> {
-  if (files.length === 0) return [];
+): Promise<{
+  downloaded: Array<{ file: SlackAttachmentMetadata; record: AttachmentRecord & { sourceAttachmentId?: string } }>;
+  skippedFiles: SlackAttachmentMetadata[];
+}> {
+  if (files.length === 0) {
+    return {
+      downloaded: [],
+      skippedFiles: [],
+    };
+  }
 
   await mkdir(attachmentsDir, { recursive: true });
-  const results: Array<AttachmentRecord & { sourceAttachmentId?: string }> = [];
+  const downloaded: Array<{ file: SlackAttachmentMetadata; record: AttachmentRecord & { sourceAttachmentId?: string } }> = [];
+  const skippedFiles: SlackAttachmentMetadata[] = [];
 
   for (const file of files) {
     const url = file.url_private_download ?? file.url_private;
-    if (!url) continue;
+    if (!url) {
+      skippedFiles.push(file);
+      continue;
+    }
 
     const safeName = `${file.id ?? Date.now()}-${basename(file.name)}`;
     const storedPath = join(attachmentsDir, safeName);
@@ -203,16 +298,22 @@ async function downloadSlackAttachments(
 
     const buffer = Buffer.from(await response.arrayBuffer());
     await writeFile(storedPath, buffer);
-    results.push({
-      sourceAttachmentId: file.id,
-      id: file.id,
-      name: file.name,
-      mimeType: file.mimetype,
-      storedPath,
+    downloaded.push({
+      file,
+      record: {
+        sourceAttachmentId: file.id,
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimetype,
+        storedPath,
+      },
     });
   }
 
-  return results;
+  return {
+    downloaded,
+    skippedFiles,
+  };
 }
 
 async function writeDerivedTextArtifact(
@@ -348,12 +449,33 @@ export async function ingestThreadAttachments(
   args: IngestThreadAttachmentsArgs,
 ): Promise<IngestThreadAttachmentsResult> {
   await ensureThreadWorkspace(args.paths);
-  const hydrated = await hydrateSlackMessageFiles(args);
-  const downloaded = await downloadSlackAttachments(args.slackBotToken, args.paths.attachmentsDir, hydrated.files);
+  let hydrated = await hydrateSlackMessageFiles(args);
+  const diagnostics = [...hydrated.diagnostics];
+  let downloadResult = await downloadSlackAttachments(args.slackBotToken, args.paths.attachmentsDir, hydrated.files);
+  if (downloadResult.skippedFiles.length > 0) {
+    diagnostics.push({
+      level: "info",
+      message: "Attachment download skipped because no private URL",
+    });
+  }
+  if (hydrated.files.length > 0 && downloadResult.downloaded.length === 0 && !hydrated.usedHydratedSlackFiles) {
+    diagnostics.push({
+      level: "info",
+      message: "Attachment download produced no files from Slack event metadata; retrying thread history hydration",
+    });
+    hydrated = await hydrateSlackMessageFiles(args, { forceThreadHistory: true });
+    diagnostics.push(...hydrated.diagnostics);
+    downloadResult = await downloadSlackAttachments(args.slackBotToken, args.paths.attachmentsDir, hydrated.files);
+    if (downloadResult.skippedFiles.length > 0) {
+      diagnostics.push({
+        level: "info",
+        message: "Attachment download skipped because no private URL",
+      });
+    }
+  }
   const existingCatalog = await loadThreadAttachmentCatalog(args.paths);
 
-  const entries = await Promise.all(downloaded.map(async (record, index) => {
-    const file = hydrated.files[index];
+  const entries = await Promise.all(downloadResult.downloaded.map(async ({ file, record }) => {
     const existing = existingCatalog.entries.find((entry) => (
       (file.id && entry.sourceAttachmentId === file.id)
       || entry.attachmentId === buildAttachmentId(file, args.messageTs)
@@ -381,6 +503,7 @@ export async function ingestThreadAttachments(
     attachments: entries.map((entry) => buildAttachmentRecord(entry)),
     summaries: entries.map((entry) => buildThreadAttachmentSummary(entry)),
     usedHydratedSlackFiles: hydrated.usedHydratedSlackFiles,
+    diagnostics,
   };
 }
 
