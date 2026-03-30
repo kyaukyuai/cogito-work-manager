@@ -334,6 +334,7 @@ thread の解釈や issue context を確認する場合:
 
 ```bash
 npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 /workspace
+npm run manager:diagnostics -- incident C0ALAMDRB9V 1773806473.747499 /workspace
 npm run manager:diagnostics -- issue AIC-38 /workspace
 npm run manager:diagnostics -- webhook /workspace
 npm run manager:diagnostics -- state-files /workspace
@@ -345,6 +346,8 @@ npm run manager:diagnostics -- boundaries /workspace
 ```
 
 `manager:diagnostics` は repo の `.env` を読んで app 本体と同じ runtime config を組み立てます。`ANTHROPIC_API_KEY` が入っていれば `authSource.source=runtime-override`、未設定で `/workspace/.pi/agent/auth.json` を使う場合は `authSource.source=auth-storage` です。
+
+`incident` は thread の last reply、last manager turn、proposal / commit outcome、query continuation、pending clarification、workgraph context を 1 回で束ねる incident bundle 用です。
 
 `boundaries` は external dependency の lightweight smoke check です。
 

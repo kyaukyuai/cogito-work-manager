@@ -262,6 +262,91 @@ describe("manager diagnostics cli", () => {
     });
   });
 
+  it("prints incident bundle fields for the last reply and turn outcomes", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-incident-"));
+    tempDirs.push(cwd);
+    const workspaceDir = join(cwd, "workspace");
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-incident");
+    await ensureThreadWorkspace(threadPaths);
+    await saveLastManagerAgentTurn(threadPaths, {
+      recordedAt: "2026-03-30T00:05:00.000Z",
+      replyPath: "agent",
+      intent: "update_progress",
+      currentDateTimeJst: "2026-03-30 09:05 JST",
+      toolCalls: ["report_manager_intent", "propose_update_issue_status", "propose_add_comment"],
+      proposalCount: 2,
+      invalidProposalCount: 0,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          targetSummary: "AIC-67",
+          detailSummary: "signal=completed state=Canceled",
+          reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+        },
+      ],
+      committedCommands: [
+        {
+          commandType: "update_issue_status",
+          issueIds: ["AIC-67"],
+          summary: "AIC-67 を Canceled にしました。",
+        },
+      ],
+      rejectedProposals: [
+        {
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          detailSummary: "## Close condition - 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+          reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+          reason: "AIC-64 へのコメント追加を完了できませんでした: comment write failed",
+        },
+      ],
+      technicalFailure: "comment write failed",
+    });
+    await writeFile(join(threadPaths.scratchDir, "last-reply.txt"), [
+      "AIC-67 を Canceled にします。",
+      "AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
+      "",
+    ].join("\n"), "utf8");
+
+    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "incident", "C0ALAMDRB9V", "thread-incident", "./workspace"], {
+      cwd,
+      env: process.env,
+    });
+    const json = stdout.slice(stdout.indexOf("{"));
+    const diagnostics = JSON.parse(json) as {
+      summary: {
+        lastReply?: string;
+        lastAgentTurn?: {
+          toolCalls?: string[];
+          proposalCount?: number;
+          committedCommands?: Array<{ commandType?: string; issueIds?: string[] }>;
+          rejectedProposals?: Array<{ commandType?: string; targetSummary?: string; reason?: string }>;
+        };
+      };
+      lastReply?: string;
+    };
+
+    expect(diagnostics.summary.lastReply).toContain("AIC-67 を Canceled にします。");
+    expect(diagnostics.lastReply).toContain("AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。");
+    expect(diagnostics.summary.lastAgentTurn).toMatchObject({
+      toolCalls: ["report_manager_intent", "propose_update_issue_status", "propose_add_comment"],
+      proposalCount: 2,
+      committedCommands: [
+        expect.objectContaining({
+          commandType: "update_issue_status",
+          issueIds: ["AIC-67"],
+        }),
+      ],
+      rejectedProposals: [
+        expect.objectContaining({
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          reason: expect.stringContaining("comment write failed"),
+        }),
+      ],
+    });
+  });
+
   it("prints external boundary diagnostics with lightweight CLI checks", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-boundaries-"));
     tempDirs.push(cwd);

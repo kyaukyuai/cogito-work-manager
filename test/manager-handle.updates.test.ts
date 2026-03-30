@@ -7,6 +7,7 @@ import {
   formatIssueSelectionReply,
   handleManagerMessage,
 } from "../src/lib/manager.js";
+import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { saveThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -1281,6 +1282,26 @@ describe("handleManagerMessage update flows", () => {
     expect(result.reply).not.toContain("起票内容を安全に確定できない");
     expect(result.diagnostics?.agent).toMatchObject({
       source: "agent",
+    });
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-mixed-partial-success"),
+    );
+    expect(lastTurn).toMatchObject({
+      replyPath: "agent",
+      proposalCount: 2,
+      committedCommands: [
+        expect.objectContaining({
+          commandType: "update_issue_status",
+          issueIds: ["AIC-67"],
+        }),
+      ],
+      rejectedProposals: [
+        expect.objectContaining({
+          commandType: "add_comment",
+          targetSummary: "AIC-64",
+          reason: expect.stringContaining("comment write failed"),
+        }),
+      ],
     });
   });
 

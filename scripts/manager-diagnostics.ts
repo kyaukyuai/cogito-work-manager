@@ -2,6 +2,7 @@ import "dotenv/config";
 import { resolve } from "node:path";
 import {
   buildManagerIssueDiagnostics,
+  buildManagerThreadIncidentDiagnostics,
   buildManagerStateFileDiagnostics,
   buildManagerThreadDiagnostics,
   buildManagerWorkgraphDiagnostics,
@@ -14,7 +15,7 @@ import { buildLlmDiagnosticsFromConfig } from "../src/runtime/llm-runtime-config
 import { buildSystemPaths, readWorkspaceAgents, readWorkspaceMemory } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
-type Command = "thread" | "issue" | "webhook" | "personalization" | "llm" | "state-files" | "memory" | "workgraph" | "boundaries";
+type Command = "thread" | "incident" | "issue" | "webhook" | "personalization" | "llm" | "state-files" | "memory" | "workgraph" | "boundaries";
 
 function extractMarkdownHeadings(value: string | undefined): string[] {
   if (!value) {
@@ -27,8 +28,8 @@ function extractMarkdownHeadings(value: string | undefined): string[] {
 }
 
 function parseCommand(value: string | undefined): Command {
-  if (value === "thread" || value === "issue" || value === "webhook" || value === "personalization" || value === "llm" || value === "state-files" || value === "memory" || value === "workgraph" || value === "boundaries") return value;
-  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|issue|webhook|personalization|llm|state-files|memory|workgraph|boundaries> <arg1> <arg2?> [workspaceDir]");
+  if (value === "thread" || value === "incident" || value === "issue" || value === "webhook" || value === "personalization" || value === "llm" || value === "state-files" || value === "memory" || value === "workgraph" || value === "boundaries") return value;
+  throw new Error("Usage: tsx scripts/manager-diagnostics.ts <thread|incident|issue|webhook|personalization|llm|state-files|memory|workgraph|boundaries> <arg1> <arg2?> [workspaceDir]");
 }
 
 function buildRuntimeConfig(workspaceDir: string): AppConfig {
@@ -47,28 +48,49 @@ function buildRuntimeConfig(workspaceDir: string): AppConfig {
 function buildThreadDiagnosticsCliView(
   diagnostics: Awaited<ReturnType<typeof buildManagerThreadDiagnostics>>,
 ) {
+  const lastAgentTurn = diagnostics.lastAgentTurn
+    ? {
+        recordedAt: diagnostics.lastAgentTurn.recordedAt,
+        replyPath: diagnostics.lastAgentTurn.replyPath,
+        intent: diagnostics.lastAgentTurn.intent,
+        conversationKind: diagnostics.lastAgentTurn.conversationKind,
+        queryKind: diagnostics.lastAgentTurn.queryKind,
+        queryScope: diagnostics.lastAgentTurn.queryScope,
+        currentDateTimeJst: diagnostics.lastAgentTurn.currentDateTimeJst,
+        toolCalls: diagnostics.lastAgentTurn.toolCalls,
+        proposalCount: diagnostics.lastAgentTurn.proposalCount,
+        invalidProposalCount: diagnostics.lastAgentTurn.invalidProposalCount,
+        proposals: diagnostics.lastAgentTurn.proposals,
+        committedCommands: diagnostics.lastAgentTurn.committedCommands,
+        rejectedProposals: diagnostics.lastAgentTurn.rejectedProposals,
+        duplicateResolutions: diagnostics.lastAgentTurn.duplicateResolutions?.map((entry) => ({
+          assessmentStatus: entry.assessmentStatus,
+          recommendedAction: entry.recommendedAction,
+          selectedIssueId: entry.selectedIssueId,
+          reasonSummary: entry.reasonSummary,
+          extraQueries: entry.extraQueries,
+          finalCandidateIds: entry.finalCandidateIds,
+        })),
+        technicalFailure: diagnostics.lastAgentTurn.technicalFailure,
+      }
+    : undefined;
+
   return {
     summary: {
-      lastAgentTurn: diagnostics.lastAgentTurn
-        ? {
-            recordedAt: diagnostics.lastAgentTurn.recordedAt,
-            replyPath: diagnostics.lastAgentTurn.replyPath,
-            intent: diagnostics.lastAgentTurn.intent,
-            conversationKind: diagnostics.lastAgentTurn.conversationKind,
-            queryKind: diagnostics.lastAgentTurn.queryKind,
-            queryScope: diagnostics.lastAgentTurn.queryScope,
-            currentDateTimeJst: diagnostics.lastAgentTurn.currentDateTimeJst,
-            duplicateResolutions: diagnostics.lastAgentTurn.duplicateResolutions?.map((entry) => ({
-              assessmentStatus: entry.assessmentStatus,
-              recommendedAction: entry.recommendedAction,
-              selectedIssueId: entry.selectedIssueId,
-              reasonSummary: entry.reasonSummary,
-              extraQueries: entry.extraQueries,
-              finalCandidateIds: entry.finalCandidateIds,
-            })),
-            technicalFailure: diagnostics.lastAgentTurn.technicalFailure,
-          }
-        : undefined,
+      lastAgentTurn,
+    },
+    ...diagnostics,
+  };
+}
+
+function buildIncidentDiagnosticsCliView(
+  diagnostics: Awaited<ReturnType<typeof buildManagerThreadIncidentDiagnostics>>,
+) {
+  const threadView = buildThreadDiagnosticsCliView(diagnostics);
+  return {
+    summary: {
+      ...threadView.summary,
+      lastReply: diagnostics.lastReply,
     },
     ...diagnostics,
   };
@@ -77,7 +99,7 @@ function buildThreadDiagnosticsCliView(
 async function main(): Promise<void> {
   const command = parseCommand(process.argv[2]);
   const workspaceDir = resolve(
-    command === "thread"
+    command === "thread" || command === "incident"
       ? process.argv[5] ?? process.env.WORKSPACE_DIR ?? "./workspace"
       : command === "issue"
         ? process.argv[4] ?? process.env.WORKSPACE_DIR ?? "./workspace"
@@ -134,6 +156,22 @@ async function main(): Promise<void> {
       rootThreadTs,
     });
     process.stdout.write(`${JSON.stringify(buildThreadDiagnosticsCliView(diagnostics), null, 2)}\n`);
+    return;
+  }
+
+  if (command === "incident") {
+    const channelId = process.argv[3];
+    const rootThreadTs = process.argv[4];
+    if (!channelId || !rootThreadTs) {
+      throw new Error("Usage: tsx scripts/manager-diagnostics.ts incident <channelId> <rootThreadTs> [workspaceDir]");
+    }
+    const diagnostics = await buildManagerThreadIncidentDiagnostics({
+      config,
+      repositories,
+      channelId,
+      rootThreadTs,
+    });
+    process.stdout.write(`${JSON.stringify(buildIncidentDiagnosticsCliView(diagnostics), null, 2)}\n`);
     return;
   }
 

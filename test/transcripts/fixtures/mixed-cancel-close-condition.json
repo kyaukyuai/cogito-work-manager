@@ -1,0 +1,37 @@
+{
+  "name": "mixed-cancel-close-condition",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U1",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "mixed-cancel-close-condition",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-mixed-cancel-close-condition",
+      "messageTs": "msg-mixed-cancel-close-condition-1",
+      "userId": "U1",
+      "text": "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+      "now": "2026-03-30T00:05:00.000Z",
+      "beforeScenario": "mixed-cancel-close-condition",
+      "expect": {
+        "handled": true,
+        "replyIncludes": [
+          "AIC-67 を Canceled にします。",
+          "AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。"
+        ],
+        "replyExcludes": [
+          "起票内容を安全に確定できない"
+        ]
+      }
+    }
+  ]
+}
