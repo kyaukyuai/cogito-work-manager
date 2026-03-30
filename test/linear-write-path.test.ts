@@ -35,11 +35,57 @@ afterEach(() => {
 });
 
 describe("linear write path hardening", () => {
-  it("rejects linear-cli versions below 2.9.1", async () => {
+  it("rejects linear-cli versions below 2.11.0", async () => {
     mockExecFileSuccess(async () => ({ stdout: "linear-cli v2.8.0" }));
     const { verifyLinearCli } = await import("../src/lib/linear.js");
 
-    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v2.9.1 or newer is required");
+    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v2.11.0 or newer is required");
+  });
+
+  it("verifies runtime capabilities via linear capabilities --json", async () => {
+    mockExecFileSuccess(async (args) => {
+      if (args[0] === "--version") {
+        return { stdout: "linear-cli v2.11.0" };
+      }
+      if (args[0] === "auth" && args[1] === "whoami") {
+        return { stdout: "diagnostics-user" };
+      }
+      if (args[0] === "capabilities") {
+        return {
+          stdout: JSON.stringify({
+            schemaVersion: "v1",
+            cli: { version: "2.11.0" },
+            contractVersions: {
+              automation: { latest: "v4" },
+            },
+            commands: [
+              { path: "linear capabilities", json: { supported: true, contractVersion: null }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue list", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue view", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue create", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear issue update", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear issue comment add", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear issue relation add", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear issue relation list", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue parent", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue children", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear issue create-batch", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear team members", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear webhook list", json: { supported: true, contractVersion: "v3" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear webhook create", json: { supported: true, contractVersion: null }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear webhook update", json: { supported: true, contractVersion: null }, dryRun: { supported: true, contractVersion: "v1" } },
+            ],
+          }),
+        };
+      }
+      if (args[0] === "team" && args[1] === "list") {
+        return { stdout: "AIC Alpha Team\nOPS Ops Team" };
+      }
+      throw new Error(`unexpected args: ${args.join(" ")}`);
+    });
+    const { verifyLinearCli } = await import("../src/lib/linear.js");
+
+    await expect(verifyLinearCli("AIC")).resolves.toBeUndefined();
   });
 
   it("uses --description-file for multiline managed issue creation and cleans the temp file", async () => {
@@ -187,6 +233,30 @@ describe("linear write path hardening", () => {
     expect(commands[1]?.slice(0, 3)).toEqual(["issue", "comment", "add"]);
   });
 
+  it("passes a shorter LINEAR_WRITE_TIMEOUT_MS to issue writes when not configured", async () => {
+    execFileMock.mockImplementation((_: string, args: string[], options: { env?: NodeJS.ProcessEnv }, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
+      expect(args.slice(0, 2)).toEqual(["issue", "update"]);
+      expect(options.env?.LINEAR_WRITE_TIMEOUT_MS).toBe("25000");
+      callback(null, {
+        stdout: JSON.stringify({ id: "issue-1", identifier: "AIC-1", title: "Updated issue" }),
+        stderr: "",
+      });
+      return {} as never;
+    });
+    const { updateManagedLinearIssue } = await import("../src/lib/linear.js");
+
+    await expect(updateManagedLinearIssue(
+      {
+        issueId: "AIC-1",
+        state: "Done",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    )).resolves.toMatchObject({ identifier: "AIC-1" });
+  });
+
   it("times out hung linear commands instead of waiting forever", async () => {
     vi.useFakeTimers();
     execFileMock.mockImplementation((_: string, __: string[], options: { signal?: AbortSignal }, callback: (error: Error | null, result?: { stdout: string; stderr: string }) => void) => {
@@ -213,6 +283,43 @@ describe("linear write path hardening", () => {
     const expectation = expect(promise).rejects.toThrow(`timed out after ${LINEAR_COMMAND_TIMEOUT_MS}ms`);
     await vi.advanceTimersByTimeAsync(LINEAR_COMMAND_TIMEOUT_MS);
     await expectation;
+  });
+
+  it("treats linear-cli timeout_error envelopes as timeout failures", async () => {
+    mockExecFileFailure(async () => {
+      const error = new Error("write timeout") as Error & { stdout: string; stderr: string };
+      error.stdout = JSON.stringify({
+        success: false,
+        error: {
+          type: "timeout_error",
+          message: "Timed out waiting for issue.update confirmation after 25000ms. The write may still have been accepted by Linear.",
+          suggestion: "Check Linear before retrying.",
+          details: {
+            failureMode: "timeout_waiting_for_confirmation",
+            timeoutMs: 25000,
+            operation: "issue.update",
+            outcome: "unknown",
+          },
+        },
+      });
+      error.stderr = "";
+      return error;
+    });
+    const { updateManagedLinearIssue } = await import("../src/lib/linear.js");
+
+    await expect(updateManagedLinearIssue(
+      {
+        issueId: "AIC-1",
+        state: "Done",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    )).rejects.toMatchObject({
+      name: "LinearCommandTimeoutError",
+      timeoutMs: 25000,
+    });
   });
 
   it("keeps repeated relation add calls as successful no-op capable operations", async () => {
