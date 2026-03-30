@@ -343,7 +343,7 @@ describe("slack message handler", () => {
     );
   });
 
-  it("hydrates attachments from Slack thread history even when subtype is missing", async () => {
+  it("hydrates attachments from thread history when event file metadata is incomplete", async () => {
     const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
     const webClient = createWebClient();
     const logger = createLogger();
@@ -412,7 +412,14 @@ describe("slack message handler", () => {
       user: "U123",
       ts: "1774852504.304879",
       thread_ts: "1774851744.248639",
-      text: "一部不足があったので、追加しておいて。",
+      text: "こちらが修正版です",
+      files: [
+        {
+          id: "F999",
+          name: "kanazawa_clone_soul (1).md",
+          mimetype: "text/plain",
+        },
+      ],
     }, "UBOT");
 
     await vi.runAllTimersAsync();
@@ -456,6 +463,14 @@ describe("slack message handler", () => {
     );
     expect(logger.info).toHaveBeenCalledWith(
       "Hydrated Slack attachment metadata from thread history",
+      expect.objectContaining({
+        channelId: "C123",
+        threadTs: "1774851744.248639",
+        messageTs: "1774852504.304879",
+      }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "Attachment metadata incomplete on Slack event",
       expect.objectContaining({
         channelId: "C123",
         threadTs: "1774851744.248639",

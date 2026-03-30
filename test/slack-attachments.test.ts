@@ -15,6 +15,7 @@ describe("slack attachment gateway", () => {
 
   afterEach(async () => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -114,5 +115,192 @@ describe("slack attachment gateway", () => {
         status: "unavailable",
       },
     });
+  });
+
+  it("falls back to thread history when event file metadata lacks private URLs", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-attachment-history-fallback-"));
+    tempDirs.push(workspaceDir);
+    const paths = buildThreadPaths(workspaceDir, "C123", "333.000");
+    await ensureThreadWorkspace(paths);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("修正版の本文"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const repliesMock = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          ts: "333.111",
+          files: [
+            {
+              id: "F333",
+              name: "kanazawa_clone_soul (1).md",
+              mimetype: "text/plain",
+              url_private_download: "https://files.example/kanazawa_clone_soul.md",
+            },
+          ],
+        },
+      ],
+    });
+
+    const ingestResult = await ingestThreadAttachments({
+      paths,
+      slackBotToken: "xoxb-test",
+      webClient: {
+        conversations: {
+          replies: repliesMock,
+        },
+      } as never,
+      channelId: "C123",
+      rootThreadTs: "333.000",
+      messageTs: "333.111",
+      files: [
+        {
+          id: "F333",
+          name: "kanazawa_clone_soul (1).md",
+          mimetype: "text/plain",
+        },
+      ],
+    });
+
+    expect(repliesMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("https://files.example/kanazawa_clone_soul.md", expect.any(Object));
+    expect(ingestResult.usedHydratedSlackFiles).toBe(true);
+    expect(ingestResult.summaries[0]).toMatchObject({
+      name: "kanazawa_clone_soul (1).md",
+      extractionStatus: "completed",
+    });
+    expect(ingestResult.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "info",
+          message: "Attachment metadata incomplete on Slack event",
+        }),
+      ]),
+    );
+  });
+
+  it("retries thread history hydration once when files are not visible yet", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-attachment-history-retry-"));
+    tempDirs.push(workspaceDir);
+    const paths = buildThreadPaths(workspaceDir, "C123", "444.000");
+    await ensureThreadWorkspace(paths);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("retryで取得"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const repliesMock = vi.fn()
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            ts: "444.111",
+            files: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            ts: "444.111",
+            files: [
+              {
+                id: "F444",
+                name: "retry.md",
+                mimetype: "text/plain",
+                url_private_download: "https://files.example/retry.md",
+              },
+            ],
+          },
+        ],
+      });
+
+    const ingestResult = await ingestThreadAttachments({
+      paths,
+      slackBotToken: "xoxb-test",
+      webClient: {
+        conversations: {
+          replies: repliesMock,
+        },
+      } as never,
+      channelId: "C123",
+      rootThreadTs: "444.000",
+      messageTs: "444.111",
+      files: [],
+    });
+
+    expect(repliesMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledWith("https://files.example/retry.md", expect.any(Object));
+    expect(ingestResult.summaries).toHaveLength(1);
+    expect(ingestResult.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "info",
+          message: "Attachment history hydration returned no files",
+        }),
+        expect.objectContaining({
+          level: "info",
+          message: "Attachment history hydration retry recovered files",
+        }),
+      ]),
+    );
+  });
+
+  it("returns non-fatal diagnostics when thread history still has no files after retry", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-attachment-history-empty-"));
+    tempDirs.push(workspaceDir);
+    const paths = buildThreadPaths(workspaceDir, "C123", "555.000");
+    await ensureThreadWorkspace(paths);
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const repliesMock = vi.fn()
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            ts: "555.111",
+            files: [],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        messages: [
+          {
+            ts: "555.111",
+            files: [],
+          },
+        ],
+      });
+
+    const ingestResult = await ingestThreadAttachments({
+      paths,
+      slackBotToken: "xoxb-test",
+      webClient: {
+        conversations: {
+          replies: repliesMock,
+        },
+      } as never,
+      channelId: "C123",
+      rootThreadTs: "555.000",
+      messageTs: "555.111",
+      files: [],
+    });
+    const catalog = await loadThreadAttachmentCatalog(paths);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(repliesMock).toHaveBeenCalledTimes(2);
+    expect(ingestResult.attachments).toEqual([]);
+    expect(ingestResult.summaries).toEqual([]);
+    expect(catalog.entries).toEqual([]);
+    expect(ingestResult.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          level: "warn",
+          message: "Attachment history hydration returned no files after retry",
+        }),
+      ]),
+    );
   });
 });
