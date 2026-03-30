@@ -1097,6 +1097,120 @@ describe("handleManagerMessage update flows", () => {
     );
   });
 
+  it("cancels one issue and records a future close condition on another issue from the same update", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-67 を Canceled にし、AIC-64 に将来クローズ条件をコメントで残す",
+            },
+          },
+        },
+        {
+          toolName: "propose_update_issue_status",
+          details: {
+            proposal: {
+              commandType: "update_issue_status",
+              issueId: "AIC-67",
+              signal: "completed",
+              state: "Canceled",
+              reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+            },
+          },
+        },
+        {
+          toolName: "propose_add_comment",
+          details: {
+            proposal: {
+              commandType: "add_comment",
+              issueId: "AIC-64",
+              body: [
+                "## Close condition",
+                "- AIC-67 は現時点で実施事項がないため Canceled にする",
+                "- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+                "",
+                "Slack source:",
+                "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+              ].join("\n"),
+              reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-67",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+        },
+        {
+          commandType: "add_comment",
+          issueId: "AIC-64",
+          body: [
+            "## Close condition",
+            "- AIC-67 は現時点で実施事項がないため Canceled にする",
+            "- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+            "",
+            "Slack source:",
+            "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+          ].join("\n"),
+          reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.9,
+        summary: "AIC-67 を Canceled にし、AIC-64 に将来クローズ条件をコメントで残す",
+      },
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "AIC-67",
+      identifier: "AIC-67",
+      title: "田平さんがCogitと連携できる環境確認",
+      url: "https://linear.app/kyaukyuai/issue/AIC-67",
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-close-condition-note",
+        messageTs: "msg-close-condition-1",
+        userId: "U1",
+        text: "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+      },
+      new Date("2026-03-30T00:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-67 を Canceled にします。");
+    expect(result.reply).toContain("AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。");
+    expect(result.reply).not.toContain("AIC-64 を完了にしました。");
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-67",
+        state: "Canceled",
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-64",
+      expect.stringContaining("田平さんの確認が完了したら AIC-64 をクローズ判断する"),
+      expect.any(Object),
+    );
+  });
+
   it("suppresses contradictory success text when a mutation proposal is rejected", async () => {
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
       reply: "AIC-65 を完了に更新します。次は AIC-66 に着手できます。",

@@ -190,6 +190,12 @@ const REQUEST_PATTERN =
 const COMPLETED_PATTERN = /(完了|終わった|終わりました|done|closed?|完了した)/i;
 const BLOCKED_PATTERN = /(blocked|ブロック|詰まって|進められない|待ち)/i;
 const PROGRESS_PATTERN = /(進捗|対応中|やっています|started|着手|進めています)/i;
+const ISSUE_ID_PATTERN = /\b[A-Z][A-Z0-9]+-\d+\b/g;
+const DEFERRED_CLOSE_CONDITION_PATTERN =
+  /(?:確認が終えたら|確認が終わったら|確認が済んだら|確認が取れたら|確認できたら|終えたら|終わったら|済んだら|完了したら|終えた後|終わった後|完了後)/i;
+const CLOSE_TERM_PATTERN = /(クローズ|close|closed?|閉じる|閉じて|完了扱い)/i;
+const NO_REMAINING_WORK_PATTERN =
+  /(実施することはない|追加作業はない|やることはない|対応不要|対応は不要|不要と認識|キャンセル|cancell?ed?|中止|取りやめ)/i;
 const URGENCY_WITHOUT_EXACT_DUE_PATTERN = /(急ぎ|至急|優先|早め|今週|来週|今月|来月|月内|リリース|今期)/i;
 const VAGUE_REFERENCE_PATTERN = /(これ|それ|あれ|例の|この件|その件|あの件|やつ)/i;
 const GENERIC_TITLE_PATTERN = /^(対応|確認|修正|作業|依頼|タスク|issue|イシュー|ticket|チケット)$/i;
@@ -956,6 +962,13 @@ function buildSafetyOnlyManagerFallbackReply(
     };
   }
 
+  if (isMixedIssueStatusAndDeferredCloseNote(message.text)) {
+    return {
+      action: "progress",
+      reply: "いまは既存 issue の状態変更とクローズ条件コメントを安全に確定できないため、Canceled にしたい issue と条件を残したい issue を短く言い換えてください。次の返信はこの thread の続きとして扱います。",
+    };
+  }
+
   const action = classifyManagerSignal(message.text);
   if (action === "conversation") {
     const capabilityQuery = detectSlackCapabilityQuery(message.text);
@@ -980,6 +993,14 @@ function buildSafetyOnlyManagerFallbackReply(
     action,
     reply: "いまは起票内容を安全に確定できないため、直したい点を 1 文で言い換えるか、親 issue の有無を補足してください。次の返信はこの thread の続きとして扱います。",
   };
+}
+
+function isMixedIssueStatusAndDeferredCloseNote(text: string): boolean {
+  const issueIds = text.match(ISSUE_ID_PATTERN) ?? [];
+  return issueIds.length >= 2
+    && NO_REMAINING_WORK_PATTERN.test(text)
+    && DEFERRED_CLOSE_CONDITION_PATTERN.test(text)
+    && CLOSE_TERM_PATTERN.test(text);
 }
 
 export function needsResearchTask(text: string): boolean {

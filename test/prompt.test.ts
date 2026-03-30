@@ -133,6 +133,10 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Express that owner decision with assigneeMode=assign or leave-unassigned.");
     expect(prompt).toContain("For Linear issue delete or cancel requests, use propose_update_issue_status with signal=completed and state=Canceled.");
     expect(prompt).toContain("Do not use Cancelled for Linear issue state updates; use the exact state name Canceled.");
+    expect(prompt).toContain("When the user states a future close condition such as X が終わったら AIC-123 はクローズ, do not mark the issue completed now.");
+    expect(prompt).toContain("For future close conditions or completion criteria on an existing issue, use propose_add_comment on the issue that would be closed later so the close condition is recorded without changing status.");
+    expect(prompt).toContain("When the user says an existing issue has no remaining work, no action is needed, or should be canceled, treat that issue as an immediate cancel request and use propose_update_issue_status with signal=completed and state=Canceled.");
+    expect(prompt).toContain("A single update message may combine an immediate cancel for one issue and a future close-condition comment for another issue; emit both proposals when both intents are explicit.");
     expect(prompt).toContain("For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.");
     expect(prompt).toContain("When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.");
     expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");

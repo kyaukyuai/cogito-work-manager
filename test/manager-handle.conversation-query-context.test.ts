@@ -707,6 +707,31 @@ describe("handleManagerMessage conversation and query-context flow", () => {
     expect(result.reply).toContain("issue ID か条件をもう少し具体的に教えてください");
   });
 
+  it("does not misframe a mixed cancel-plus-close-condition update as a create request in the safety path", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new Error("agent failure"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-close-condition-fallback",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+      },
+      new Date("2026-03-30T00:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("既存 issue の状態変更とクローズ条件コメントを安全に確定できない");
+    expect(result.reply).not.toContain("起票内容を安全に確定できない");
+    expect(result.diagnostics?.router).toMatchObject({
+      source: "fallback",
+      action: "progress",
+    });
+  });
+
   it("passes stored reference-material items into the next follow-up turn", async () => {
     piSessionMocks.runManagerAgentTurn
       .mockResolvedValueOnce({
