@@ -146,15 +146,14 @@ async function safeStatMtime(path: string): Promise<number | undefined> {
 }
 
 async function hydrateSlackMessageFiles(
-  args: Pick<IngestThreadAttachmentsArgs, "webClient" | "channelId" | "rootThreadTs" | "messageTs" | "subtype" | "files">,
+  args: Pick<IngestThreadAttachmentsArgs, "webClient" | "channelId" | "rootThreadTs" | "messageTs" | "files">,
 ): Promise<{ files: SlackAttachmentMetadata[]; usedHydratedSlackFiles: boolean }> {
   if (args.files && args.files.length > 0) {
     return { files: args.files, usedHydratedSlackFiles: false };
   }
-  if (args.subtype !== "file_share") {
-    return { files: [], usedHydratedSlackFiles: false };
-  }
 
+  // Slack can omit both `files` and `subtype=file_share` on threaded replies even
+  // when the exact source message has files in conversations.replies history.
   const result = await args.webClient.conversations.replies({
     channel: args.channelId,
     ts: args.rootThreadTs,
