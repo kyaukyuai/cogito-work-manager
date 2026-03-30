@@ -181,6 +181,88 @@ async function runLoggedUpdateIssueStatusStep<T>(
   }
 }
 
+function normalizeIssueStateName(issue: LinearIssue): string | undefined {
+  return issue.state?.name?.trim();
+}
+
+function isLinearCommandTimeoutError(error: unknown): error is Error & { timeoutMs: number } {
+  return error instanceof Error
+    && error.name === "LinearCommandTimeoutError"
+    && typeof (error as { timeoutMs?: unknown }).timeoutMs === "number";
+}
+
+function matchesRecoveredIssueUpdate(
+  issue: LinearIssue,
+  expected: {
+    state?: string;
+    dueDate?: string;
+  },
+): boolean {
+  const actualState = normalizeIssueStateName(issue);
+  if (expected.state && actualState !== expected.state) {
+    return false;
+  }
+  if (expected.dueDate && issue.dueDate !== expected.dueDate) {
+    return false;
+  }
+  return true;
+}
+
+function hasRecoveredComment(issue: LinearIssue, expectedBody: string): boolean {
+  const normalizedExpected = expectedBody.trim();
+  return (issue.comments ?? []).some((comment) => comment.body.trim() === normalizedExpected);
+}
+
+async function recoverIssueUpdateAfterTimeout(args: {
+  commitArgs: CommitManagerCommandArgs;
+  proposal: UpdateIssueStatusProposal;
+  state?: string;
+  dueDate?: string;
+  failedStep: string;
+  error: unknown;
+}): Promise<LinearIssue> {
+  const { commitArgs, proposal, state, dueDate, failedStep, error } = args;
+  if (!isLinearCommandTimeoutError(error)) {
+    throw error;
+  }
+  const issue = await getLinearIssue(proposal.issueId, commitArgs.env);
+  if (!matchesRecoveredIssueUpdate(issue, { state, dueDate })) {
+    throw error;
+  }
+  commitArgs.logger?.warn("update_issue_status step recovered after timeout", {
+    issueId: proposal.issueId,
+    signal: proposal.signal,
+    step: failedStep,
+    recoveredState: normalizeIssueStateName(issue),
+    recoveredDueDate: issue.dueDate ?? undefined,
+    timeoutMs: error.timeoutMs,
+  });
+  return issue;
+}
+
+async function recoverCommentAfterTimeout(args: {
+  commitArgs: CommitManagerCommandArgs;
+  issueId: string;
+  expectedBody: string;
+  step: string;
+  error: unknown;
+}): Promise<void> {
+  const { commitArgs, issueId, expectedBody, step, error } = args;
+  if (!isLinearCommandTimeoutError(error)) {
+    throw error;
+  }
+  const issue = await getLinearIssue(issueId, commitArgs.env, undefined, { includeComments: true });
+  if (!hasRecoveredComment(issue, expectedBody)) {
+    throw error;
+  }
+  commitArgs.logger?.warn("linear comment step recovered after timeout", {
+    issueId,
+    step,
+    timeoutMs: error.timeoutMs,
+    recoveredCommentLength: expectedBody.trim().length,
+  });
+}
+
 export function buildStatusSourceComment(
   message: ManagerCommitMessageContext | ManagerCommitSystemContext,
   heading: string,
@@ -223,44 +305,108 @@ export async function commitUpdateIssueStatusProposal(
       const normalizedProgressComment = progressComment.startsWith("## Progress update")
         ? progressComment
         : `## Progress update\n${progressComment.trim()}`;
-      updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", () => updateManagedLinearIssue(
-        {
-          issueId: proposal.issueId,
-          state: proposal.state,
-          dueDate: proposal.dueDate,
-        },
-        args.env,
-      )));
-      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearComment(
-        proposal.issueId,
-        normalizedProgressComment,
-        args.env,
-      ));
+      updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", async () => {
+        try {
+          return await updateManagedLinearIssue(
+            {
+              issueId: proposal.issueId,
+              state: proposal.state,
+              dueDate: proposal.dueDate,
+            },
+            args.env,
+          );
+        } catch (error) {
+          return recoverIssueUpdateAfterTimeout({
+            commitArgs: args,
+            proposal,
+            state: proposal.state,
+            dueDate: proposal.dueDate,
+            failedStep: "update_issue",
+            error,
+          });
+        }
+      }));
+      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", async () => {
+        try {
+          await addLinearComment(
+            proposal.issueId,
+            normalizedProgressComment,
+            args.env,
+          );
+        } catch (error) {
+          await recoverCommentAfterTimeout({
+            commitArgs: args,
+            issueId: proposal.issueId,
+            expectedBody: normalizedProgressComment,
+            step: "add_comment",
+            error,
+          });
+        }
+      });
     } else {
-      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearProgressComment(
-        proposal.issueId,
-        progressComment,
-        args.env,
-      ));
+      const normalizedProgressComment = `## Progress update\n${progressComment.trim()}`;
+      await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", async () => {
+        try {
+          await addLinearProgressComment(
+            proposal.issueId,
+            progressComment,
+            args.env,
+          );
+        } catch (error) {
+          await recoverCommentAfterTimeout({
+            commitArgs: args,
+            issueId: proposal.issueId,
+            expectedBody: normalizedProgressComment,
+            step: "add_comment",
+            error,
+          });
+        }
+      });
       updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "reload_issue", () => getLinearIssue(
         proposal.issueId,
         args.env,
       )));
     }
   } else if (proposal.signal === "completed") {
-    updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", () => updateManagedLinearIssue(
-      {
-        issueId: proposal.issueId,
-        state: normalizedCompletedState ?? "completed",
-        dueDate: proposal.dueDate,
-      },
-      args.env,
-    )));
-    await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", () => addLinearComment(
-      proposal.issueId,
-      proposal.commentBody ?? buildStatusSourceComment(message, "## Completion source"),
-      args.env,
-    ));
+    const completionComment = proposal.commentBody ?? buildStatusSourceComment(message, "## Completion source");
+    updatedIssues.push(await runLoggedUpdateIssueStatusStep(args, proposal, "update_issue", async () => {
+      try {
+        return await updateManagedLinearIssue(
+          {
+            issueId: proposal.issueId,
+            state: normalizedCompletedState ?? "completed",
+            dueDate: proposal.dueDate,
+          },
+          args.env,
+        );
+      } catch (error) {
+        return recoverIssueUpdateAfterTimeout({
+          commitArgs: args,
+          proposal,
+          state: normalizedCompletedState ?? "completed",
+          dueDate: proposal.dueDate,
+          failedStep: "update_issue",
+          error,
+        });
+      }
+    }));
+    await runLoggedUpdateIssueStatusStep(args, proposal, "add_comment", async () => {
+      try {
+        await addLinearComment(
+          proposal.issueId,
+          completionComment,
+          args.env,
+        );
+      } catch (error) {
+        await recoverCommentAfterTimeout({
+          commitArgs: args,
+          issueId: proposal.issueId,
+          expectedBody: completionComment,
+          step: "add_comment",
+          error,
+        });
+      }
+    });
   } else {
     const blocked = await runLoggedUpdateIssueStatusStep(args, proposal, "blocked_update", () => markLinearIssueBlocked(
       proposal.issueId,
@@ -347,7 +493,17 @@ export async function commitAddCommentProposal(
   args: CommitManagerCommandArgs,
   proposal: AddCommentProposal,
 ): Promise<ManagerCommandHandlerResult> {
-  await addLinearComment(proposal.issueId, proposal.body, args.env);
+  try {
+    await addLinearComment(proposal.issueId, proposal.body, args.env);
+  } catch (error) {
+    await recoverCommentAfterTimeout({
+      commitArgs: args,
+      issueId: proposal.issueId,
+      expectedBody: proposal.body,
+      step: "add_comment",
+      error,
+    });
+  }
   return {
     commandType: proposal.commandType,
     issueIds: [proposal.issueId],

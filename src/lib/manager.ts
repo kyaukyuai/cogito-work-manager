@@ -569,6 +569,37 @@ function buildGroundedCreateWorkClarificationReply(args: {
   return composeSlackReply(replyParts);
 }
 
+function buildPartialSuccessfulMutationReply(args: {
+  intent: ManagerIntentReport["intent"] | undefined;
+  committed: ManagerCommittedCommand[];
+  commitRejections: string[];
+}): string | undefined {
+  if (
+    !isMutableIntent(args.intent)
+    || args.intent === "create_work"
+    || args.committed.length === 0
+    || args.commitRejections.length === 0
+  ) {
+    return undefined;
+  }
+
+  const successLines = args.committed
+    .map((entry) => entry.publicReply?.trim() || entry.summary.trim())
+    .filter(Boolean);
+  if (successLines.length === 0) {
+    return undefined;
+  }
+
+  const successReply = successLines.length === 1
+    ? successLines[0]
+    : composeSlackReply([
+        `${successLines.length}件反映しました。`,
+        formatSlackBullets(successLines.map((line) => stripSlackSentenceEnding(line))),
+      ]);
+  const rejectionReply = buildCommitRejectionReply(args.commitRejections);
+  return composeSlackReply([successReply, rejectionReply].filter(Boolean));
+}
+
 function formatPendingOwnerMapConfirmationReply(summaryLines: string[]): string {
   return [
     "owner-map.json の変更案を保持しています。",
@@ -1534,6 +1565,11 @@ export async function handleManagerMessage(
       committed: commitResult.committed,
       commitRejections: commitRejectionReasons,
     });
+    const partialSuccessfulMutationReply = buildPartialSuccessfulMutationReply({
+      intent: agentIntent,
+      committed: commitResult.committed,
+      commitRejections: commitRejectionReasons,
+    });
     const groundedCreateWorkClarificationReply = buildGroundedCreateWorkClarificationReply({
       intent: agentIntent,
       committed: commitResult.committed,
@@ -1542,7 +1578,7 @@ export async function handleManagerMessage(
     });
     const mergedReplyBase = missingQuerySnapshot
       ? buildSafetyQueryReply()
-      : compactSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
+      : compactSuccessfulMutationReply ?? partialSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
           agentReply: agentTurn.reply,
           commitSummaries: commitResult.replySummaries,
           commitRejections: commitRejectionReasons,

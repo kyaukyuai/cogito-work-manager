@@ -1176,6 +1176,7 @@ describe("handleManagerMessage update flows", () => {
       identifier: "AIC-67",
       title: "田平さんがCogitと連携できる環境確認",
       url: "https://linear.app/kyaukyuai/issue/AIC-67",
+      state: { id: "state-canceled", name: "Canceled", type: "canceled" },
       relations: [],
       inverseRelations: [],
     });
@@ -1209,6 +1210,78 @@ describe("handleManagerMessage update flows", () => {
       expect.stringContaining("田平さんの確認が完了したら AIC-64 をクローズ判断する"),
       expect.any(Object),
     );
+  });
+
+  it("keeps the agent reply path when one mixed-update proposal succeeds and another fails", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-67 を Canceled にし、AIC-64 にクローズ条件コメントを残す",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-67",
+          signal: "completed",
+          state: "Canceled",
+          reasonSummary: "AIC-67 では現時点で実施事項がないため Canceled にする",
+        },
+        {
+          commandType: "add_comment",
+          issueId: "AIC-64",
+          body: "## Close condition\n- 田平さんの確認が完了したら AIC-64 をクローズ判断する",
+          reasonSummary: "AIC-64 の将来クローズ条件を記録する",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.9,
+        summary: "AIC-67 を Canceled にし、AIC-64 にクローズ条件コメントを残す",
+      },
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "AIC-67",
+      identifier: "AIC-67",
+      title: "田平さんがCogitと連携できる環境確認",
+      url: "https://linear.app/kyaukyuai/issue/AIC-67",
+      state: { id: "state-canceled", name: "Canceled", type: "canceled" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.addLinearComment
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("comment write failed"));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-mixed-partial-success",
+        messageTs: "msg-mixed-partial-success-1",
+        userId: "U1",
+        text: "特に AIC-67 では実施することはない認識なので、田平さんの確認が終えたら、AIC-64 はクローズしましょう",
+      },
+      new Date("2026-03-30T00:05:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-67 を Canceled にしました。");
+    expect(result.reply).toContain("AIC-64 へのコメント追加を完了できませんでした");
+    expect(result.reply).not.toContain("起票内容を安全に確定できない");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "agent",
+    });
   });
 
   it("suppresses contradictory success text when a mutation proposal is rejected", async () => {
