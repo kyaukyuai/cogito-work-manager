@@ -1,11 +1,13 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../src/lib/config.js";
+import { buildThreadAttachmentArtifactsDir, saveThreadAttachmentCatalog } from "../src/gateways/slack-attachments/index.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { createManagerAgentTools } from "../src/lib/manager-agent-tools.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 import { WEBHOOK_INITIAL_PROPOSAL_MARKER } from "../src/orchestrators/webhooks/initial-proposal-comment.js";
 
 const linearMocks = vi.hoisted(() => ({
@@ -599,5 +601,70 @@ describe("manager agent tools", () => {
         expect.objectContaining({ identifier: "AIC-61" }),
       ],
     });
+  });
+
+  it("lists and reads stored thread attachments", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-attachments-"));
+    tempDirs.push(workspaceDir);
+    const localConfig: AppConfig = {
+      ...config,
+      workspaceDir,
+    };
+    const paths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "111.000");
+    await ensureThreadWorkspace(paths);
+    const artifactsDir = buildThreadAttachmentArtifactsDir(paths);
+    await mkdir(artifactsDir, { recursive: true });
+    const artifactPath = join(artifactsDir, "111.666-F123.extracted.txt");
+    await writeFile(artifactPath, "第一条\n第二条\n第三条\n", "utf8");
+    await saveThreadAttachmentCatalog(paths, {
+      entries: [
+        {
+          attachmentId: "111.666-F123",
+          sourceAttachmentId: "F123",
+          sourceMessageTs: "111.666",
+          name: "contract.txt",
+          mimeType: "text/plain",
+          storedPath: join(paths.attachmentsDir, "F123-contract.txt"),
+          kind: "document",
+          previewText: "第一条\n第二条",
+          createdAt: "2026-03-30T01:36:00.000Z",
+          updatedAt: "2026-03-30T01:36:00.000Z",
+          extraction: {
+            status: "completed",
+            artifactPath,
+            lineCount: 3,
+          },
+          transcription: {
+            status: "not_applicable",
+          },
+        },
+      ],
+    });
+
+    const tools = createManagerAgentTools(localConfig, buildRepositoriesForTools());
+    const listTool = tools.find((entry) => entry.name === "slack_list_thread_attachments");
+    const readTool = tools.find((entry) => entry.name === "slack_read_thread_attachment");
+
+    expect(listTool).toBeDefined();
+    expect(readTool).toBeDefined();
+
+    const listResult = await listTool!.execute("tool-call-list-attachments", {
+      channelId: "C0ALAMDRB9V",
+      threadTs: "111.000",
+      sourceMessageTs: "111.666",
+    });
+    expect(listResult.content[0]?.text).toContain("contract.txt");
+    expect(listResult.content[0]?.text).toContain("extractionStatus: completed");
+
+    const readResult = await readTool!.execute("tool-call-read-attachment", {
+      channelId: "C0ALAMDRB9V",
+      threadTs: "111.000",
+      attachmentId: "111.666-F123",
+      maxLines: 2,
+    });
+    expect(readResult.content[0]?.text).toContain("Attachment: contract.txt");
+    expect(readResult.content[0]?.text).toContain("Lines (1-2 of 3):");
+    expect(readResult.content[0]?.text).toContain("第一条");
+    expect(readResult.content[0]?.text).toContain("More lines are available.");
   });
 });

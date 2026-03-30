@@ -60,11 +60,13 @@ describe("loadConfig", () => {
   it("parses llm runtime overrides", () => {
     const config = loadConfig({
       ...baseEnv,
+      OPENAI_API_KEY: "sk-openai-test",
       BOT_THINKING_LEVEL: "high",
       BOT_MAX_OUTPUT_TOKENS: "4096",
       BOT_RETRY_MAX_RETRIES: "0",
     });
 
+    expect(config.openaiApiKey).toBe("sk-openai-test");
     expect(config.botThinkingLevel).toBe("high");
     expect(config.botMaxOutputTokens).toBe(4096);
     expect(config.botRetryMaxRetries).toBe(0);

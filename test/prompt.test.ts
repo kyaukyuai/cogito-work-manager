@@ -374,6 +374,36 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("propose_post_slack_message");
   });
 
+  it("includes current message attachment summaries in the manager prompt", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "契約書を確認して",
+      currentDate: "2026-03-30",
+      attachments: [
+        {
+          attachmentId: "12345.679-F123",
+          sourceMessageTs: "12345.679",
+          name: "contract.pdf",
+          mimeType: "application/pdf",
+          kind: "document",
+          previewText: "第1条 契約の目的",
+          extractionStatus: "completed",
+          transcriptionStatus: "not_applicable",
+        },
+      ],
+    });
+
+    expect(prompt).toContain("Current message attachments:");
+    expect(prompt).toContain("- attachmentId: 12345.679-F123");
+    expect(prompt).toContain("name: contract.pdf");
+    expect(prompt).toContain("kind: document");
+    expect(prompt).toContain("preview: 第1条 契約の目的");
+  });
+
   it("includes pending manager clarification context for create continuations", () => {
     const prompt = buildManagerAgentPrompt({
       kind: "message",

@@ -41,6 +41,9 @@
 - Anthropic
   - 推奨: `ANTHROPIC_API_KEY`
   - 代替: `~/.pi/agent/auth.json`
+- Optional: OpenAI
+  - `OPENAI_API_KEY`
+  - 動画 / 音声 attachment の transcript を有効にする場合だけ必要
 
 ## 1. Create a VM
 
@@ -90,6 +93,7 @@ LINEAR_WEBHOOK_SECRET=replace-with-long-random-secret
 LINEAR_WEBHOOK_PORT=8787
 LINEAR_WEBHOOK_PATH=/hooks/linear
 ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-openai-...
 BOT_MODEL=claude-sonnet-4-6
 BOT_THINKING_LEVEL=minimal
 BOT_MAX_OUTPUT_TOKENS=
@@ -124,6 +128,8 @@ NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 - webhook listener は `LINEAR_WEBHOOK_PORT` / `LINEAR_WEBHOOK_PATH` で待ち受けます。Compose では同 port を host に公開します。
 - Linear webhook の対象は `Issue create` のみです。判定基準は「AI にできる action があるか」で、no-op は silent、action/failed のみ control room に通知します。
 - headless 運用では `ANTHROPIC_API_KEY` を推奨します。
+- `OPENAI_API_KEY` を入れると Slack attachment の動画 / 音声を transcript 化できます。未設定でも `pdf / docx / txt / md / csv / json` の読取は有効で、動画 / 音声は metadata-only になります。
+- attachment transcript は初回 read 時の lazy 実行で、v1 では音声ベースのみ、30 分超は metadata-only に倒します。
 - `BOT_THINKING_LEVEL` は `off | minimal | low | medium | high | xhigh` を受け付けます。
 - `BOT_MAX_OUTPUT_TOKENS` を入れると、repo 側の stream wrapper で every LLM call に `maxTokens` を注入します。未指定なら library/provider default のままです。
 - `BOT_RETRY_MAX_RETRIES` は SDK retry settings の `maxRetries` に対応します。
@@ -160,7 +166,7 @@ Compose で起動します。
 docker compose up -d --build
 ```
 
-この image は `linear-cli v2.9.1` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。multiline の description / comment は `--description-file` / `--body-file` を使い、relation add は retry-safe 前提で扱います。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。
+この image は `linear-cli v2.9.1` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。multiline の description / comment は `--description-file` / `--body-file` を使い、relation add は retry-safe 前提で扱います。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。Slack attachment では `pdf / docx / txt / md / csv / json` を eager 抽出し、`OPENAI_API_KEY` があれば動画 / 音声を lazy transcript できます。
 
 ログ確認:
 

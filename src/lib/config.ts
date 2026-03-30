@@ -30,6 +30,7 @@ const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().min(1),
   SLACK_ALLOWED_CHANNEL_IDS: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
   LINEAR_API_KEY: z.string().min(1),
   LINEAR_WORKSPACE: z.string().min(1),
   LINEAR_TEAM_KEY: z.string().min(1),
@@ -84,6 +85,7 @@ export interface AppConfig {
   slackBotToken: string;
   slackAllowedChannelIds: Set<string>;
   anthropicApiKey?: string;
+  openaiApiKey?: string;
   linearApiKey: string;
   linearWorkspace: string;
   linearTeamKey: string;
@@ -136,6 +138,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       parsed.data.SLACK_ALLOWED_CHANNEL_IDS.split(",").map((value) => value.trim()).filter(Boolean),
     ),
     anthropicApiKey: parsed.data.ANTHROPIC_API_KEY,
+    openaiApiKey: parsed.data.OPENAI_API_KEY,
     linearApiKey: parsed.data.LINEAR_API_KEY,
     linearWorkspace: parsed.data.LINEAR_WORKSPACE,
     linearTeamKey: parsed.data.LINEAR_TEAM_KEY,

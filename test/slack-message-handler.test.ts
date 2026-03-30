@@ -73,6 +73,9 @@ function createWebClient() {
       appendStream: vi.fn().mockResolvedValue({}),
       stopStream: vi.fn().mockResolvedValue({}),
     },
+    conversations: {
+      replies: vi.fn().mockResolvedValue({ messages: [] }),
+    },
   } as never;
 }
 
@@ -84,6 +87,7 @@ describe("slack message handler", () => {
     threadWorkspaceMocks.appendThreadLog.mockReset();
     threadWorkspaceMocks.buildThreadPaths.mockClear();
     threadWorkspaceMocks.ensureThreadWorkspace.mockClear();
+    vi.unstubAllGlobals();
   });
 
   afterEach(() => {
@@ -169,5 +173,173 @@ describe("slack message handler", () => {
       text: "設定を更新しました。",
       blocks: expect.any(Array),
     });
+  });
+
+  it("suppresses plain non-bot mentions without invoking manager handling", async () => {
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    let pendingJob: Promise<void> | undefined;
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn() },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "111.666",
+      text: "<@U456> 契約書ですがこちらご確認頂けますと！",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+
+    expect(pendingJob).toBeUndefined();
+    expect(managerMocks.handleManagerMessage).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "Ignored Slack message with non-bot mention and no Cogito mention",
+      expect.objectContaining({
+        channelId: "C123",
+        mentionedUserIds: ["U456"],
+      }),
+    );
+  });
+
+  it("hydrates file_share attachments from Slack thread history before invoking manager", async () => {
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from("契約書の本文"),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let pendingJob: Promise<void> | undefined;
+
+    managerMocks.handleManagerMessage.mockResolvedValue({
+      handled: true,
+      reply: "契約書を確認しました。",
+      diagnostics: {
+        agent: {
+          source: "agent",
+          intent: "query",
+          toolCalls: [],
+          proposalCount: 0,
+          invalidProposalCount: 0,
+          committedCommands: [],
+          commitRejections: [],
+          missingQuerySnapshot: false,
+        },
+      },
+    });
+    webClient.conversations.replies.mockResolvedValue({
+      messages: [
+        {
+          ts: "111.666",
+          files: [
+            {
+              id: "F123",
+              name: "contract.txt",
+              mimetype: "text/plain",
+              url_private_download: "https://files.example/contract.txt",
+            },
+          ],
+        },
+      ],
+    });
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn().mockResolvedValue({ heartbeatEnabled: false, heartbeatIntervalMin: 30, heartbeatActiveLookbackHours: 24 }) },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "111.666",
+      thread_ts: "111.000",
+      subtype: "file_share",
+      text: "契約書ですがこちらご確認頂けますと！",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+    await pendingJob;
+
+    expect(webClient.conversations.replies).toHaveBeenCalledWith({
+      channel: "C123",
+      ts: "111.000",
+      inclusive: true,
+      limit: 200,
+    });
+    expect(fetchMock).toHaveBeenCalledWith("https://files.example/contract.txt", expect.any(Object));
+    expect(managerMocks.handleManagerMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        attachments: [
+          expect.objectContaining({
+            name: "contract.txt",
+            kind: "document",
+            extractionStatus: "completed",
+          }),
+        ],
+      }),
+      expect.anything(),
+      undefined,
+      expect.anything(),
+    );
+    expect(threadWorkspaceMocks.appendThreadLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "user",
+        attachments: [
+          expect.objectContaining({
+            name: "contract.txt",
+            kind: "document",
+            catalogId: expect.any(String),
+          }),
+        ],
+      }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "Hydrated Slack attachment metadata from thread history",
+      expect.objectContaining({
+        channelId: "C123",
+        threadTs: "111.000",
+      }),
+    );
   });
 });
