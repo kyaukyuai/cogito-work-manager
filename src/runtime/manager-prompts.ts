@@ -189,6 +189,10 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "If a thread already maps to an issue, prefer that issue for progress, completion, blocked, inspect, and next-step requests.",
     "For progress, completion, and blocked signals, prefer the most specific child issue over the parent issue.",
     "When a progress, completed, or blocked update includes a new target completion date, include dueDate in propose_update_issue_status.",
+    "When the user asks to lower or raise priority on an existing issue, use propose_update_issue_priority instead of propose_update_issue_status.",
+    "Treat phrases like 後回し, 優先度を下げる, 優先度も下げて, or 優先度低めで as priority changes, not state changes.",
+    "When a deprioritize request does not specify a concrete target level, default to priority=4 (Low).",
+    "Priority changes must not change the issue state. Add a rationale comment only when the user is clearly asking to record that reasoning on the issue.",
     "For larger requests, propose a parent issue and execution-sized child issues.",
     "propose_create_issue_batch supports at most 8 child issues per proposal.",
     "If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn instead of retrying after a schema failure.",
@@ -465,6 +469,25 @@ function buildScopeCorrectionHints(text: string | undefined): string[] {
   ];
 }
 
+function buildPriorityUpdateHints(text: string | undefined): string[] {
+  const normalized = text?.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const hasPrioritySignal = /後回し|優先度.*(?:下げ|低め|上げ)|priority/i.test(normalized);
+  if (!hasPrioritySignal) {
+    return [];
+  }
+
+  return [
+    "- The latest message is asking for a priority change, not a state change.",
+    "- Use propose_update_issue_priority and do not route this through propose_update_issue_status.",
+    "- If the request only says 後回し or 優先度を下げる without a concrete target level, default to priority=4 (Low).",
+    "- Priority-only changes must not change the issue state.",
+  ];
+}
+
 function buildCapabilityQueryHints(text: string | undefined): string[] {
   const capabilityQuery = text ? detectSlackCapabilityQuery(text) : undefined;
   if (capabilityQuery?.type !== "slack-outbound-mention") {
@@ -492,6 +515,7 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const capabilityQueryHints = buildCapabilityQueryHints(input.text);
   const slackPostRequestHints = buildSlackPostRequestHints(input.text);
   const scopeCorrectionHints = buildScopeCorrectionHints(input.text);
+  const priorityUpdateHints = buildPriorityUpdateHints(input.text);
   const workspaceConfigUpdateHints = buildWorkspaceConfigUpdateHints(
     detectWorkspaceConfigUpdateTarget(input.text),
   );
@@ -638,6 +662,13 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
           "",
           "Scope correction hints:",
           ...scopeCorrectionHints,
+        ]
+      : []),
+    ...(priorityUpdateHints.length > 0
+      ? [
+          "",
+          "Priority update hints:",
+          ...priorityUpdateHints,
         ]
       : []),
     ...(workspaceConfigUpdateHints.length > 0

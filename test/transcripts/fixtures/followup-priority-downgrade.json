@@ -1,0 +1,53 @@
+{
+  "name": "followup-priority-downgrade",
+  "ownerMapPatch": {
+    "entries": [
+      {
+        "id": "kyaukyuai",
+        "domains": ["default"],
+        "keywords": [],
+        "linearAssignee": "y.kakui",
+        "slackUserId": "U1",
+        "primary": true
+      }
+    ]
+  },
+  "turns": [
+    {
+      "id": "followup-priority-note",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-followup-priority-downgrade-transcript",
+      "messageTs": "msg-followup-priority-note-1",
+      "userId": "U1",
+      "text": "AIC-87 は後回しということ",
+      "now": "2026-03-30T07:18:52.000Z",
+      "beforeScenario": "followup-priority-initial-note",
+      "expect": {
+        "handled": true,
+        "replyIncludes": [
+          "AIC-87 にコメントを追加しました。"
+        ]
+      }
+    },
+    {
+      "id": "followup-priority-downgrade",
+      "channelId": "C0ALAMDRB9V",
+      "rootThreadTs": "thread-followup-priority-downgrade-transcript",
+      "messageTs": "msg-followup-priority-downgrade-2",
+      "userId": "U1",
+      "text": "後回しなので優先度も下げておいて",
+      "now": "2026-03-30T07:22:55.000Z",
+      "beforeScenario": "followup-priority-downgrade",
+      "expect": {
+        "handled": true,
+        "replyIncludes": [
+          "AIC-87 の優先度を Low に下げました。"
+        ],
+        "replyExcludes": [
+          "issue ID を添えてください",
+          "更新対象の issue をこの thread から特定できませんでした"
+        ]
+      }
+    }
+  ]
+}

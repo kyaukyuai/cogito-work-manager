@@ -1355,6 +1355,231 @@ describe("handleManagerMessage update flows", () => {
     );
   });
 
+  it("uses the recent single-thread issue as the target for follow-up priority downgrades", async () => {
+    piSessionMocks.runManagerAgentTurn
+      .mockResolvedValueOnce({
+        reply: "AIC-87 にコメントを追加しました。",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "update_progress",
+                confidence: 0.86,
+                summary: "AIC-87 に後回しメモを残す",
+              },
+            },
+          },
+          {
+            toolName: "propose_add_comment",
+            details: {
+              proposal: {
+                commandType: "add_comment",
+                issueId: "AIC-87",
+                body: "## Scope note\n- 後回しで進める",
+                reasonSummary: "AIC-87 を後回しとして記録する",
+              },
+            },
+          },
+        ],
+        proposals: [
+          {
+            commandType: "add_comment",
+            issueId: "AIC-87",
+            body: "## Scope note\n- 後回しで進める",
+            reasonSummary: "AIC-87 を後回しとして記録する",
+          },
+        ],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "update_progress",
+          confidence: 0.86,
+          summary: "AIC-87 に後回しメモを残す",
+        },
+      })
+      .mockResolvedValueOnce({
+        reply: "AIC-87 の優先度を Low に下げます。",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "update_progress",
+                confidence: 0.9,
+                summary: "AIC-87 の優先度を Low に下げる",
+              },
+            },
+          },
+          {
+            toolName: "propose_update_issue_priority",
+            details: {
+              proposal: {
+                commandType: "update_issue_priority",
+                issueId: "AIC-87",
+                priority: 4,
+                reasonSummary: "後回しなので Low に下げる",
+              },
+            },
+          },
+        ],
+        proposals: [
+          {
+            commandType: "update_issue_priority",
+            issueId: "AIC-87",
+            priority: 4,
+            reasonSummary: "後回しなので Low に下げる",
+          },
+        ],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "update_progress",
+          confidence: 0.9,
+          summary: "AIC-87 の優先度を Low に下げる",
+        },
+      });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-87",
+      identifier: "AIC-87",
+      title: "契約フロー確認",
+      url: "https://linear.app/kyaukyuai/issue/AIC-87",
+      priority: 2,
+      priorityLabel: "High",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-87",
+      identifier: "AIC-87",
+      title: "契約フロー確認",
+      url: "https://linear.app/kyaukyuai/issue/AIC-87",
+      priority: 4,
+      priorityLabel: "Low",
+      state: { id: "state-backlog", name: "Backlog", type: "unstarted" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const firstResult = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-followup-priority-downgrade",
+        messageTs: "msg-followup-priority-downgrade-1",
+        userId: "U1",
+        text: "AIC-87 は後回しということ",
+      },
+      new Date("2026-03-30T07:18:52.000Z"),
+    );
+    slackContextMocks.getSlackThreadContext.mockResolvedValueOnce({
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-followup-priority-downgrade",
+      entries: [
+        {
+          ts: "msg-followup-priority-downgrade-1",
+          text: "AIC-87 は後回しということ",
+          userId: "U1",
+        },
+        {
+          ts: "reply-followup-priority-downgrade-1",
+          text: "AIC-87 にコメントを追加しました。",
+          userId: "BOT",
+        },
+      ],
+    });
+
+    const secondResult = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-followup-priority-downgrade",
+        messageTs: "msg-followup-priority-downgrade-2",
+        userId: "U1",
+        text: "後回しなので優先度も下げておいて",
+      },
+      new Date("2026-03-30T07:22:55.000Z"),
+    );
+
+    expect(firstResult.handled).toBe(true);
+    expect(secondResult.handled).toBe(true);
+    expect(secondResult.reply).toContain("AIC-87 の優先度を Low に下げました。");
+    expect(secondResult.reply).not.toContain("issue ID");
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-87",
+        priority: 4,
+      }),
+      expect.any(Object),
+    );
+
+    const lastTurn = await loadLastManagerAgentTurn(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-followup-priority-downgrade"),
+    );
+    expect(lastTurn).toMatchObject({
+      replyPath: "agent",
+      committedCommands: [
+        expect.objectContaining({
+          commandType: "update_issue_priority",
+          issueIds: ["AIC-87"],
+        }),
+      ],
+    });
+  });
+
+  it("rewrites unresolved priority target errors into a short priority clarify reply", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-87 の優先度を Low に下げます。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.84,
+              summary: "AIC-87 の優先度を Low に下げる",
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-87",
+          priority: 4,
+          reasonSummary: "後回しなので Low に下げる",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.84,
+        summary: "AIC-87 の優先度を Low に下げる",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-priority-clarify",
+        messageTs: "msg-priority-clarify-1",
+        userId: "U1",
+        text: "後回しなので優先度も下げておいて",
+      },
+      new Date("2026-03-30T07:22:55.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-87 の優先度はまだ変えていません。");
+    expect(result.reply).toContain("AIC-123 の形");
+    expect(result.reply).not.toContain("更新対象の issue をこの thread から特定できませんでした");
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+  });
+
   it("keeps the agent reply path when one mixed-update proposal succeeds and another fails", async () => {
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
       reply: "AIC-67 を Canceled にします。AIC-64 は田平さんの確認が取れたらクローズする旨をコメントに残しておきます。",
