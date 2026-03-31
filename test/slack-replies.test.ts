@@ -106,15 +106,12 @@ describe("slack reply helpers", () => {
     const text = await controller.finalizeReply("こんにちは");
 
     expect(text).toBe("こんにちは");
-    expect(postMessage).toHaveBeenCalledWith({
+    expect(postMessage).not.toHaveBeenCalledWith({
       channel: "C123",
       thread_ts: "111.222",
       text: "考え中...",
     });
-    expect(deleteMessage).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "placeholder.123",
-    });
+    expect(deleteMessage).not.toHaveBeenCalled();
     expect(startStream).toHaveBeenCalledWith({
       channel: "C123",
       thread_ts: "111.222",
@@ -160,10 +157,7 @@ describe("slack reply helpers", () => {
     const text = await controller.finalizeReply("こんにちは。よろしくお願いします。");
 
     expect(text).toBe("こんにちは。よろしくお願いします。");
-    expect(deleteMessage).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "placeholder.456",
-    });
+    expect(deleteMessage).not.toHaveBeenCalled();
     expect(startStream).toHaveBeenCalledTimes(1);
     expect(appendStream).toHaveBeenCalledWith({
       channel: "C123",
@@ -178,7 +172,8 @@ describe("slack reply helpers", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("posts the processing notice immediately when the controller is created", () => {
+  it("posts the processing notice only after the configured delay", async () => {
+    vi.useFakeTimers();
     const postMessage = vi.fn().mockResolvedValue({ ts: "123.456" });
     const update = vi.fn();
     const webClient = {
@@ -193,6 +188,12 @@ describe("slack reply helpers", () => {
       linearWorkspace: "kyaukyuai",
     });
 
+    expect(postMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(749);
+    expect(postMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(postMessage).toHaveBeenCalledWith({
       channel: "C123",
       thread_ts: "111.222",
@@ -200,7 +201,37 @@ describe("slack reply helpers", () => {
     });
   });
 
+  it("posts the final reply directly when finalized before the processing notice delay elapses", async () => {
+    vi.useFakeTimers();
+    const postMessage = vi.fn().mockResolvedValue({ ts: "123.456" });
+    const update = vi.fn();
+    const webClient = {
+      chat: { postMessage, update, delete: vi.fn(), startStream: vi.fn(), appendStream: vi.fn(), stopStream: vi.fn() },
+    } as never;
+
+    const controller = createSlackReplyStreamController(webClient, {
+      channel: "C123",
+      threadTs: "111.222",
+      recipientUserId: "U123",
+      recipientTeamId: "T123",
+      linearWorkspace: "kyaukyuai",
+    });
+
+    const text = await controller.finalizeReply("了解しました。");
+
+    expect(text).toBe("了解しました。");
+    expect(postMessage).toHaveBeenCalledTimes(1);
+    expect(postMessage).toHaveBeenCalledWith({
+      channel: "C123",
+      thread_ts: "111.222",
+      text: "了解しました。",
+      blocks: expect.any(Array),
+    });
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("falls back to placeholder plus update when placeholder delete fails", async () => {
+    vi.useFakeTimers();
     const postMessage = vi.fn().mockResolvedValue({ ts: "123.456" });
     const update = vi.fn().mockResolvedValue({});
     const deleteMessage = vi.fn().mockRejectedValue(new Error("cant_delete"));
@@ -219,6 +250,7 @@ describe("slack reply helpers", () => {
       linearWorkspace: "kyaukyuai",
     });
 
+    await vi.advanceTimersByTimeAsync(750);
     await controller.enableStreaming();
     controller.pushTextDelta("こんにちは");
 
@@ -241,6 +273,7 @@ describe("slack reply helpers", () => {
   });
 
   it("reposts the placeholder when stream setup fails after delete", async () => {
+    vi.useFakeTimers();
     const postMessage = vi.fn()
       .mockResolvedValueOnce({ ts: "123.456" })
       .mockResolvedValueOnce({ ts: "123.789" });
@@ -261,6 +294,7 @@ describe("slack reply helpers", () => {
       linearWorkspace: "kyaukyuai",
     });
 
+    await vi.advanceTimersByTimeAsync(750);
     await controller.enableStreaming();
     controller.pushTextDelta("こんにちは");
 

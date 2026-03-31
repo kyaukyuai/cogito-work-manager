@@ -215,12 +215,13 @@ describe("slack message handler", () => {
       intervalMin: 45,
       activeLookbackHours: 12,
     });
-    expect(webClient.chat.update).toHaveBeenCalledWith({
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith({
       channel: "C123",
-      ts: "placeholder.123",
+      thread_ts: "111.666",
       text: "設定を更新しました。",
       blocks: expect.any(Array),
     });
+    expect(webClient.chat.update).not.toHaveBeenCalled();
   });
 
   it("suppresses plain non-bot mentions publicly while persisting an external coordination hint", async () => {
@@ -397,6 +398,9 @@ describe("slack message handler", () => {
         targetSlackUserId: "U456",
       }),
     );
+    expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(webClient.chat.update).not.toHaveBeenCalled();
+    expect(webClient.chat.delete).not.toHaveBeenCalled();
     expect(logger.info).toHaveBeenCalledWith(
       "Ignored Slack message clearly directed at another person with no Cogito mention",
       expect.objectContaining({

@@ -101,44 +101,6 @@ export function createSlackMessageHandler(args: {
     const message = normalizeSlackMessage(rawEvent);
     const threadKey = `${message.channelId}:${message.rootThreadTs}`;
     let observedIntent: ManagerIntentReport["intent"] | undefined;
-    let streamActivationPromise: Promise<boolean> | undefined;
-    const streamController = suppressedExternalCoordinationMessage
-      ? {
-          enableStreaming: async () => false,
-          disableStreaming: () => undefined,
-          pushTextDelta: (_delta: string) => undefined,
-          finalizeReply: async (reply: string) => reply,
-        }
-      : createSlackReplyStreamController(args.webClient, {
-          channel: message.channelId,
-          threadTs: message.rootThreadTs,
-          recipientUserId: message.userId,
-          recipientTeamId: args.slackTeamId,
-          linearWorkspace: args.config.linearWorkspace,
-          onEvent: (streamEvent) => {
-            const logPayload = {
-              channelId: message.channelId,
-              threadTs: message.rootThreadTs,
-              intent: observedIntent,
-              reason: streamEvent.reason,
-              error: streamEvent.error,
-              streamTs: streamEvent.ts,
-            };
-            if (streamEvent.type === "stream_failed") {
-              args.logger.warn("Slack reply stream failed", logPayload);
-              return;
-            }
-            if (streamEvent.type === "stream_fallback") {
-              args.logger.info("Slack reply stream fell back to non-streaming reply", logPayload);
-              return;
-            }
-            if (streamEvent.type === "stream_started") {
-              args.logger.info("Slack reply stream started", logPayload);
-              return;
-            }
-            args.logger.info("Slack reply stream stopped", logPayload);
-          },
-        });
 
     args.messageQueue.enqueue(threadKey, async () => {
       const paths = buildThreadPaths(args.config.workspaceDir, message.channelId, message.rootThreadTs);
@@ -354,6 +316,38 @@ export function createSlackMessageHandler(args: {
         }
         return;
       }
+
+      let streamActivationPromise: Promise<boolean> | undefined;
+      const streamController = createSlackReplyStreamController(args.webClient, {
+        channel: message.channelId,
+        threadTs: message.rootThreadTs,
+        recipientUserId: message.userId,
+        recipientTeamId: args.slackTeamId,
+        linearWorkspace: args.config.linearWorkspace,
+        onEvent: (streamEvent) => {
+          const logPayload = {
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+            intent: observedIntent,
+            reason: streamEvent.reason,
+            error: streamEvent.error,
+            streamTs: streamEvent.ts,
+          };
+          if (streamEvent.type === "stream_failed") {
+            args.logger.warn("Slack reply stream failed", logPayload);
+            return;
+          }
+          if (streamEvent.type === "stream_fallback") {
+            args.logger.info("Slack reply stream fell back to non-streaming reply", logPayload);
+            return;
+          }
+          if (streamEvent.type === "stream_started") {
+            args.logger.info("Slack reply stream started", logPayload);
+            return;
+          }
+          args.logger.info("Slack reply stream stopped", logPayload);
+        },
+      });
 
       try {
         const managerResult = await handleManagerMessage(
