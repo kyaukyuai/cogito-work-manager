@@ -193,15 +193,8 @@ describe("app runtime Slack streaming", () => {
       recipient_team_id: "T123",
       markdown_text: "こんにちは",
     });
-    expect(webClient.chat.postMessage).toHaveBeenCalledWith({
-      channel: "C123",
-      thread_ts: "111.222",
-      text: "考え中...",
-    });
-    expect(webClient.chat.delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "placeholder.123",
-    });
+    expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(webClient.chat.delete).not.toHaveBeenCalled();
     expect(webClient.chat.stopStream).toHaveBeenCalledWith({
       channel: "C123",
       ts: "stream.123",
@@ -381,15 +374,8 @@ describe("app runtime Slack streaming", () => {
       recipient_team_id: "T123",
       markdown_text: "途中の返信",
     }));
-    expect(webClient.chat.postMessage).toHaveBeenCalledWith({
-      channel: "C123",
-      thread_ts: "111.555",
-      text: "考え中...",
-    });
-    expect(webClient.chat.delete).toHaveBeenCalledWith({
-      channel: "C123",
-      ts: "placeholder.123",
-    });
+    expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(webClient.chat.delete).not.toHaveBeenCalled();
     expect(webClient.chat.update).toHaveBeenCalledWith({
       channel: "C123",
       ts: "stream.123",
