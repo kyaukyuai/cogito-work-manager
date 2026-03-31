@@ -748,6 +748,8 @@ class LinearCommandError extends Error {
 
 class LinearCommandTimeoutError extends LinearCommandError {
   readonly timeoutMs: number;
+  readonly appliedState?: string;
+  readonly callerGuidance?: Record<string, unknown>;
 
   constructor(
     message: string,
@@ -758,11 +760,15 @@ class LinearCommandTimeoutError extends LinearCommandError {
     options?: {
       errorType?: string;
       errorDetails?: Record<string, unknown>;
+      appliedState?: string;
+      callerGuidance?: Record<string, unknown>;
     },
   ) {
     super(message, stdout, stderr, combined, options);
     this.name = "LinearCommandTimeoutError";
     this.timeoutMs = timeoutMs;
+    this.appliedState = options?.appliedState;
+    this.callerGuidance = options?.callerGuidance;
   }
 }
 
@@ -808,6 +814,14 @@ function resolveCliTimeoutMs(details: Record<string, unknown> | undefined): numb
     : undefined;
 }
 
+function resolveCliAppliedState(details: Record<string, unknown> | undefined): string | undefined {
+  return toStringOrUndefined(details?.appliedState) ?? toStringOrUndefined(details?.outcome);
+}
+
+function resolveCliCallerGuidance(details: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  return isRecord(details?.callerGuidance) ? details.callerGuidance : undefined;
+}
+
 function buildLinearCommandErrorFromCliEnvelope(args: string[], stdout: string, stderr: string, combined: string): Error {
   const raw = stdout || stderr || combined;
   const envelope = raw ? parseCliJsonErrorEnvelope(raw) : undefined;
@@ -829,6 +843,8 @@ function buildLinearCommandErrorFromCliEnvelope(args: string[], stdout: string, 
       {
         errorType,
         errorDetails: details,
+        appliedState: resolveCliAppliedState(details),
+        callerGuidance: resolveCliCallerGuidance(details),
       },
     );
   }

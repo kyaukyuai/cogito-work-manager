@@ -13,7 +13,7 @@
   - Linear API
   - Optional: Notion API
   - Optional: Linear webhook registration
-- Bundled CLI: `linear-cli v2.12.1`
+- Bundled CLI: `linear-cli v2.12.3`
 
 `exe.dev` の HTTP proxy は Slack Socket Mode だけなら不要です。Linear webhook を有効にする場合だけ、`LINEAR_WEBHOOK_PUBLIC_URL` が到達するように VM 上の `LINEAR_WEBHOOK_PORT` へ公開経路を用意してください。
 
@@ -168,7 +168,7 @@ Compose で起動します。
 docker compose up -d --build
 ```
 
-この image は `linear-cli v2.12.1` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。起動時と `manager:diagnostics -- boundaries` では `linear capabilities --json` で runtime surface を確認します。`issue list --json` の additive な `stateName` も受け付けつつ、既存の nested `state.name` と互換のまま扱います。multiline の description / comment は `--description-file` / `--body-file` を使い、relation add は retry-safe 前提で扱います。high-value issue write では `timeout_error` を優先できるよう `LINEAR_WRITE_TIMEOUT_MS` を使えます。未設定時は repo 側で `25000ms` を渡します。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。Slack attachment では `pdf / docx / txt / md / csv / json` を eager 抽出し、`OPENAI_API_KEY` があれば動画 / 音声を lazy transcript できます。
+この image は `linear-cli v2.12.3` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。起動時と `manager:diagnostics -- boundaries` では `linear capabilities --json` で runtime surface を確認します。`issue list --json` の additive な `stateName` も受け付けつつ、既存の nested `state.name` と互換のまま扱います。multiline の description / comment は `--description-file` / `--body-file` を使い、relation add は retry-safe 前提で扱います。high-value issue write では `timeout_error` を優先できるよう `LINEAR_WRITE_TIMEOUT_MS` を使えます。未設定時は repo 側で `25000ms` を渡します。`timeout_error` に `appliedState` や `callerGuidance` が含まれる場合も破棄せず保持します。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。Slack attachment では `pdf / docx / txt / md / csv / json` を eager 抽出し、`OPENAI_API_KEY` があれば動画 / 音声を lazy transcript できます。
 
 ログ確認:
 
