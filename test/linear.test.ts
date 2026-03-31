@@ -425,6 +425,25 @@ describe("linear command builders", () => {
     expect(issue?.comments?.[0]?.body).toContain("API 実装");
   });
 
+  it("normalizes additive issue list stateName while preserving nested compatibility", () => {
+    const issue = normalizeLinearIssuePayload({
+      id: "issue-124",
+      identifier: "TEST-124",
+      title: "Backfill additive state name",
+      stateName: "Done",
+      state: {
+        id: "state-1",
+        type: "completed",
+      },
+    });
+
+    expect(issue?.state).toEqual({
+      id: "state-1",
+      name: "Done",
+      type: "completed",
+    });
+  });
+
   it("normalizes relation-list and team-members payloads", () => {
     const relationPayload = normalizeRelationListPayload({
       outgoing: [
