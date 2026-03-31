@@ -14,6 +14,11 @@ const threadWorkspaceMocks = vi.hoisted(() => ({
   ensureThreadWorkspace: vi.fn(async () => undefined),
 }));
 
+const coordinationHintMocks = vi.hoisted(() => ({
+  resolveExternalCoordinationHint: vi.fn(),
+  saveExternalCoordinationHint: vi.fn(),
+}));
+
 vi.mock("../src/lib/manager.js", () => ({
   handleManagerMessage: managerMocks.handleManagerMessage,
 }));
@@ -22,6 +27,11 @@ vi.mock("../src/lib/thread-workspace.js", () => ({
   appendThreadLog: threadWorkspaceMocks.appendThreadLog,
   buildThreadPaths: threadWorkspaceMocks.buildThreadPaths,
   ensureThreadWorkspace: threadWorkspaceMocks.ensureThreadWorkspace,
+}));
+
+vi.mock("../src/lib/external-coordination-hint.js", () => ({
+  resolveExternalCoordinationHint: coordinationHintMocks.resolveExternalCoordinationHint,
+  saveExternalCoordinationHint: coordinationHintMocks.saveExternalCoordinationHint,
 }));
 
 function buildConfig() {
@@ -87,6 +97,10 @@ describe("slack message handler", () => {
     threadWorkspaceMocks.appendThreadLog.mockReset();
     threadWorkspaceMocks.buildThreadPaths.mockClear();
     threadWorkspaceMocks.ensureThreadWorkspace.mockClear();
+    coordinationHintMocks.resolveExternalCoordinationHint.mockReset().mockResolvedValue({
+      diagnostics: [],
+    });
+    coordinationHintMocks.saveExternalCoordinationHint.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -175,11 +189,25 @@ describe("slack message handler", () => {
     });
   });
 
-  it("suppresses plain non-bot mentions without invoking manager handling", async () => {
+  it("suppresses plain non-bot mentions publicly while persisting an external coordination hint", async () => {
     const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
     const webClient = createWebClient();
     const logger = createLogger();
     let pendingJob: Promise<void> | undefined;
+    coordinationHintMocks.resolveExternalCoordinationHint.mockResolvedValueOnce({
+      hint: {
+        issueId: "AIC-55",
+        issueTitle: "契約締結対応",
+        targetSlackUserId: "U456",
+        sourceMessageTs: "111.666",
+        sourceUserId: "U123",
+        requestText: "契約書ですがこちらご確認頂けますと！",
+        attachmentNames: ["contract.docx"],
+        resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+        recordedAt: "2026-03-31T01:36:00.000Z",
+      },
+      diagnostics: [],
+    });
 
     const handler = createSlackMessageHandler({
       config: buildConfig(),
@@ -210,14 +238,90 @@ describe("slack message handler", () => {
     }, "UBOT");
 
     await vi.runAllTimersAsync();
+    await pendingJob;
 
-    expect(pendingJob).toBeUndefined();
     expect(managerMocks.handleManagerMessage).not.toHaveBeenCalled();
+    expect(threadWorkspaceMocks.ensureThreadWorkspace).toHaveBeenCalled();
+    expect(threadWorkspaceMocks.appendThreadLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "user",
+        text: "<@U456> 契約書ですがこちらご確認頂けますと！",
+      }),
+    );
+    expect(coordinationHintMocks.resolveExternalCoordinationHint).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestText: "<@U456> 契約書ですがこちらご確認頂けますと！",
+        targetSlackUserIds: ["U456"],
+      }),
+    );
+    expect(coordinationHintMocks.saveExternalCoordinationHint).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        issueId: "AIC-55",
+        targetSlackUserId: "U456",
+      }),
+    );
     expect(logger.info).toHaveBeenCalledWith(
       "Ignored Slack message with non-bot mention and no Cogito mention",
       expect.objectContaining({
         channelId: "C123",
         mentionedUserIds: ["U456"],
+      }),
+    );
+    expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps ignored coordination posts silent when no exact issue hint is available", async () => {
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    let pendingJob: Promise<void> | undefined;
+    coordinationHintMocks.resolveExternalCoordinationHint.mockResolvedValueOnce({
+      diagnostics: [
+        { level: "info", message: "External coordination hint not saved (fuzzy/clarify)" },
+      ],
+    });
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn() },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "111.777",
+      text: "<@U456> こちら確認お願いします",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+    await pendingJob;
+
+    expect(managerMocks.handleManagerMessage).not.toHaveBeenCalled();
+    expect(coordinationHintMocks.saveExternalCoordinationHint).not.toHaveBeenCalled();
+    expect(logger.info).toHaveBeenCalledWith(
+      "External coordination hint not saved (fuzzy/clarify)",
+      expect.objectContaining({
+        channelId: "C123",
+        threadTs: "111.777",
+        messageTs: "111.777",
       }),
     );
   });

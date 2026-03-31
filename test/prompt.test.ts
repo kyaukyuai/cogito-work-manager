@@ -444,6 +444,37 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("preview: 第1条 契約の目的");
   });
 
+  it("includes external coordination hint context and guidance in the manager prompt", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U-TAHIRA",
+      text: "ありがとうございます！法務に回します！",
+      currentDate: "2026-03-31",
+      externalCoordinationHint: {
+        issueId: "AIC-55",
+        issueTitle: "契約締結対応",
+        targetSlackUserId: "U-TAHIRA",
+        sourceMessageTs: "12345.600",
+        sourceUserId: "U-KYAU",
+        requestText: "契約書ですがこちらご確認頂けますと！",
+        attachmentNames: ["contract.docx"],
+        resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+        recordedAt: "2026-03-31T01:36:00.000Z",
+      },
+    });
+
+    expect(prompt).toContain("External coordination hint:");
+    expect(prompt).toContain("- issueId: AIC-55");
+    expect(prompt).toContain("- targetSlackUserId: U-TAHIRA");
+    expect(prompt).toContain("- requestText: 契約書ですがこちらご確認頂けますと！");
+    expect(prompt).toContain("External coordination hints:");
+    expect(prompt).toContain("Prefer an issue progress update or issue comment over generic conversation");
+    expect(prompt).toContain("propose_update_issue_status with signal=progress");
+  });
+
   it("includes pending manager clarification context for create continuations", () => {
     const prompt = buildManagerAgentPrompt({
       kind: "message",
@@ -1055,6 +1086,7 @@ describe("prompt helpers", () => {
         childIssueIds: [],
         linkedIssueIds: [],
         latestFocusIssueId: "AIC-930",
+        externalCoordinationHintIssueId: "AIC-55",
       },
       lastQueryContext: {
         kind: "what-should-i-do",
@@ -1081,7 +1113,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Reply with a single JSON object only.");
     expect(prompt).toContain('"queryKind":"list-active"|"list-today"|"what-should-i-do"|"inspect-work"|"search-existing"|"recommend-next-step"|"reference-material"');
     expect(prompt).toContain("Questions like y.kakui にメンションできる？ ask about the manager's own outbound Slack capability.");
+    expect(prompt).toContain("If threadContext.externalCoordinationHintIssueId is set");
     expect(prompt).toContain("Last query continuation context:");
+    expect(prompt).toContain("- externalCoordinationHintIssueId: AIC-55");
     expect(prompt).toContain("- kind: what-should-i-do");
     expect(prompt).toContain('Example: "他にはどのようなタスクがある？" after a task-list reply in the same thread');
 

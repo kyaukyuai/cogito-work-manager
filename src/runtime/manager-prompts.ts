@@ -1,4 +1,5 @@
 import type { AppConfig } from "../lib/config.js";
+import type { ExternalCoordinationHint } from "../lib/external-coordination-hint.js";
 import type { PendingManagerClarification } from "../lib/pending-manager-clarification.js";
 import type { PendingManagerConfirmation } from "../lib/pending-manager-confirmation.js";
 import type { ThreadQueryContinuation } from "../lib/query-continuation.js";
@@ -37,6 +38,7 @@ export interface ManagerAgentInput {
   currentDateTimeJst?: string;
   lastQueryContext?: ThreadQueryContinuation;
   currentThreadNotionPageTarget?: ThreadNotionPageTarget;
+  externalCoordinationHint?: ExternalCoordinationHint;
   combinedRequestText?: string;
   pendingClarification?: PendingManagerClarification;
   pendingConfirmation?: PendingManagerConfirmation;
@@ -208,6 +210,12 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "If the latest message includes attachments and the user is asking to review a contract, document, PDF, video, or other reference material, inspect the attachment tools before answering.",
     "Use slack_list_thread_attachments to inspect the current thread attachment inventory and slack_read_thread_attachment to read extracted text or transcript windows.",
     "Do not treat a plain Slack thread message addressed to another person as intent=post_slack_message unless the user explicitly asks you to send or post a message on their behalf.",
+    "When External coordination hint context is present for the current thread, treat short replies from that hinted target user such as ありがとうございます！法務に回します！, 確認します, 送ります, 共有しました, or 回します as coordination progress for the hinted issue, not as generic conversation or outbound Slack posting.",
+    "For a likely external coordination follow-up, inspect the hinted issue first with linear_get_issue_facts.",
+    "If the hinted issue is still Backlog and the reply shows real coordination progress or handoff, prefer propose_update_issue_status with signal=progress, state=In Progress, and a source comment.",
+    "If the hinted issue is already In Progress or another active open state, prefer propose_update_issue_status with signal=progress and a source comment without changing the state.",
+    "In a coordination progress comment, record sourceMessageTs, coordinationRequestTs, requestText, attachmentNames, and replyText in concise Japanese.",
+    "If the latest message explicitly names another issue ID, follow that explicit target instead of the external coordination hint.",
     "Before proposing a Slack mention post, call workspace_get_owner_map and resolve exactly one target by exact-match on entry.id, linearAssignee, or slackUserId after trim, lowercase, and whitespace normalization.",
     "If owner-map resolution returns zero or multiple matches, ask one short clarification question instead of proposing a mutation.",
     "For explicit Slack mention posts, default destination=current-thread unless the user explicitly says control room. control-room-root posts go to the control room root message, not a new thread.",
@@ -488,6 +496,32 @@ function buildPriorityUpdateHints(text: string | undefined): string[] {
   ];
 }
 
+function buildExternalCoordinationHints(input: ManagerAgentInput): string[] {
+  const hint = input.externalCoordinationHint;
+  if (!hint) {
+    return [];
+  }
+
+  const latestMessageLooksLikeFollowup = hint.targetSlackUserId === input.userId
+    && /(?:ありがとう|ありがとうございます|確認します|確認しました|送ります|送りました|共有します|共有しました|回します|回しました|法務に回します|進めます|対応します|承知しました)/i.test(input.text)
+    && !detectSlackOutboundPostRequest(input.text);
+
+  return [
+    `- This thread has an external coordination hint for ${hint.issueId}${hint.issueTitle ? ` (${hint.issueTitle})` : ""}.`,
+    `- The original coordination request targeted Slack user ${hint.targetSlackUserId} at sourceMessageTs=${hint.sourceMessageTs}.`,
+    `- coordinationRequestText: ${hint.requestText}`,
+    `- attachmentNames: ${hint.attachmentNames.join(", ") || "(none)"}`,
+    latestMessageLooksLikeFollowup
+      ? "- The latest message looks like a follow-up reply from that target user. Prefer an issue progress update or issue comment over generic conversation."
+      : "- Use this hint only as thread-local issue context. If the latest message clearly changes topic or names another issue, follow the new explicit target.",
+    "- Inspect the hinted issue with linear_get_issue_facts before proposing a mutation.",
+    "- If the hinted issue is Backlog and the reply shows coordination progress, prefer propose_update_issue_status with signal=progress and state=In Progress.",
+    "- If the hinted issue is already active, prefer propose_update_issue_status with signal=progress and no state change.",
+    "- In any coordination progress comment, include sourceMessageTs, coordinationRequestTs, requestText, attachmentNames, and replyText in concise Japanese.",
+    "- Do not treat this as post_slack_message unless the user explicitly asks you to send on their behalf.",
+  ];
+}
+
 function buildCapabilityQueryHints(text: string | undefined): string[] {
   const capabilityQuery = text ? detectSlackCapabilityQuery(text) : undefined;
   if (capabilityQuery?.type !== "slack-outbound-mention") {
@@ -516,6 +550,7 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const slackPostRequestHints = buildSlackPostRequestHints(input.text);
   const scopeCorrectionHints = buildScopeCorrectionHints(input.text);
   const priorityUpdateHints = buildPriorityUpdateHints(input.text);
+  const externalCoordinationHints = buildExternalCoordinationHints(input);
   const workspaceConfigUpdateHints = buildWorkspaceConfigUpdateHints(
     detectWorkspaceConfigUpdateTarget(input.text),
   );
@@ -567,6 +602,19 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- title: ${input.currentThreadNotionPageTarget.title ?? "(none)"}`,
         `- url: ${input.currentThreadNotionPageTarget.url ?? "(none)"}`,
         `- recordedAt: ${input.currentThreadNotionPageTarget.recordedAt}`,
+      ]
+    : ["- (none)"];
+  const externalCoordinationHintLines = input.externalCoordinationHint
+    ? [
+        `- issueId: ${input.externalCoordinationHint.issueId}`,
+        `- issueTitle: ${input.externalCoordinationHint.issueTitle ?? "(none)"}`,
+        `- targetSlackUserId: ${input.externalCoordinationHint.targetSlackUserId}`,
+        `- sourceMessageTs: ${input.externalCoordinationHint.sourceMessageTs}`,
+        `- sourceUserId: ${input.externalCoordinationHint.sourceUserId}`,
+        `- requestText: ${input.externalCoordinationHint.requestText}`,
+        `- attachmentNames: ${input.externalCoordinationHint.attachmentNames.join(", ") || "(none)"}`,
+        `- resolutionSummary: ${input.externalCoordinationHint.resolutionSummary}`,
+        `- recordedAt: ${input.externalCoordinationHint.recordedAt}`,
       ]
     : ["- (none)"];
   const attachmentLines = input.attachments && input.attachments.length > 0
@@ -630,6 +678,9 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "Current thread Notion page target:",
     ...currentThreadNotionPageLines,
+    "",
+    "External coordination hint:",
+    ...externalCoordinationHintLines,
     ...workspaceAgentsSection,
     ...workspaceMemorySection,
     ...agendaTemplateSection,
@@ -669,6 +720,13 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
           "",
           "Priority update hints:",
           ...priorityUpdateHints,
+        ]
+      : []),
+    ...(externalCoordinationHints.length > 0
+      ? [
+          "",
+          "External coordination hints:",
+          ...externalCoordinationHints,
         ]
       : []),
     ...(workspaceConfigUpdateHints.length > 0

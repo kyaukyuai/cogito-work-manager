@@ -16,6 +16,7 @@ import { updateFollowupsWithIssueResponse } from "../../../orchestrators/updates
 import { getSlackThreadContext } from "../../slack-context.js";
 import { loadThreadQueryContinuation } from "../../query-continuation.js";
 import { buildThreadPaths } from "../../thread-workspace.js";
+import { loadExternalCoordinationHint } from "../../external-coordination-hint.js";
 import { buildWorkgraphThreadKey } from "../../../state/workgraph/events.js";
 import { getThreadPlanningContext } from "../../../state/workgraph/queries.js";
 import { recordFollowupTransitions, recordIssueSignals } from "../../../state/workgraph/recorder.js";
@@ -51,6 +52,7 @@ interface CommitIssueHints {
   queryShownIssueIds: string[];
   latestFocusIssueId?: string;
   lastResolvedIssueId?: string;
+  externalCoordinationHintIssueId?: string;
 }
 
 async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<CommitIssueHints> {
@@ -69,6 +71,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
       .flatMap((entry) => extractIssueIdentifiers(entry.text ?? "")),
   );
   const lastQueryContext = await loadThreadQueryContinuation(threadPaths).catch(() => undefined);
+  const externalCoordinationHint = await loadExternalCoordinationHint(threadPaths).catch(() => undefined);
   const planningContext = await getThreadPlanningContext(args.repositories.workgraph, threadKey);
   const latestFocusIssueId = planningContext?.thread.latestFocusIssueId;
   const lastResolvedIssueId = planningContext?.latestResolvedIssue?.issueId ?? planningContext?.thread.lastResolvedIssueId;
@@ -84,6 +87,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
     ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
     ...queryShownIssueIds,
+    externalCoordinationHint?.issueId,
     ...(explicitIssueIds.length === 0 && recentIssueIds.length === 1 ? recentIssueIds : []),
   ]);
 
@@ -95,6 +99,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     queryShownIssueIds,
     latestFocusIssueId,
     lastResolvedIssueId,
+    externalCoordinationHintIssueId: externalCoordinationHint?.issueId,
   };
 }
 
@@ -108,7 +113,11 @@ function validateIssueTargetHints(
 
   if (hints.explicitIssueIds.length === 0 && hints.recentIssueIds.length === 1) {
     const recentIssueId = hints.recentIssueIds[0];
-    if (recentIssueId && recentIssueId !== proposalIssueId) {
+    if (
+      recentIssueId
+      && recentIssueId !== proposalIssueId
+      && proposalIssueId !== hints.externalCoordinationHintIssueId
+    ) {
       return `直近の会話では ${recentIssueId} を見ていましたが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
     }
   }
@@ -117,7 +126,11 @@ function validateIssueTargetHints(
     return "更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。";
   }
 
-  if (hints.candidateIssueIds.length === 1 && hints.candidateIssueIds[0] !== proposalIssueId) {
+  if (
+    hints.candidateIssueIds.length === 1
+    && hints.candidateIssueIds[0] !== proposalIssueId
+    && !hints.explicitIssueIds.includes(proposalIssueId)
+  ) {
     return `この thread で確認できる更新対象は ${hints.candidateIssueIds[0]} ですが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
   }
 
@@ -127,6 +140,7 @@ function validateIssueTargetHints(
     && proposalIssueId !== hints.latestFocusIssueId
     && proposalIssueId !== hints.lastResolvedIssueId
     && !hints.queryShownIssueIds.includes(proposalIssueId)
+    && proposalIssueId !== hints.externalCoordinationHintIssueId
   ) {
     return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";
   }
@@ -145,6 +159,16 @@ async function validateUpdateIssuePriorityProposal(
   args: CommitManagerCommandArgs,
   proposal: UpdateIssuePriorityProposal,
 ): Promise<string | undefined> {
+  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
+}
+
+async function validateAddCommentProposal(
+  args: CommitManagerCommandArgs,
+  proposal: AddCommentProposal,
+): Promise<string | undefined> {
+  if (!isMessageContext(args.message)) {
+    return undefined;
+  }
   return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
 }
 
@@ -732,6 +756,13 @@ export async function commitAddCommentProposal(
   args: CommitManagerCommandArgs,
   proposal: AddCommentProposal,
 ): Promise<ManagerCommandHandlerResult> {
+  const rejectionReason = await validateAddCommentProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
   try {
     await addLinearComment(proposal.issueId, proposal.body, args.env);
   } catch (error) {
