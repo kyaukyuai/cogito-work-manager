@@ -40,6 +40,11 @@ import {
   type DuplicateRecallResult,
 } from "../planners/duplicate-recall/index.js";
 import {
+  runOtherDirectedMessageTurnWithExecutor,
+  type OtherDirectedMessageInput,
+  type OtherDirectedMessageResult,
+} from "../planners/other-directed-message/index.js";
+import {
   runPersonalizationExtractionTurnWithExecutor,
   type PersonalizationExtractionInput,
   type PersonalizationExtractionResult,
@@ -145,6 +150,14 @@ export {
   type PersonalizationExtractionResult,
   type PersonalizationObservation,
 } from "../planners/personalization-extraction/index.js";
+
+export {
+  buildOtherDirectedMessagePrompt,
+  parseOtherDirectedMessageReply,
+  type OtherDirectedMessageInput,
+  type OtherDirectedMessageOwnerCandidate,
+  type OtherDirectedMessageResult,
+} from "../planners/other-directed-message/index.js";
 
 interface SharedRuntime {
   agentDir: string;
@@ -519,6 +532,19 @@ export async function runDuplicateRecallTurn(
     paths,
     input,
     runDuplicateRecallTurnWithExecutor,
+  );
+}
+
+export async function runOtherDirectedMessageTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: OtherDirectedMessageInput,
+): Promise<OtherDirectedMessageResult> {
+  return runWorkspaceCustomizedPlannerTurn(
+    config,
+    paths,
+    input,
+    runOtherDirectedMessageTurnWithExecutor,
   );
 }
 
