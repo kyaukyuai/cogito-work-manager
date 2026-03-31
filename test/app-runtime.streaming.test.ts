@@ -22,8 +22,20 @@ const attachmentGatewayMocks = vi.hoisted(() => ({
   }),
 }));
 
+const plannerMocks = vi.hoisted(() => ({
+  runOtherDirectedMessageTurn: vi.fn().mockResolvedValue({
+    classification: "to_cogito",
+    confidence: 0.95,
+    reasoningSummary: "This is a normal assistant-directed message.",
+  }),
+}));
+
 vi.mock("../src/lib/manager.js", () => ({
   handleManagerMessage: managerMocks.handleManagerMessage,
+}));
+
+vi.mock("../src/lib/pi-session.js", () => ({
+  runOtherDirectedMessageTurn: plannerMocks.runOtherDirectedMessageTurn,
 }));
 
 vi.mock("../src/lib/thread-workspace.js", () => ({
@@ -121,6 +133,12 @@ describe("app runtime Slack streaming", () => {
     vi.useFakeTimers();
     vi.resetModules();
     managerMocks.handleManagerMessage.mockReset();
+    plannerMocks.runOtherDirectedMessageTurn.mockReset();
+    plannerMocks.runOtherDirectedMessageTurn.mockResolvedValue({
+      classification: "to_cogito",
+      confidence: 0.95,
+      reasoningSummary: "This is a normal assistant-directed message.",
+    });
     threadWorkspaceMocks.appendThreadLog.mockReset();
     threadWorkspaceMocks.buildThreadPaths.mockClear();
     threadWorkspaceMocks.ensureThreadWorkspace.mockClear();

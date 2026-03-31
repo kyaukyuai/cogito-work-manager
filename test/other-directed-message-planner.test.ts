@@ -7,16 +7,21 @@ import {
 
 const baseInput = {
   messageText: "田平さん、契約書ですがこちらご確認ください。",
-  signalFamilies: ["line-opener", "directed-verb"] as const,
-  ownerCandidates: [
+  recentThreadEntries: [
     {
-      entryId: "m.tahira",
-      label: "田平",
-      slackUserId: "U456",
-      matchSource: "keyword" as const,
-      matchedSignalFamilies: ["line-opener", "directed-verb"] as const,
+      userId: "U123",
+      text: "法務確認のフローをこの thread で進めます。",
     },
   ],
+  ownerEntries: [
+    {
+      entryId: "m.tahira",
+      linearAssignee: "m.tahira@opt.ne.jp",
+      keywords: ["田平", "田平誠人"],
+      slackUserId: "U456",
+    },
+  ],
+  assistantName: "コギト",
   workspaceAgents: "Keep replies short.",
   workspaceMemory: "Contract-review threads often map to AIC-55.",
 };
@@ -27,11 +32,14 @@ describe("other-directed-message planner", () => {
 
     expect(prompt).toContain('"classification":"to_other_person"|"to_cogito"|"unclear"');
     expect(prompt).toContain("selectedOwnerEntryId must be omitted");
+    expect(prompt).toContain("Assistant name: コギト");
     expect(prompt).toContain("Latest Slack message:");
     expect(prompt).toContain("田平さん、契約書ですがこちらご確認ください。");
-    expect(prompt).toContain("Owner-map candidates:");
+    expect(prompt).toContain("Recent thread context");
+    expect(prompt).toContain("法務確認のフローをこの thread で進めます。");
+    expect(prompt).toContain("Owner-map entries:");
     expect(prompt).toContain("entryId: m.tahira");
-    expect(prompt).toContain("matchedSignalFamilies: line-opener, directed-verb");
+    expect(prompt).toContain("keywords: 田平, 田平誠人");
   });
 
   it("parses valid classifier replies", () => {
@@ -77,6 +85,20 @@ describe("other-directed-message planner", () => {
       classification: "unclear",
       confidence: 0.44,
       reasoningSummary: "The direction is ambiguous.",
+      selectedOwnerEntryId: undefined,
+    });
+  });
+
+  it("allows to_other_person without a selected owner", async () => {
+    await expect(
+      runOtherDirectedMessageTurnWithExecutor(
+        async () => '{"classification":"to_other_person","confidence":0.73,"reasoningSummary":"The message is directed to another person, but the owner map does not identify them safely."}',
+        baseInput,
+      ),
+    ).resolves.toEqual({
+      classification: "to_other_person",
+      confidence: 0.73,
+      reasoningSummary: "The message is directed to another person, but the owner map does not identify them safely.",
       selectedOwnerEntryId: undefined,
     });
   });

@@ -181,7 +181,7 @@ Slack attachment behavior:
 
 - `pdf / docx / txt / md / csv / json` are eagerly extracted
 - audio/video can be lazily transcribed when `OPENAI_API_KEY` is present
-- plain-text other-directed messages are evaluated by an LLM-assisted, confidence-gated classifier before public suppression
+- plain-text other-directed messages are evaluated by an LLM-first classifier before public suppression
 - suppression and external-coordination hint creation are separate; the thread may stay publicly silent even when no safe hinted Slack target can be stored
 
 Notion behavior:
@@ -256,7 +256,7 @@ Expected behavior:
 - Attachment catalogs are created for `pdf / docx / md` and can be read from the manager agent
 - When `OPENAI_API_KEY` is set, audio/video attachments are lazily transcribed on first read
 - `@other-user` posts that do not mention Cogito are publicly ignored deterministically
-- Clearly other-directed plain-text posts can also be publicly ignored through an LLM-assisted, confidence-gated classifier
+- Clearly other-directed plain-text posts can also be publicly ignored through an LLM-first classifier
 - Suppressed coordination threads still save thread state and attachments
 - If such a coordination thread resolves exactly to an existing issue and to a safe hinted Slack target, later short replies can update that hinted issue
 - `Please lower the priority too` in a single-issue follow-up thread is treated as a priority change, not a state change

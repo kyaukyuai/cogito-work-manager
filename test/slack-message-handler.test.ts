@@ -206,7 +206,7 @@ describe("slack message handler", () => {
     await vi.runAllTimersAsync();
     await pendingJob;
 
-    expect(policyLoad).toHaveBeenCalledTimes(1);
+    expect(policyLoad).toHaveBeenCalledTimes(2);
     expect(setManagerPolicy).toHaveBeenCalledWith(expect.objectContaining({
       heartbeatIntervalMin: 45,
       heartbeatActiveLookbackHours: 12,
@@ -310,7 +310,7 @@ describe("slack message handler", () => {
     expect(webClient.chat.postMessage).not.toHaveBeenCalled();
   });
 
-  it("suppresses plain-text direct-address messages when the classifier returns to_other_person with medium confidence", async () => {
+  it("suppresses plain-text direct-address messages when the classifier returns to_other_person", async () => {
     const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
     const webClient = createWebClient();
     const logger = createLogger();
@@ -328,7 +328,7 @@ describe("slack message handler", () => {
         targetSlackUserId: "U456",
         sourceMessageTs: "111.778",
         sourceUserId: "U123",
-        requestText: "田平さん、契約書ですがこちらご確認ください。",
+        requestText: "(test) 田平さん、契約書ですがこちらご確認ください。",
         attachmentNames: [],
         resolutionSummary: "Resolved target from plain-text owner-map match",
         recordedAt: "2026-03-31T01:36:00.000Z",
@@ -362,7 +362,7 @@ describe("slack message handler", () => {
       channel: "C123",
       user: "U123",
       ts: "111.778",
-      text: "田平さん、契約書ですがこちらご確認ください。",
+      text: "(test) 田平さん、契約書ですがこちらご確認ください。",
     }, "UBOT");
 
     await vi.runAllTimersAsync();
@@ -373,19 +373,20 @@ describe("slack message handler", () => {
       expect.anything(),
       expect.anything(),
       expect.objectContaining({
-        messageText: "田平さん、契約書ですがこちらご確認ください。",
-        signalFamilies: expect.arrayContaining(["line-opener"]),
-        ownerCandidates: expect.arrayContaining([
-          expect.objectContaining({ entryId: "m.tahira" }),
+        messageText: "(test) 田平さん、契約書ですがこちらご確認ください。",
+        assistantName: "コギト",
+        recentThreadEntries: [],
+        ownerEntries: expect.arrayContaining([
+          expect.objectContaining({ entryId: "m.tahira", linearAssignee: "m.tahira@opt.ne.jp" }),
         ]),
       }),
     );
     expect(coordinationHintMocks.resolveExternalCoordinationHint).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestText: "田平さん、契約書ですがこちらご確認ください。",
+        requestText: "(test) 田平さん、契約書ですがこちらご確認ください。",
         resolvedTarget: {
           slackUserId: "U456",
-          resolutionSummary: "Resolved target from LLM-assisted plain-text classification (keyword; signals=line-opener; confidence=0.82)",
+          resolutionSummary: "Resolved target from LLM-first plain-text classification (entryId=m.tahira; confidence=0.82)",
         },
       }),
     );
@@ -401,7 +402,6 @@ describe("slack message handler", () => {
       expect.objectContaining({
         channelId: "C123",
         selectedOwnerEntryId: "m.tahira",
-        selectedOwnerLabel: "田平",
         confidence: 0.82,
         classification: "to_other_person",
       }),
@@ -423,7 +423,7 @@ describe("slack message handler", () => {
       diagnostics: [
         {
           level: "info",
-          message: "Skipped external coordination hint because the resolved target has no slackUserId (Resolved target from LLM-assisted plain-text classification (keyword; signals=line-opener; confidence=0.77))",
+          message: "Skipped external coordination hint because the resolved target has no slackUserId (Resolved target from LLM-first plain-text classification (entryId=m.tahira; confidence=0.77))",
         },
       ],
     });
@@ -665,11 +665,16 @@ describe("slack message handler", () => {
     expect(managerMocks.handleManagerMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("does not suppress explicit outbound-post requests", async () => {
+  it("routes explicit outbound-post requests through the classifier and then through manager handling", async () => {
     const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
     const webClient = createWebClient();
     const logger = createLogger();
     let pendingJob: Promise<void> | undefined;
+    plannerMocks.runOtherDirectedMessageTurn.mockResolvedValueOnce({
+      classification: "to_cogito",
+      confidence: 0.91,
+      reasoningSummary: "This is an explicit request for Cogito to send a message on the user's behalf.",
+    });
 
     managerMocks.handleManagerMessage.mockResolvedValue({
       handled: true,
@@ -721,7 +726,7 @@ describe("slack message handler", () => {
     await pendingJob;
 
     expect(managerMocks.handleManagerMessage).toHaveBeenCalledTimes(1);
-    expect(plannerMocks.runOtherDirectedMessageTurn).not.toHaveBeenCalled();
+    expect(plannerMocks.runOtherDirectedMessageTurn).toHaveBeenCalledTimes(1);
     expect(coordinationHintMocks.resolveExternalCoordinationHint).not.toHaveBeenCalled();
   });
 

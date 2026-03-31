@@ -29,6 +29,6 @@ export async function runOtherDirectedMessageTurnWithExecutor(
 
   return parseOtherDirectedMessageReply(
     reply,
-    input.ownerCandidates.map((candidate) => candidate.entryId),
+    input.ownerEntries.map((entry) => entry.entryId),
   );
 }
