@@ -365,10 +365,10 @@ case "$*" in
   "capabilities --json")
     cat <<'JSON'
 {
-  "schemaVersion": "v1",
+  "schemaVersion": "v2",
   "cli": { "version": "2.12.1" },
   "contractVersions": {
-    "automation": { "latest": "v4" }
+    "automation": { "latest": "v5" }
   },
   "commands": [
     { "path": "linear capabilities", "json": { "supported": true, "contractVersion": null }, "dryRun": { "supported": false, "contractVersion": null } },

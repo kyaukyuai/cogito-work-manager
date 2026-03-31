@@ -53,10 +53,10 @@ describe("linear write path hardening", () => {
       if (args[0] === "capabilities") {
         return {
           stdout: JSON.stringify({
-            schemaVersion: "v1",
+            schemaVersion: "v2",
             cli: { version: "2.12.1" },
             contractVersions: {
-              automation: { latest: "v4" },
+              automation: { latest: "v5" },
             },
             commands: [
               { path: "linear capabilities", json: { supported: true, contractVersion: null }, dryRun: { supported: false, contractVersion: null } },
@@ -74,6 +74,9 @@ describe("linear write path hardening", () => {
               { path: "linear webhook list", json: { supported: true, contractVersion: "v3" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear webhook create", json: { supported: true, contractVersion: null }, dryRun: { supported: true, contractVersion: "v1" } },
               { path: "linear webhook update", json: { supported: true, contractVersion: null }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear label list", json: { supported: true, contractVersion: "v4" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear user list", json: { supported: true, contractVersion: "v4" }, dryRun: { supported: false, contractVersion: null } },
+              { path: "linear workflow-state list", json: { supported: true, contractVersion: "v4" }, dryRun: { supported: false, contractVersion: null } },
             ],
           }),
         };
