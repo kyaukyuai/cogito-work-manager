@@ -1,93 +1,93 @@
 # Refactor Roadmap
 
-この文書は [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/docs/execution-manager-architecture.md) の補足ではなく、実装順序、完了条件、禁止事項を固定するための運用文書である。
+This document is not a supplement to [docs/execution-manager-architecture.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/docs/execution-manager-architecture.md). It is an operational document that fixes implementation order, completion criteria, and prohibitions.
 
-対象読者は maintainers / implementers とする。user-facing な挙動説明文書ではない。
+The intended readers are maintainers and implementers. This is not a user-facing behavior document.
 
-この roadmap は中期の Phase 1-4 完了までを対象にする。runtime API や user-facing interface の変更は目的に含めない。
+This roadmap covers the medium-term phases up to the completion of Phases 1-4. It does not exist to drive additional runtime API or user-facing interface redesign.
 
 ## Status
 
-- 2026-03-19 時点で、Phase 1-4 の完了条件は `main` で満たしている
-- この文書は今後、追加の構造変更を開始するための計画ではなく、完了条件と移行判断の記録として扱う
-- 新規作業は refactor の継続ではなく、運用耐性、可観測性、work graph の保守性改善を優先する
-- 2026-03-19 時点で、post-refactor runtime は `agent-first / tool-contract-first / manager commit` を primary path とする
+- As of 2026-03-19, the completion gates for Phases 1-4 are satisfied on `main`
+- Going forward, this document is a record of completion criteria and migration decisions, not a plan to restart a large structural refactor
+- New work should prioritize operational resilience, observability, and work-graph maintainability instead of continued structural rewriting
+- As of 2026-03-19, the post-refactor runtime uses `agent-first / tool-contract-first / manager commit` as the primary path
 
 ## Global Rules
 
-- LLM は planner / assessor に限定して使う
-- 外部副作用は必ず code-side command を経由して実行する
-- Linear を work の source of truth とする
-- legacy ファイルへ新機能を積み増さない
-- 1 つの PR で phase をまたがない
-- Phase N の完了条件を満たすまで、Phase N+1 の本実装に入らない
-- 互換 export が必要な間は維持し、移行完了後にまとめて整理する
+- Use the LLM only as a planner or assessor
+- Execute every external side effect through code-side commands
+- Keep Linear as the source of truth for work
+- Do not grow new features inside legacy catch-all files
+- Do not span phases in one PR
+- Do not begin Phase N+1 implementation until Phase N completion gates are satisfied
+- Preserve compatibility exports while migration is in progress, then remove them in a deliberate cleanup step
 
 ## Phase Overview
 
 | Phase | Name | Status | Primary Goal | Depends On | Entry Condition | Completion Gate |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Planner Extraction | Completed | planner を `src/planners/` へ分離する | none | architecture doc と AGENTS の方針が確定している | planner 群が `pi-session.ts` から論理分離され、挙動互換が保たれている |
-| 2 | Workflow Split | Completed | workflow を `orchestrators/` 単位へ分離する | Phase 1 | planner 呼び出し境界が安定している | `manager.ts` が router 寄りになり、主要 workflow が独立モジュール化されている |
-| 3 | Repository Layer | Completed | file-backed repository を導入する | Phase 2 | workflow 境界が明確で state access 箇所が把握できている | `manager-state.ts` 直 read/write 依存が repository 経由に置き換わっている |
-| 4 | Unified Work Graph | Completed | planning / intake / followup を横断する work graph を導入する | Phase 3 | repository 層が安定し、既存 ledger の責務が整理されている | append-only event log と projection を用いた work graph が導入されている |
+| 1 | Planner Extraction | Completed | Move planners into `src/planners/` | none | Architecture doc and AGENTS rules are fixed | Planner logic is logically separated from `pi-session.ts` without behavior changes |
+| 2 | Workflow Split | Completed | Move workflows into `orchestrators/` | Phase 1 | Planner call boundaries are stable | `manager.ts` is router-like and major workflows are modularized |
+| 3 | Repository Layer | Completed | Introduce file-backed repositories | Phase 2 | Workflow boundaries are clear and state access points are known | Direct `manager-state.ts` reads/writes are replaced by repositories |
+| 4 | Unified Work Graph | Completed | Introduce a work graph spanning planning/intake/follow-up | Phase 3 | Repository layer is stable and ledger responsibilities are understood | An append-only event log plus projections powers the work graph |
 
 ## PR Rules
 
-- 1 phase を複数 PR に分けてよい
-- ただし 1 PR は 1 phase に閉じる
-- phase 内でも挙動変更と構造変更は可能な限り分ける
-- 移行途中は既存 call site と export を壊さず、差し替え可能な単位で進める
-- docs のみで設計判断が変わる場合は、必要に応じて architecture doc と AGENTS を同時更新する
+- A phase may span multiple PRs
+- One PR must still stay within one phase
+- Within a phase, separate behavior changes from structural changes whenever practical
+- During migration, keep existing call sites and exports stable until replacement is complete
+- If a docs-only change alters design decisions, update the architecture doc and AGENTS as needed in the same change
 
 ## Phase 1: Planner Extraction
 
 ### Goal
 
-`src/lib/pi-session.ts` から planner 群を `src/planners/` に分離し、runtime 構築責務と planner 責務を切り分ける。
+Split planner implementations out of `src/lib/pi-session.ts` into `src/planners/`, separating runtime construction from planner logic.
 
 ### In Scope
 
 - `task-intake`
 - `followup-resolution`
 - `research-synthesis`
-- 各 planner の `contract.ts`, `prompt.ts`, `parser.ts`, `runner.ts`, `fixtures/`
-- 既存テストの移設または補強
-- 既存 call site の import 差し替え
+- `contract.ts`, `prompt.ts`, `parser.ts`, `runner.ts`, and `fixtures/` for each planner
+- moving or strengthening existing tests
+- updating imports at existing call sites
 
 ### Out of Scope
 
-- planner の挙動変更
-- schema shape の変更
-- `review-assessment` の新設
-- workflow 分割
-- repository 導入
+- planner behavior changes
+- schema shape changes
+- introducing `review-assessment`
+- workflow splitting
+- repository introduction
 
 ### Implementation Shape
 
-- `src/planners/task-intake/` を作り、`TaskPlanningInput`, `TaskPlanningResult`, prompt builder, parser, runner を移す
-- 同じ形式で `followup-resolution` と `research-synthesis` を分離する
-- `pi-session.ts` には runtime factory と isolated turn runner の責務を残し、planner 実装は持たせない
-- 既存の public API が必要なら `pi-session.ts` から再 export してよいが、実体は `src/planners/` に置く
-- planner fixture は prompt / reply の回帰確認に使える形で保持する
+- Create `src/planners/task-intake/` and move `TaskPlanningInput`, `TaskPlanningResult`, prompt building, parsing, and runner logic into it
+- Apply the same pattern to `followup-resolution` and `research-synthesis`
+- Leave runtime-factory and isolated-turn responsibilities in `pi-session.ts`
+- If compatibility APIs are still needed, re-export from `pi-session.ts` but keep the implementation in `src/planners/`
+- Preserve planner fixtures in a form that supports prompt/reply regression testing
 
 ### Validation
 
-- 既存 planner 関連テストが通る
-- prompt / parser / runner の分離後も import 先以外の挙動が変わらない
-- `pi-session.ts` に planner 実装詳細が残っていない
+- Existing planner tests still pass
+- Import paths may change, but behavior does not
+- `pi-session.ts` no longer contains planner implementation details
 
 ### Done
 
-- `task-intake`, `followup-resolution`, `research-synthesis` が `src/planners/` 配下に存在する
-- `pi-session.ts` が runtime 中心のファイルになっている
-- planner 系のテストが分離後の配置を前提に維持されている
+- `task-intake`, `followup-resolution`, and `research-synthesis` exist under `src/planners/`
+- `pi-session.ts` is runtime-centric
+- Planner test coverage assumes the new layout
 
 ## Phase 2: Workflow Split
 
 ### Goal
 
-`src/lib/manager.ts` を workflow ごとの orchestrator に分割し、`handleManagerMessage` を router 寄りの entrypoint に縮小する。
+Split `src/lib/manager.ts` by workflow and reduce `handleManagerMessage` to a routing-oriented entrypoint.
 
 ### In Scope
 
@@ -96,41 +96,41 @@
 - `research`
 - `followups`
 - `review`
-- workflow ごとのユースケース分離
-- `handleManagerMessage` の router 化
+- workflow-level use-case separation
+- turning `handleManagerMessage` into a router
 
 ### Out of Scope
 
-- work graph 導入
-- state storage format の変更
-- planner contract の再設計
-- Linear gateway の全面再編
+- work-graph introduction
+- state storage format changes
+- planner contract redesign
+- a full Linear gateway rewrite
 
 ### Implementation Shape
 
-- `src/orchestrators/intake/`, `updates/`, `research/`, `followups/`, `review/` を作る
-- request / progress / completed / blocked / review 系の入口を段階的に移す
-- `handleManagerMessage` は message kind 判定と orchestrator 呼び出しに寄せる
-- 新しい workflow は legacy 集約ファイルに追加しない
-- LLM 呼び出し位置と Linear command 実行位置を orchestrator の中で明示的に分ける
+- Create `src/orchestrators/intake/`, `updates/`, `research/`, `followups/`, and `review/`
+- Move request / progress / completed / blocked / review entrypoints incrementally
+- Keep `handleManagerMessage` focused on message-kind routing and orchestrator dispatch
+- Do not add new workflows to a legacy aggregation file
+- Keep LLM execution and Linear command execution visibly separate inside each orchestrator
 
 ### Validation
 
-- `manager.ts` の責務が router と互換 facade に縮小している
-- workflow 単位テストで既存挙動を維持できている
-- 新規ロジックが `manager.ts` に直接追加されていない
+- `manager.ts` shrinks toward routing and compatibility facades
+- Workflow-level tests preserve existing behavior
+- New logic is no longer added directly into `manager.ts`
 
 ### Done
 
-- 主要 workflow が `src/orchestrators/` に分離されている
-- `handleManagerMessage` が workflow 直接実装ではなく dispatch 中心になっている
-- workflow 単位のテスト構成が成立している
+- Major workflows live under `src/orchestrators/`
+- `handleManagerMessage` is dispatch-oriented instead of implementation-oriented
+- Workflow-level test structure exists
 
 ## Phase 3: Repository Layer
 
 ### Goal
 
-`src/lib/manager-state.ts` の直接 read/write を file-backed repository に置き換え、state access の境界を固定する。
+Replace direct `src/lib/manager-state.ts` reads and writes with file-backed repositories so that state access has a stable boundary.
 
 ### In Scope
 
@@ -139,99 +139,99 @@
 - `IntakeRepository`
 - `FollowupRepository`
 - `PlanningRepository`
-- repository interface と file-backed implementation
+- repository interfaces and file-backed implementations
 
 ### Out of Scope
 
-- SQLite への移行
-- storage file format の変更
-- work graph の本導入
-- projection の全面導入
+- SQLite migration
+- storage format changes
+- full work-graph adoption
+- full projection adoption
 
 ### Implementation Shape
 
-- `src/state/repositories/` を追加し、現行 JSON file を背後に持つ repository を実装する
-- `manager-state.ts` は schema と互換ヘルパーに縮小するか、repository 内部へ段階移行する
-- workflow からの state access は repository 経由に寄せる
-- 既存の `policy.json`, `owner-map.json`, `followups.json`, `planning-ledger.json` は format を維持する
+- Add `src/state/repositories/` with repositories backed by the current JSON files
+- Reduce `manager-state.ts` to schemas and compatibility helpers, or move it inward over time
+- Route workflow-side state access through repositories
+- Preserve the formats of `policy.json`, `owner-map.json`, `followups.json`, and `planning-ledger.json`
 
 ### Validation
 
-- 主要 workflow が JSON file を直接 read/write しない
-- repository 導入後も storage format が変わっていない
-- state access の単体テストが repository 単位で書ける
+- Major workflows no longer read/write JSON files directly
+- Repository introduction does not change storage formats
+- State access can be unit-tested at the repository layer
 
 ### Done
 
-- policy / owner-map / intake / followup / planning の repository が存在する
-- workflow 側は repository 経由で state を扱っている
-- `manager-state.ts` への直接依存が大幅に減っている
+- Repositories exist for policy, owner map, intake, follow-up, and planning
+- Workflows access state through repositories
+- Direct dependency on `manager-state.ts` is greatly reduced
 
 ## Phase 4: Unified Work Graph
 
 ### Goal
 
-planning / intake / followup を横断する work graph を導入し、append-only event log と projection を前提に orchestration state を統合する。
+Introduce a work graph spanning planning, intake, and follow-up, using an append-only event log plus projections as the orchestration-state backbone.
 
 ### In Scope
 
 - `WorkgraphRepository`
 - append-only event log
-- projection ベースの現在状態復元
-- planning / intake / followup の横断状態モデル
-- 既存 ledger との移行レイヤ
+- projection-based current-state reconstruction
+- a unified state model spanning planning, intake, and follow-up
+- migration layers for existing ledgers
 
 ### Out of Scope
 
-- 全 workflow の一括再設計
-- 外部 system of record の追加
-- Linear を置き換える独自 state machine
+- redesigning every workflow at once
+- adding another external system of record
+- replacing Linear with a custom state machine
 
 ### Implementation Shape
 
-- `workgraph-events.jsonl` 相当の append-only event log を導入する
-- `intake.received`, `intake.clarification-requested`, `linear.parent-created`, `linear.child-created`, `followup.requested`, `followup.resolved`, `issue.blocked`, `issue.completed` などのイベントを定義する
-- 現在状態は projection で再構成する
-- 既存 ledger は移行期間中の互換レイヤとして扱い、急に削除しない
+- Introduce an append-only event log equivalent to `workgraph-events.jsonl`
+- Define events such as `intake.received`, `intake.clarification-requested`, `linear.parent-created`, `linear.child-created`, `followup.requested`, `followup.resolved`, `issue.blocked`, and `issue.completed`
+- Reconstruct current state through projections
+- Treat old ledgers as migration compatibility layers rather than deleting them abruptly
 
 ### Current Boundary
 
-- Linear は引き続き work 自体の source of truth とする
-- work graph は cross-workflow read model の優先経路として扱う
-- 現在の read-side では、review 件数集計、issue source lookup、thread planning context、pending clarification の照合、latest resolved issue、updates の target-resolution candidate discovery を work graph query から取得する
-- manager / intake / updates / review の主要判断は work graph query を前提にする
-- legacy intake ledger は runtime から削除し、旧 `intake-ledger.json` は bootstrap 時に掃除する
-- source of truth の切り替えは dual-write と query migration を段階的に進め、最終的に intake ledger を撤去した
+- Linear remains the source of truth for work itself
+- The work graph is the preferred cross-workflow read model
+- The current read side uses work-graph queries for review counts, issue-source lookup, thread planning context, pending clarification checks, latest resolved issue lookup, and update target resolution
+- Manager, intake, updates, and review decisions assume work-graph query access
+- The legacy intake ledger has been removed from runtime, and old `intake-ledger.json` is cleaned up during bootstrap
+- Source-of-truth transition was done incrementally through dual-write and query migration, ending with intake-ledger removal
 
 ### Validation
 
-- intake / planning / followup の横断状態が単一モデルで再構成できる
-- append-only event log から必要な現在状態を再計算できる
-- 移行期間中も既存 workflow が破綻しない
+- Intake / planning / follow-up state can be reconstructed from one unified model
+- Required current state can be recalculated from the append-only event log
+- Existing workflows remain stable during migration
 
 ### Done
 
-- work graph のイベント定義、repository、projection が存在する
-- 既存 ledger と work graph の責務分担が明文化されている
-- intake / planning / followup の主要判断が unified state を前提に扱える
-- legacy intake ledger が runtime から除去され、workflow が work graph と現行 ledger だけで成立している
+- Work-graph event definitions, repository, and projections exist
+- The division of responsibility between ledgers and work graph is documented
+- Major intake / planning / follow-up decisions use the unified state model
+- The legacy intake ledger is removed from runtime, and workflows operate through the work graph plus the remaining ledgers
 
 ## Validation Checklist
 
-- Phase 番号と名称が architecture doc と一致している
-- 各 phase の `In Scope` と `Out of Scope` が矛盾していない
-- legacy 互換方針が [AGENTS.md](/Users/kyaukyuai/src/github.com/kyaukyuai/cogito-work-manager/AGENTS.md) のルールと衝突していない
-- この roadmap が architecture doc の詳細化であり、別アーキテクチャを定義していない
+- Phase numbers and names match the architecture document
+- `In Scope` and `Out of Scope` do not contradict each other
+- Legacy compatibility policy does not conflict with [AGENTS.md](/Users/kyaukyuai/src/github.com/kyaukyuai/pi-slack-linear/AGENTS.md)
+- This roadmap elaborates the architecture doc rather than defining a competing architecture
 
 ## Defaults and Assumptions
 
-- roadmap の対象は直近だけではなく、中期の Phase 1-4 完了までを含む
-- 各 phase は phase-gated で進める
-- 先に構造を分け、その後に state 統合へ進む
-- docs-only の更新であり、この文書自体はコード変更を直接伴わない
+- The roadmap covers the medium-term completion of Phases 1-4, not just the immediate next step
+- Each phase is phase-gated
+- Structural separation comes before unified state
+- This document is documentation-only; it does not imply direct code changes by itself
 
 ## Post-Refactor Priorities
 
-- `workgraph-events.jsonl` の snapshot / compaction / replay 運用を整備する
-- review / scheduler / control room の失敗診断と health check を強化する
-- 主要 workflow の可観測性を上げ、thread / issue / event の追跡を容易にする
+- Improve snapshot / compaction / replay operations for `workgraph-events.jsonl`
+- Improve failure diagnostics and health checks for review, scheduler, and control-room flows
+- Increase observability across major workflows so thread / issue / event tracing is easier

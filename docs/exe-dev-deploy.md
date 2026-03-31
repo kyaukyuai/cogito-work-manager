@@ -1,12 +1,12 @@
 # Deploying `cogito-work-manager` on `exe.dev`
 
-この bot は Slack Socket Mode だけでも動きますが、Linear issue create webhook を使う場合は追加で public HTTP endpoint が必要です。`exe.dev` では VM 上で Docker Compose を常駐させ、必要なら公開 proxy から webhook port へ流します。
+This bot can run with Slack Socket Mode alone. If you also enable the Linear issue-created webhook, you need an additional public HTTP endpoint. On `exe.dev`, the standard deployment model is a VM with Docker Compose and a persistent `./workspace` directory.
 
 ## Overview
 
-- VM: `exe.dev` の `exeuntu` VM
+- VM: `exe.dev` Ubuntu VM
 - Runtime: Docker Compose
-- Persistent data: repo 配下の `./workspace`
+- Persistent data: `./workspace` under the repo
 - Outbound integrations:
   - Slack Socket Mode
   - Anthropic
@@ -15,71 +15,67 @@
   - Optional: Linear webhook registration
 - Bundled CLI: `linear-cli v2.12.3`
 
-`exe.dev` の HTTP proxy は Slack Socket Mode だけなら不要です。Linear webhook を有効にする場合だけ、`LINEAR_WEBHOOK_PUBLIC_URL` が到達するように VM 上の `LINEAR_WEBHOOK_PORT` へ公開経路を用意してください。
+You do not need the `exe.dev` HTTP proxy when running Slack Socket Mode only. You only need a public route when `LINEAR_WEBHOOK_ENABLED=true` and Linear must reach `LINEAR_WEBHOOK_PORT`.
 
 ## Prerequisites
 
-手元で以下を用意しておきます。
+Prepare the following before deployment.
 
-- `ssh exe.dev` でログイン済み
-- Slack App
+- `ssh exe.dev` access
+- Slack app credentials
   - `SLACK_APP_TOKEN`
   - `SLACK_BOT_TOKEN`
-- Linear
+- Linear credentials
   - `LINEAR_API_KEY`
   - `LINEAR_WORKSPACE`
   - `LINEAR_TEAM_KEY`
   - Optional: `LINEAR_WRITE_TIMEOUT_MS`
-  - Optional webhook
+  - Optional webhook settings
     - `LINEAR_WEBHOOK_ENABLED`
     - `LINEAR_WEBHOOK_PUBLIC_URL`
     - `LINEAR_WEBHOOK_SECRET`
     - `LINEAR_WEBHOOK_PORT`
     - `LINEAR_WEBHOOK_PATH`
-- Optional: Notion
+- Optional Notion credentials
   - `NOTION_API_TOKEN`
   - `NOTION_AGENDA_PARENT_PAGE_ID`
-- Anthropic
-  - 推奨: `ANTHROPIC_API_KEY`
-  - 代替: `~/.pi/agent/auth.json`
-- Optional: OpenAI
+- Anthropic authentication
+  - Preferred: `ANTHROPIC_API_KEY`
+  - Alternative: `~/.pi/agent/auth.json`
+- Optional OpenAI credentials
   - `OPENAI_API_KEY`
-  - 動画 / 音声 attachment の transcript を有効にする場合だけ必要
+  - Only required when you want audio/video attachment transcription
 
 ## 1. Create a VM
-
-新しい VM を作ります。
 
 ```bash
 ssh exe.dev new --name pi-linear-bot
 ```
 
-作成後、SSH で入ります。
+Then connect:
 
 ```bash
 ssh pi-linear-bot.exe.xyz
 ```
 
-## 2. Clone the repo
-
-VM 内で repo を配置します。
+## 2. Clone the Repo
 
 ```bash
 git clone https://github.com/kyaukyuai/cogito-work-manager.git
 cd cogito-work-manager
 ```
 
-private repo の場合は `gh auth login` か deploy key を使ってください。
+If the repo is private, use `gh auth login` or a deploy key.
 
-## 3. Prepare environment variables
+## 3. Prepare Environment Variables
 
-example から `.env` を作ります。
+Create `.env` from the example:
 
 ```bash
 cp .env.example .env
 ```
 
-`.env` に最低限これを入れます。
+Minimum recommended `.env`:
 
 ```env
 SLACK_APP_TOKEN=xapp-...
@@ -114,43 +110,43 @@ NOTION_API_TOKEN=secret_...
 NOTION_AGENDA_PARENT_PAGE_ID=notion-page-id-...
 ```
 
-補足:
+Notes:
 
-- `SLACK_ALLOWED_CHANNEL_IDS` はカンマ区切りで複数指定できます。
-- `LINEAR_TEAM_KEY` は UUID ではなく `AIC`, `KYA` のような team key を使います。
-- `NOTION_API_TOKEN` を入れると bundled `ntn v0.4.0` で Notion page search / page facts / page content excerpt / database search / database query が使えます。
-- `NOTION_AGENDA_PARENT_PAGE_ID` を追加すると、その parent page 配下に agenda page を作成できます。
-- 既存 Notion page への title 更新、append の追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash も Slack から扱えます。database row の更新・削除は未対応です。
-- `/workspace/system/AGENTS.md` には安定した進め方や返信方針のような operating rules を書けます。manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。ただし schema や safety rule は上書きしません。
-- `/workspace/system/MEMORY.md` には用語、背景知識、個別の好みだけでなく、プロジェクト概要、メンバーと役割、ロードマップ、主要マイルストーンのような project knowledge を書けます。これも manager/system turn に加えて reply/router/intake/research/follow-up planner に毎 turn 注入されます。issue 単位の期限や current status は入れず、スケジュールは milestone-only で扱います。
-- `/workspace/system/AGENDA_TEMPLATE.md` に agenda の既定構成を書いておくと、Notion agenda 作成・更新に関係する manager/system turn だけに注入されます。
-- runtime `AGENTS.md` / `MEMORY.md` は silent auto-update 対象で、候補は `/workspace/system/personalization-ledger.json` に残ります。rich な project snapshot は `MEMORY に保存して` の明示依頼を主経路にし、silent 側は高信頼な project fact を少数だけ昇格させます。
-- repo ルートの `AGENTS.md` は開発ルール用で、runtime customization には使いません。
-- `LINEAR_WEBHOOK_ENABLED=true` の場合は、`LINEAR_WEBHOOK_PUBLIC_URL` と `LINEAR_WEBHOOK_SECRET` が必須です。
-- webhook listener は `LINEAR_WEBHOOK_PORT` / `LINEAR_WEBHOOK_PATH` で待ち受けます。Compose では同 port を host に公開します。
-- Linear webhook の対象は `Issue create` のみです。判定基準は「AI にできる action があるか」で、no-op は silent、action/failed のみ control room に通知します。
-- headless 運用では `ANTHROPIC_API_KEY` を推奨します。
-- `OPENAI_API_KEY` を入れると Slack attachment の動画 / 音声を transcript 化できます。未設定でも `pdf / docx / txt / md / csv / json` の読取は有効で、動画 / 音声は metadata-only になります。
-- attachment transcript は初回 read 時の lazy 実行で、v1 では音声ベースのみ、30 分超は metadata-only に倒します。
-- `BOT_THINKING_LEVEL` は `off | minimal | low | medium | high | xhigh` を受け付けます。
-- `BOT_MAX_OUTPUT_TOKENS` を入れると、repo 側の stream wrapper で every LLM call に `maxTokens` を注入します。未指定なら library/provider default のままです。
-- `BOT_RETRY_MAX_RETRIES` は SDK retry settings の `maxRetries` に対応します。
-- `BOT_UID` / `BOT_GID` は Docker bind mount 上の runtime files を host user 所有にそろえるための uid/gid です。`exe.dev` の `exedev` は通常 `1000:1000` です。ローカル Docker 運用では `id -u` / `id -g` の値を入れてください。
-- manager review と heartbeat を既定で使うなら `HEARTBEAT_INTERVAL_MIN=30` のままにします。
-- `WORKGRAPH_MAINTENANCE_INTERVAL_MIN=15` なら 15 分ごとに health check と auto compaction 判定を行います。
-- `WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS` に達すると active `workgraph-events.jsonl` を snapshot に畳み込みます。
+- `SLACK_ALLOWED_CHANNEL_IDS` accepts comma-separated channel ids.
+- `LINEAR_TEAM_KEY` must be a team key such as `AIC` or `KYA`, not a UUID.
+- When `NOTION_API_TOKEN` is set, the bundled `ntn v0.4.0` enables page search, page facts, page content excerpts, database search, and database query.
+- When `NOTION_AGENDA_PARENT_PAGE_ID` is also set, agenda pages can be created under that parent page.
+- Existing Notion pages can be updated through title changes, append operations, `replace_section` updates limited to `heading_2` sections on Cogito-managed pages, and archive/trash actions. Database row updates and deletes are currently unsupported.
+- `/workspace/system/AGENTS.md` can store durable operating rules and reply policies.
+- `/workspace/system/MEMORY.md` can store terminology, background knowledge, project overview, members and roles, and roadmap or milestone context. Do not store issue-level due dates or current status there.
+- `/workspace/system/AGENDA_TEMPLATE.md` can define the default structure for Notion agendas.
+- Runtime `AGENTS.md` and `MEMORY.md` are silent auto-update targets. Candidate facts are written to `/workspace/system/personalization-ledger.json`.
+- The repo-root `AGENTS.md` is for development only and is not used as runtime customization.
+- If `LINEAR_WEBHOOK_ENABLED=true`, you must also set `LINEAR_WEBHOOK_PUBLIC_URL` and `LINEAR_WEBHOOK_SECRET`.
+- The webhook listener binds to `LINEAR_WEBHOOK_PORT` and `LINEAR_WEBHOOK_PATH`.
+- Webhook scope is `Issue create` only. No-op stays silent; committed actions and failures notify the control room.
+- Headless production setups should prefer `ANTHROPIC_API_KEY`.
+- `OPENAI_API_KEY` enables audio/video attachment transcription. Without it, `pdf / docx / txt / md / csv / json` extraction still works, and video/audio remains metadata-only.
+- Attachment transcription is lazy on first read, audio-based only, and falls back to metadata-only for files over the 30-minute cap.
+- `BOT_THINKING_LEVEL` accepts `off | minimal | low | medium | high | xhigh`.
+- `BOT_MAX_OUTPUT_TOKENS` injects `maxTokens` on every LLM call when set.
+- `BOT_RETRY_MAX_RETRIES` maps to the SDK retry limit.
+- `BOT_UID` / `BOT_GID` keep runtime files owned by the host user. On `exe.dev`, `1000:1000` is usually correct.
+- `HEARTBEAT_INTERVAL_MIN=30` is a reasonable default if you want manager review and heartbeat enabled.
+- `WORKGRAPH_MAINTENANCE_INTERVAL_MIN=15` runs health checks and auto-compaction checks every 15 minutes.
+- `WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS` controls when active `workgraph-events.jsonl` is compacted into the snapshot.
 
-## 4. Optional: use `auth.json` instead of `ANTHROPIC_API_KEY`
+## 4. Optional: Use `auth.json` Instead of `ANTHROPIC_API_KEY`
 
-`ANTHROPIC_API_KEY` を使わない場合だけ、手元の `auth.json` を VM にコピーします。
+Only use this if you are not providing `ANTHROPIC_API_KEY`.
 
-ローカルから:
+From your local machine:
 
 ```bash
 scp ~/.pi/agent/auth.json pi-linear-bot.exe.xyz:/home/exedev/cogito-work-manager/.pi-auth.json
 ```
 
-VM 内で:
+Inside the VM:
 
 ```bash
 mkdir -p workspace/.pi/agent
@@ -158,25 +154,47 @@ cp .pi-auth.json workspace/.pi/agent/auth.json
 chmod 600 workspace/.pi/agent/auth.json
 ```
 
-この方式は OAuth の期限切れに影響されるので、長期運用では API key の方が安定します。
+This is less stable than API-key based auth because it depends on OAuth token freshness.
 
-## 5. Start the bot
-
-Compose で起動します。
+## 5. Start the Bot
 
 ```bash
 docker compose up -d --build
 ```
 
-この image は `linear-cli v2.12.3` と `ntn v0.4.0` を同梱します。Linear では `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `webhook list/create/update --json` を前提に動きます。起動時と `manager:diagnostics -- boundaries` では `linear capabilities --json` で runtime surface を確認します。`issue list --json` の additive な `stateName` も受け付けつつ、既存の nested `state.name` と互換のまま扱います。multiline の description / comment は `--description-file` / `--body-file` を使い、relation add は retry-safe 前提で扱います。high-value issue write では `timeout_error` を優先できるよう `LINEAR_WRITE_TIMEOUT_MS` を使えます。未設定時は repo 側で `25000ms` を渡します。`timeout_error` に `appliedState` や `callerGuidance` が含まれる場合も破棄せず保持します。Notion は page search / page facts / page content excerpt / database search / database query の参照に加えて、設定済み parent page 配下への agenda page 作成、既存 page の title 更新、append 追記、Cogito 管理ページに限定した heading_2 単位の `replace_section` 更新、archive/trash をサポートします。Slack attachment では `pdf / docx / txt / md / csv / json` を eager 抽出し、`OPENAI_API_KEY` があれば動画 / 音声を lazy transcript できます。
+This image bundles `linear-cli v2.12.3` and `ntn v0.4.0`.
 
-ログ確認:
+Linear runtime assumptions:
+
+- `issue list/view/create/update --json`
+- `issue comment add --json`
+- `issue relation add/list --json`
+- `team members --json`
+- `issue parent/children --json`
+- `issue create-batch --file ... --json`
+- `webhook list/create/update --json`
+- `linear capabilities --json` for runtime-surface validation at startup and in diagnostics
+
+The bot accepts the additive `stateName` field from `issue list --json` while remaining compatible with nested `state.name`. Multiline descriptions and comments use `--description-file` and `--body-file`. Relation add is treated as retry-safe. High-value issue writes can use `LINEAR_WRITE_TIMEOUT_MS` to prefer `timeout_error`; when unset, the repo passes `25000ms`. If `timeout_error` includes `appliedState` or `callerGuidance`, the runtime preserves them for reconciliation.
+
+Slack attachment behavior:
+
+- `pdf / docx / txt / md / csv / json` are eagerly extracted
+- audio/video can be lazily transcribed when `OPENAI_API_KEY` is present
+
+Notion behavior:
+
+- page search / page facts / page content excerpt / database search / database query
+- agenda page creation under the configured parent page
+- title updates, append writes, `replace_section` on managed pages, archive/trash
+
+Check logs:
 
 ```bash
 docker compose logs -f
 ```
 
-正常なら次のようなログが出ます。
+Expected startup logs include:
 
 - `Slack assistant starting`
 - `Slack assistant connected`
@@ -185,77 +203,82 @@ docker compose logs -f
 
 ## 6. Verify in Slack
 
-許可済みチャンネルで試します。メンションは不要です。
+Test in an allowlisted channel. Mentioning the bot is not required.
 
-通常会話:
-
-```text
-こんにちは
-```
-
-自律起票:
+Simple conversation:
 
 ```text
-明日の田平さんとの会議準備のタスクを追加して
+Hello
 ```
 
-複雑依頼の分割:
+Autonomous issue creation:
 
 ```text
-- ログイン画面の不具合を調査する
-- API 側の原因を確認する
-- 修正方針をまとめる
+Add a task for tomorrow's meeting preparation with Tahira-san
 ```
 
-一覧:
+Task split:
 
 ```text
-タスク確認して
+- Investigate the login issue
+- Check whether the root cause is on the API side
+- Summarize the fix direction
 ```
 
-完了:
+List active work:
 
 ```text
-AIC-2 を完了にして
+Show my tasks
 ```
 
-期限変更:
+Complete an issue:
 
 ```text
-AIC-2 の期限を 2026-03-20 にして
+Mark AIC-2 as done
 ```
 
-期待する挙動:
+Change a due date:
 
-- bot は thread で返信する
-- 明確な依頼は Linear に自律起票される
-- 複雑な依頼は parent issue + child issues へ分割される
-- relative date を含む依頼では due date が設定される
-- `タスク確認` は active issue を返す
-- 同じ Slack thread では会話が継続する
-- `09:00`, `17:00`, `Mon 09:30` に manager review jobs が自動で動く
-- Optional: Linear で AIC issue を新規作成すると、必要な自動処理だけが control room に通知される
+```text
+Set AIC-2 due on 2026-03-20
+```
 
-## 7. Restart and updates
+Expected behavior:
 
-コード更新:
+- The bot replies in a thread
+- Clear requests are turned into Linear issues
+- Complex requests are split into a parent plus child issues
+- Relative dates create due dates
+- `Show my tasks` returns active issues
+- Conversation continues in the same Slack thread
+- Attachment catalogs are created for `pdf / docx / md` and can be read from the manager agent
+- When `OPENAI_API_KEY` is set, audio/video attachments are lazily transcribed on first read
+- `@other-user` posts that do not mention Cogito are publicly ignored, but the thread log and attachments are still saved
+- If such a coordination thread resolves exactly to an existing issue, later short replies can update that hinted issue
+- `Please lower the priority too` in a single-issue follow-up thread is treated as a priority change, not a state change
+- Manager review jobs run at `09:00`, `17:00`, and `Mon 09:30`
+- Optional: a newly created AIC issue in Linear triggers only safe automatic handling
+
+## 7. Restart and Updates
+
+Update the code:
 
 ```bash
 git pull
 docker compose up -d --build
 ```
 
-`BOT_UID` / `BOT_GID` を設定している場合、container は起動時に `/workspace/system` と `/workspace/threads` をその uid/gid に寄せてから bot を同じ uid/gid で実行します。以前の deploy で root 所有になっていた runtime files も、この再起動で通常運用向け owner に戻せます。
+If `BOT_UID` and `BOT_GID` are set, startup will align `/workspace/system` and `/workspace/threads` to those ids and then run the bot under that same uid/gid. This also repairs older root-owned runtime files from previous deployments.
 
-停止:
+Stop the bot:
 
 ```bash
 docker compose down
 ```
 
-## 8. Manager system files
+## 8. Manager System Files
 
-起動すると `/workspace/system` に manager 用ファイルが自動生成されます。
+At startup, the bot creates the following files in `/workspace/system`:
 
 - `policy.json`
 - `owner-map.json`
@@ -274,15 +297,19 @@ docker compose down
 - `webhook-deliveries.json`
 - `sessions/`
 
-分類の目安:
+Classification:
 
 - `editable`: `policy.json`, `owner-map.json`, `jobs.json`, `HEARTBEAT.md`, runtime `AGENTS.md`, `MEMORY.md`, `AGENDA_TEMPLATE.md`
 - `internal`: `job-status.json`, `followups.json`, `planning-ledger.json`, `notion-pages.json`, `personalization-ledger.json`, `webhook-deliveries.json`
 - `derived`: `workgraph-events.jsonl`, `workgraph-snapshot.json`, `sessions/`
 
-`editable` は operator が直接編集できます。`internal` は system ledger / registry なので基本は閲覧専用、`derived` は生成物なので手編集しません。
+Meaning:
 
-更新方針は別軸で見ます。
+- `editable` can be changed directly by the operator
+- `internal` is system-maintained and should generally be treated as read-only
+- `derived` is generated and should not be edited manually
+
+Update policy:
 
 - `silent-auto-update`: runtime `AGENTS.md`, `MEMORY.md`
 - `explicit-slack-update`: `AGENDA_TEMPLATE.md`, `HEARTBEAT.md`, `owner-map.json`
@@ -290,121 +317,155 @@ docker compose down
 - `system-maintained`: `job-status.json`, `followups.json`, `planning-ledger.json`, `notion-pages.json`, `personalization-ledger.json`, `webhook-deliveries.json`
 - `rebuild-only`: `workgraph-events.jsonl`, `workgraph-snapshot.json`, `sessions/`
 
-`explicit-slack-update` は silent update を許しません。`AGENDA_TEMPLATE.md` と `HEARTBEAT.md` は Slack で明示依頼された全文置換だけを manager commit で反映し、`owner-map.json` は structured proposal + preview/confirm を通して更新します。
+`explicit-slack-update` means silent updates are not allowed. `AGENDA_TEMPLATE.md` and `HEARTBEAT.md` are replaced only from explicit Slack requests through manager commit. `owner-map.json` is changed only through structured proposals and preview/confirm flow.
 
-Slack のメンションは 2 系統です。明示投稿は manager commit 経由で、v1 では `owner-map.json` に `slackUserId` がある相手への 1 人向けメンション投稿だけを扱い、送信先は既定で current thread、明示時のみ control room root に限定します。DM、任意 channel、複数 target、追加 mention は扱いません。これとは別に、review / heartbeat の follow-up では必要なときだけ担当者を 1 回だけメンションできますが、これは内部通知用であり任意メッセージ送信ではありません。
+Person-to-person Slack coordination is split into three categories:
 
-`BOT_UID` / `BOT_GID` が正しく設定されていれば、これらの files は host 側 operator が `sudo` なしで編集できる owner に保たれます。
+1. Explicit outbound post
+   - A manager-commit action that posts a single message to a single known Slack user.
+   - Default destination is the current thread; control room root is opt-in.
+2. Review or heartbeat follow-up mention
+   - Internal notification only, not arbitrary freeform posting.
+3. External coordination thread
+   - A post that mentions another person but does not mention Cogito.
+   - Publicly ignored, but thread state and attachments are still persisted.
+   - If the runtime can resolve an exact existing issue, it stores `scratch/external-coordination-hint.json`.
+   - Later short replies such as `Thanks`, `I'll confirm`, `Shared`, or `I'll send this to legal` can become progress or comments on that hinted issue.
+   - Only `Backlog -> In Progress` is auto-promoted from this hinted path; all other state changes still require explicit signals.
 
-`policy.json` では follow-up mention 条件も調整できます。既定では `blocked / overdue / due_today / due_soon` を初回から mention し、`stale / owner_missing` は 1 回 unresolved の再通知から mention します。
+If `BOT_UID` and `BOT_GID` are correct, these files remain editable by the host operator without `sudo`.
 
-Slack から scheduler を操作する場合は、通常こちらを優先します。例:
+`policy.json` also controls follow-up mention behavior. By default, `blocked / overdue / due_today / due_soon` mention on the first follow-up, while `stale / owner_missing` mention only after one unresolved repeat.
 
-- `スケジュール一覧を見せて`
-- `manager-review-evening の設定を見せて`
-- `毎日 09:00 に AIC の期限近い task を確認する job を追加して`
-- `daily-task-check を 17:00 に変更して`
-- `daily-task-check を削除して`
-- `weekly-notion-agenda-ai-clone を今すぐ実行して`
-- `朝レビューを 08:30 に変更して`
-- `夕方レビューを止めて`
-- `heartbeat を 60分ごとにして`
+Slack is also the preferred interface for scheduler management. Typical examples:
 
-補足:
+- `Show me the schedule list`
+- `Show me the manager-review-evening configuration`
+- `Add a job to review upcoming AIC deadlines every day at 09:00`
+- `Move daily-task-check to 17:00`
+- `Delete daily-task-check`
+- `Run weekly-notion-agenda-ai-clone now`
+- `Move the morning review to 08:30`
+- `Stop the evening review`
+- `Set heartbeat to every 60 minutes`
 
-- built-in review / heartbeat は `policy.json` が正です
-- custom job だけが `jobs.json` に保存されます
-- `nextRunAt` / `lastRunAt` / `lastStatus` / `lastResult` / `lastError` は `job-status.json` に保存されます
-- built-in の `削除` は内部的には `disable` として扱います
-- built-in review / heartbeat の即時実行は今回の scope では未対応です
+Notes:
 
-## 9. Workgraph maintenance
+- Built-in review and heartbeat live in `policy.json`
+- Only custom jobs are written to `jobs.json`
+- `nextRunAt`, `lastRunAt`, `lastStatus`, `lastResult`, and `lastError` live in `job-status.json`
+- A built-in `delete` request is implemented internally as `disable`
+- Immediate execution of built-in review and heartbeat is out of scope
 
-現在の health を確認する場合:
+## 9. Workgraph Maintenance and Diagnostics
 
-```bash
-npm run workgraph:health -- /workspace
-```
-
-snapshot だけ作り直す場合:
-
-```bash
-npm run workgraph:snapshot -- /workspace
-```
-
-event log を snapshot に畳み込んで active log を空にする場合:
-
-```bash
-npm run workgraph:compact -- /workspace
-```
-
-thread の解釈や issue context を確認する場合:
+Check current workgraph health:
 
 ```bash
-npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 /workspace
-npm run manager:diagnostics -- incident C0ALAMDRB9V 1773806473.747499 /workspace
-npm run manager:diagnostics -- issue AIC-38 /workspace
-npm run manager:diagnostics -- webhook /workspace
-npm run manager:diagnostics -- state-files /workspace
-npm run manager:diagnostics -- personalization /workspace
-npm run manager:diagnostics -- memory /workspace
-npm run manager:diagnostics -- workgraph /workspace
-npm run manager:diagnostics -- llm /workspace
-npm run manager:diagnostics -- boundaries /workspace
+npm run workgraph:health -- ./workspace
 ```
 
-`manager:diagnostics` は repo の `.env` を読んで app 本体と同じ runtime config を組み立てます。`ANTHROPIC_API_KEY` が入っていれば `authSource.source=runtime-override`、未設定で `/workspace/.pi/agent/auth.json` を使う場合は `authSource.source=auth-storage` です。
+Rebuild only the snapshot:
 
-`incident` は thread の last reply、last manager turn、proposal / commit outcome、query continuation、pending clarification、workgraph context を 1 回で束ねる incident bundle 用です。
+```bash
+npm run workgraph:snapshot -- ./workspace
+```
 
-`boundaries` は external dependency の lightweight smoke check です。
+Compact the active event log into the snapshot:
 
-- Linear: `linear-cli` version、`auth whoami`、`linear capabilities --json`、`LINEAR_TEAM_KEY` の `team list` 照合
-- Notion: `ntn` binary / `--help` と shell command contract
-- Web research: DuckDuckGo parser の fixture drift test 案内。live fetch は diagnostics では実行しません
+```bash
+npm run workgraph:compact -- ./workspace
+```
 
-local と `exe.dev` の差分確認手順:
+Inspect thread or issue context:
 
-1. local host では `npm run manager:diagnostics -- llm ./workspace` を実行する
-2. `exe.dev` では `npm run manager:diagnostics -- llm /workspace` を実行する
-3. `configured.model`, `configured.thinkingLevel`, `configured.maxOutputTokens`, `configured.retryMaxRetries`, `authSource.source` を比較する
-4. 差分が残る場合は `.env`, Docker / VM の credential 配置, `auth.json` 利用有無のどれが原因かを確認する
+```bash
+npm run manager:diagnostics -- thread C0ALAMDRB9V 1773806473.747499 ./workspace
+npm run manager:diagnostics -- incident C0ALAMDRB9V 1773806473.747499 ./workspace
+npm run manager:diagnostics -- issue AIC-38 ./workspace
+npm run manager:diagnostics -- webhook ./workspace
+npm run manager:diagnostics -- state-files ./workspace
+npm run manager:diagnostics -- personalization ./workspace
+npm run manager:diagnostics -- memory ./workspace
+npm run manager:diagnostics -- workgraph ./workspace
+npm run manager:diagnostics -- llm ./workspace
+npm run manager:diagnostics -- boundaries ./workspace
+```
 
-replay recovery 手順:
+`manager:diagnostics` reads the repo `.env` and builds the same runtime config as the app. When `ANTHROPIC_API_KEY` is set, `authSource.source=runtime-override`. When it is unset and `workspace/.pi/agent/auth.json` is used, `authSource.source=auth-storage`.
 
-1. bot を止める
+`incident` bundles the last reply, last manager turn, proposal/commit outcome, query continuation, pending clarification, and workgraph context for a thread.
+
+`boundaries` is a lightweight external-dependency smoke check:
+
+- Linear: `linear-cli` version, `auth whoami`, `linear capabilities --json`, and `team list` verification against `LINEAR_TEAM_KEY`
+- Notion: `ntn` binary, `--help`, and shell command contract
+- Web research: fixture-drift guidance for the DuckDuckGo parser; diagnostics do not perform live fetches
+
+Comparing local vs `exe.dev`:
+
+1. On a local host checkout, run `npm run manager:diagnostics -- llm ./workspace`
+2. On the `exe.dev` host checkout, run `npm run manager:diagnostics -- llm ./workspace`
+3. To verify the deployed image itself, use a one-off container:
+
+```bash
+docker run --rm \
+  --env-file /home/exedev/cogito-work-manager/.env \
+  -v /home/exedev/cogito-work-manager/scripts:/app/scripts:ro \
+  -v /home/exedev/cogito-work-manager/workspace:/workspace \
+  cogito-work-manager-bot \
+  npm run manager:diagnostics -- llm /workspace
+```
+
+4. Compare `configured.model`, `configured.thinkingLevel`, `configured.maxOutputTokens`, `configured.retryMaxRetries`, and `authSource.source`
+5. If a difference remains, inspect `.env`, VM credential placement, and whether `auth.json` is being used
+
+You can check `boundaries` the same way:
+
+```bash
+docker run --rm \
+  --env-file /home/exedev/cogito-work-manager/.env \
+  -v /home/exedev/cogito-work-manager/scripts:/app/scripts:ro \
+  -v /home/exedev/cogito-work-manager/workspace:/workspace \
+  cogito-work-manager-bot \
+  npm run manager:diagnostics -- boundaries /workspace
+```
+
+Replay recovery:
+
+1. Stop the bot
 
 ```bash
 docker compose down
 ```
 
-2. 現在の workgraph files を退避する
+2. Back up the current workgraph files
 
 ```bash
 cp workspace/system/workgraph-events.jsonl workspace/system/workgraph-events.jsonl.bak
 cp workspace/system/workgraph-snapshot.json workspace/system/workgraph-snapshot.json.bak
 ```
 
-3. active `workgraph-events.jsonl` を replay して snapshot を再生成する
+3. Replay the active event log and rebuild the snapshot
 
 ```bash
-npm run workgraph:recover -- /workspace
+npm run workgraph:recover -- ./workspace
 ```
 
-4. bot を起動してログを確認する
+4. Restart the bot and confirm the logs
 
 ```bash
 docker compose up -d --build
 docker compose logs --tail 20 bot
 ```
 
-注意:
+Notes:
 
-- `workgraph:recover` は現在の `workgraph-events.jsonl` を replay して fresh snapshot を作る
-- 既に `workgraph:compact` 済みで active log が空の場合、recovery に必要なのは `workgraph-snapshot.json` 側であり、pre-compact の log backup がないと full replay はできない
-- recovery 後に `Slack assistant connected` が出ることを確認する
+- `workgraph:recover` rebuilds a fresh snapshot from the current `workgraph-events.jsonl`
+- If `workgraph:compact` already emptied the active log, full replay requires the pre-compaction backup or the snapshot
+- After recovery, confirm that `Slack assistant connected` appears again
 
-例:
+Example heartbeat prompt:
 
 ```bash
 mkdir -p workspace/system
@@ -415,6 +476,8 @@ If nothing is worth posting, reply exactly HEARTBEAT_OK.
 EOF
 ```
 
+Example custom job file:
+
 ```bash
 cat > workspace/system/jobs.json <<'EOF'
 [
@@ -422,7 +485,7 @@ cat > workspace/system/jobs.json <<'EOF'
     "id": "daily-task-check",
     "enabled": true,
     "channelId": "C0ALAMDRB9V",
-    "prompt": "AIC の期限近い task を確認する",
+    "prompt": "Review upcoming AIC deadlines",
     "kind": "daily",
     "time": "09:00"
   }
@@ -430,12 +493,12 @@ cat > workspace/system/jobs.json <<'EOF'
 EOF
 ```
 
-## 9. Optional: run on boot
+## 10. Optional: Run on Boot
 
-`restart: unless-stopped` を入れているので、Docker daemon 再起動後は container も復帰します。明示的に host 起動時の制御を増やしたいなら `systemd` で `docker compose up -d` を包んでも構いませんが、v1 では必須ではありません。
+The Compose file already uses `restart: unless-stopped`, so containers recover automatically after a Docker daemon restart. If you want stronger host-boot control, wrap `docker compose up -d` in `systemd`, but that is optional for v1.
 
-## 10. Notes on `exe.dev`
+## 11. Notes on `exe.dev`
 
-- `exe.dev` は VM なので Docker をそのまま使えます。
-- public HTTP proxy は不要です。Slack Socket Mode は outbound 接続だけで動きます。
-- もし別途 web UI や health endpoint を出すなら、`3000-9999` の port を `exe.dev` proxy に載せられます。
+- `exe.dev` is a VM environment, so standard Docker workflows work as-is
+- No public HTTP proxy is required for Slack Socket Mode
+- If you later expose a web UI or a health endpoint, `exe.dev` can proxy ports in the `3000-9999` range
