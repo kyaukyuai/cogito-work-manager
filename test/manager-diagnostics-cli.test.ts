@@ -357,7 +357,7 @@ describe("manager diagnostics cli", () => {
 set -eu
 case "$*" in
   "--version")
-    echo "linear-cli v2.11.0"
+    echo "linear-cli v2.12.1"
     ;;
   "auth whoami")
     echo "diagnostics-user"
@@ -366,7 +366,7 @@ case "$*" in
     cat <<'JSON'
 {
   "schemaVersion": "v1",
-  "cli": { "version": "2.11.0" },
+  "cli": { "version": "2.12.1" },
   "contractVersions": {
     "automation": { "latest": "v4" }
   },
@@ -457,7 +457,7 @@ esac
     expect(diagnostics.overallStatus).toBe("ok");
     expect(diagnostics.linear).toMatchObject({
       status: "ok",
-      version: "2.11.0",
+      version: "2.12.1",
     });
     expect(diagnostics.linear.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "cli-version", status: "ok" }),

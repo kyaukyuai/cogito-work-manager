@@ -255,6 +255,7 @@ interface CliIssuePayload extends CliIssueRef {
   description?: string | null;
   createdAt?: string | null;
   completedAt?: string | null;
+  stateName?: string | null;
   priority?: number | null;
   priorityLabel?: string | null;
   updatedAt?: string | null;
@@ -455,6 +456,27 @@ function normalizeLinearState(raw: unknown): LinearWorkflowState | undefined {
     id: toStringOrUndefined(raw.id) ?? name,
     name,
     type: toNullableString(raw.type),
+  };
+}
+
+function normalizeLinearStateFromIssuePayload(rawIssue: Record<string, unknown>): LinearWorkflowState | null {
+  const normalizedState = normalizeLinearState(rawIssue.state);
+  if (normalizedState) {
+    return normalizedState;
+  }
+
+  const additiveStateName = toNullableString(rawIssue.stateName);
+  const partialState = isRecord(rawIssue.state) ? rawIssue.state : undefined;
+  const partialStateId = toStringOrUndefined(partialState?.id);
+  const partialStateType = toNullableString(partialState?.type);
+  if (!additiveStateName) {
+    return null;
+  }
+
+  return {
+    id: partialStateId ?? additiveStateName,
+    name: additiveStateName,
+    type: partialStateType ?? null,
   };
 }
 
@@ -659,6 +681,8 @@ export function normalizeLinearIssuePayload(raw: unknown): LinearIssue | undefin
     return Date.parse(right.createdAt ?? "") - Date.parse(left.createdAt ?? "");
   })[0];
 
+  const normalizedState = normalizeLinearStateFromIssuePayload(raw);
+
   return {
     id,
     identifier,
@@ -677,7 +701,7 @@ export function normalizeLinearIssuePayload(raw: unknown): LinearIssue | undefin
     labels: Array.isArray(raw.labels)
       ? raw.labels.map((label) => normalizeLinearLabel(label)).filter(Boolean) as LinearLabel[]
       : [],
-    state: normalizeLinearState(raw.state) ?? null,
+    state: normalizedState,
     parent: toIssueRef(raw.parent) ?? null,
     children,
     relations: embeddedRelations.relations,
