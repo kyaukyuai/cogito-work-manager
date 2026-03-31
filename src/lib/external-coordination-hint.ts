@@ -33,7 +33,10 @@ export interface ResolveExternalCoordinationHintArgs {
   rootThreadTs: string;
   sourceMessageTs: string;
   sourceUserId: string;
-  targetSlackUserIds: string[];
+  resolvedTarget?: {
+    slackUserId?: string;
+    resolutionSummary: string;
+  };
   requestText: string;
   attachments?: Array<{
     name: string;
@@ -179,11 +182,18 @@ export async function resolveExternalCoordinationHint(
   },
 ): Promise<ResolveExternalCoordinationHintResult> {
   const diagnostics: ExternalCoordinationHintDiagnostic[] = [];
-  const targetSlackUserIds = Array.from(new Set(args.targetSlackUserIds.map((value) => value.trim()).filter(Boolean)));
-  if (targetSlackUserIds.length !== 1) {
+  if (!args.resolvedTarget) {
     diagnostics.push({
       level: "info",
-      message: "Skipped external coordination hint because the target Slack user was not unique",
+      message: "Skipped external coordination hint because no resolved target was available",
+    });
+    return { diagnostics };
+  }
+  const targetSlackUserId = args.resolvedTarget.slackUserId?.trim();
+  if (!targetSlackUserId) {
+    diagnostics.push({
+      level: "info",
+      message: `Skipped external coordination hint because the resolved target has no slackUserId (${args.resolvedTarget.resolutionSummary})`,
     });
     return { diagnostics };
   }
@@ -242,12 +252,12 @@ export async function resolveExternalCoordinationHint(
     hint: {
       issueId: resolved.assessment.selectedIssueId,
       issueTitle: selectedCandidate?.title,
-      targetSlackUserId: targetSlackUserIds[0]!,
+      targetSlackUserId,
       sourceMessageTs: args.sourceMessageTs,
       sourceUserId: args.sourceUserId,
       requestText: stripSlackUserMentions(args.requestText) || args.requestText.trim(),
       attachmentNames: (args.attachments ?? []).map((attachment) => attachment.name).filter(Boolean),
-      resolutionSummary: resolved.assessment.reasonSummary,
+      resolutionSummary: `${args.resolvedTarget.resolutionSummary}; ${resolved.assessment.reasonSummary}`,
       recordedAt: new Date().toISOString(),
     },
     diagnostics,
