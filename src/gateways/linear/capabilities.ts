@@ -61,6 +61,8 @@ const OPTIONAL_V4_READ_SURFACE = [
   "linear workflow-state list",
 ] as const;
 
+const SUPPORTED_CAPABILITIES_SCHEMA_VERSIONS = new Set(["v1", "v2"]);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -171,7 +173,7 @@ export function parseLinearCliCapabilitiesPayload(raw: string): LinearCliCapabil
 export function validateLinearCliCapabilities(payload: LinearCliCapabilitiesPayload): string[] {
   const errors: string[] = [];
 
-  if (payload.schemaVersion !== "v1") {
+  if (!SUPPORTED_CAPABILITIES_SCHEMA_VERSIONS.has(payload.schemaVersion)) {
     errors.push(`schemaVersion=${payload.schemaVersion}`);
   }
 
