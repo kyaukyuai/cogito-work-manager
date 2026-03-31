@@ -78,6 +78,7 @@ export interface MessageRouterThreadContext {
   linkedIssueIds: string[];
   latestFocusIssueId?: string;
   lastResolvedIssueId?: string;
+  externalCoordinationHintIssueId?: string;
 }
 
 export interface MessageRouterLastQueryContext {

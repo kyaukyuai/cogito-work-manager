@@ -24,6 +24,7 @@ import {
 import { getSlackThreadContext } from "../../lib/slack-context.js";
 import { saveLastManagerAgentTurn } from "../../lib/last-manager-agent-turn.js";
 import { buildSlackVisibleLlmFailureNotice } from "../../lib/llm-failure.js";
+import { loadExternalCoordinationHint } from "../../lib/external-coordination-hint.js";
 import type { SystemPaths } from "../../lib/system-workspace.js";
 import { buildThreadPaths, ensureThreadWorkspace, type ThreadPaths } from "../../lib/thread-workspace.js";
 import {
@@ -178,6 +179,7 @@ async function loadMessageRouterInput(
     buildWorkgraphThreadKey(message.channelId, message.rootThreadTs),
   ).catch(() => undefined);
   const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
+  const externalCoordinationHint = await loadExternalCoordinationHint(paths).catch(() => undefined);
 
   return {
     channelId: message.channelId,
@@ -202,6 +204,7 @@ async function loadMessageRouterInput(
       linkedIssueIds: planningContext?.thread.linkedIssueIds ?? [],
       latestFocusIssueId: planningContext?.thread.latestFocusIssueId,
       lastResolvedIssueId: planningContext?.thread.lastResolvedIssueId,
+      externalCoordinationHintIssueId: externalCoordinationHint?.issueId,
     },
     taskKey: `${message.channelId}-${message.rootThreadTs}-message-router`,
   };

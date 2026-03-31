@@ -98,6 +98,10 @@ import {
   saveThreadNotionPageTarget,
 } from "./thread-notion-page-target.js";
 import {
+  clearExternalCoordinationHint,
+  loadExternalCoordinationHint,
+} from "./external-coordination-hint.js";
+import {
   clearPendingManagerClarification,
   isPendingManagerClarificationContinuation,
   isPendingManagerClarificationStatusQuestion,
@@ -1467,6 +1471,7 @@ export async function handleManagerMessage(
       : undefined;
     const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
     const currentThreadNotionPageTarget = await loadThreadNotionPageTarget(paths).catch(() => undefined);
+    const externalCoordinationHint = await loadExternalCoordinationHint(paths).catch(() => undefined);
     const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
     const pendingManagerConfirmation = await loadPendingManagerConfirmation(paths, now).catch(() => undefined);
     const pendingConfirmationDecision = pendingManagerConfirmation
@@ -1541,6 +1546,7 @@ export async function handleManagerMessage(
       currentDateTimeJst: currentDateTimeInJst(now),
       lastQueryContext,
       currentThreadNotionPageTarget,
+      externalCoordinationHint,
       pendingClarification: pendingManagerClarification,
       pendingConfirmation: pendingManagerConfirmation,
     }, runtimeActions?.managerAgentObserver);
@@ -1625,6 +1631,13 @@ export async function handleManagerMessage(
     const mergedReply = commitResult.pendingConfirmation?.kind === "owner-map"
       ? commitResult.pendingConfirmation.previewReply
       : mergedReplyBase;
+
+    if (
+      externalCoordinationHint
+      && commitResult.committed.some((entry) => entry.issueIds.includes(externalCoordinationHint.issueId))
+    ) {
+      await clearExternalCoordinationHint(paths);
+    }
 
     if (agentIntent === "query") {
       const queryKind = agentTurn.intentReport?.queryKind;

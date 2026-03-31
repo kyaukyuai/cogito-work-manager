@@ -8,6 +8,10 @@ import {
   handleManagerMessage,
 } from "../src/lib/manager.js";
 import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
+import {
+  loadExternalCoordinationHint,
+  saveExternalCoordinationHint,
+} from "../src/lib/external-coordination-hint.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { saveThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -1800,5 +1804,170 @@ describe("handleManagerMessage update flows", () => {
     expect(reply).toContain("- AIC-431 設計整理。最新の動きは 進捗。候補に出した理由は 直近 thread focus。");
     expect(reply).toContain("- AIC-432 設計検証。最新の動きは blocked。候補に出した理由は 最新 intake entry。");
     expect(reply).toContain("どれにも当てはまらなければ、`新規 task` と返してください。");
+  });
+
+  it("passes external coordination hints into the manager agent and clears them after a hinted progress commit", async () => {
+    const paths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-external-coordination-progress");
+    await ensureThreadWorkspace(paths);
+    await saveExternalCoordinationHint(paths, {
+      issueId: "AIC-55",
+      issueTitle: "契約締結対応",
+      targetSlackUserId: "U-TAHIRA",
+      sourceMessageTs: "coordination-request-1",
+      sourceUserId: "U-KYAU",
+      requestText: "契約書ですがこちらご確認頂けますと！",
+      attachmentNames: ["contract.docx"],
+      resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+      recordedAt: "2026-03-31T01:36:00.000Z",
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-55",
+      identifier: "AIC-55",
+      title: "契約締結対応",
+      state: { id: "state-2", name: "In Progress", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    });
+    piSessionMocks.runManagerAgentTurn.mockImplementationOnce(async (_config: unknown, _paths: unknown, input: { externalCoordinationHint?: { issueId: string } }) => {
+      expect(input.externalCoordinationHint?.issueId).toBe("AIC-55");
+      return {
+        reply: "AIC-55 の進捗を反映します。",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "update_progress",
+                confidence: 0.91,
+                summary: "AIC-55 の外部調整進捗を反映する",
+              },
+            },
+          },
+        ],
+        proposals: [
+          {
+            commandType: "update_issue_status",
+            issueId: "AIC-55",
+            signal: "progress",
+            state: "In Progress",
+            commentBody: "## Progress update\n- sourceMessageTs: coordination-reply-1\n- coordinationRequestTs: coordination-request-1\n- requestText: 契約書ですがこちらご確認頂けますと！\n- attachmentNames: contract.docx\n- replyText: ありがとうございます！法務に回します！",
+            reasonSummary: "契約締結対応が前進したため AIC-55 を進行中にする",
+          },
+        ],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "update_progress",
+          confidence: 0.91,
+          summary: "AIC-55 の外部調整進捗を反映する",
+        },
+      };
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-external-coordination-progress",
+        messageTs: "coordination-reply-1",
+        userId: "U-TAHIRA",
+        text: "ありがとうございます！法務に回します！",
+      },
+      new Date("2026-03-31T04:21:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-55");
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-55",
+        state: "In Progress",
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-55",
+      expect.stringContaining("coordinationRequestTs: coordination-request-1"),
+      expect.any(Object),
+    );
+    expect(await loadExternalCoordinationHint(paths)).toBeUndefined();
+  });
+
+  it("keeps hinted coordination replies as comment-only progress when the issue is already active", async () => {
+    const paths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-external-coordination-comment-only");
+    await ensureThreadWorkspace(paths);
+    await saveExternalCoordinationHint(paths, {
+      issueId: "AIC-55",
+      issueTitle: "契約締結対応",
+      targetSlackUserId: "U-TAHIRA",
+      sourceMessageTs: "coordination-request-2",
+      sourceUserId: "U-KYAU",
+      requestText: "契約書ですがこちらご確認頂けますと！",
+      attachmentNames: ["contract.docx"],
+      resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+      recordedAt: "2026-03-31T01:36:00.000Z",
+    });
+    piSessionMocks.runManagerAgentTurn.mockImplementationOnce(async (_config: unknown, _paths: unknown, input: { externalCoordinationHint?: { issueId: string } }) => {
+      expect(input.externalCoordinationHint?.issueId).toBe("AIC-55");
+      return {
+        reply: "AIC-55 に進捗コメントを残します。",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "update_progress",
+                confidence: 0.89,
+                summary: "AIC-55 に外部調整の進捗コメントを残す",
+              },
+            },
+          },
+        ],
+        proposals: [
+          {
+            commandType: "update_issue_status",
+            issueId: "AIC-55",
+            signal: "progress",
+            commentBody: "## Progress update\n- sourceMessageTs: coordination-reply-2\n- coordinationRequestTs: coordination-request-2\n- requestText: 契約書ですがこちらご確認頂けますと！\n- attachmentNames: contract.docx\n- replyText: 確認します。法務へ共有します。",
+            reasonSummary: "すでに進行中なのでコメントのみ残す",
+          },
+        ],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "update_progress",
+          confidence: 0.89,
+          summary: "AIC-55 に外部調整の進捗コメントを残す",
+        },
+      };
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-external-coordination-comment-only",
+        messageTs: "coordination-reply-2",
+        userId: "U-TAHIRA",
+        text: "確認します。法務へ共有します。",
+      },
+      new Date("2026-03-31T04:25:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-55");
+    expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-55",
+        state: expect.any(String),
+      }),
+      expect.anything(),
+    );
+    expect(linearMocks.addLinearProgressComment).toHaveBeenCalledWith(
+      "AIC-55",
+      expect.stringContaining("coordinationRequestTs: coordination-request-2"),
+      expect.any(Object),
+    );
+    expect(await loadExternalCoordinationHint(paths)).toBeUndefined();
   });
 });

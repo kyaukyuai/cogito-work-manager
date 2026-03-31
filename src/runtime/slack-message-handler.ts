@@ -16,6 +16,10 @@ import {
   ensureThreadWorkspace,
   type AttachmentRecord,
 } from "../lib/thread-workspace.js";
+import {
+  resolveExternalCoordinationHint,
+  saveExternalCoordinationHint,
+} from "../lib/external-coordination-hint.js";
 import type { AppConfig } from "../lib/config.js";
 import type { SystemPaths } from "../lib/system-workspace.js";
 import type { ManagerPolicy } from "../state/manager-state-contract.js";
@@ -69,52 +73,62 @@ export function createSlackMessageHandler(args: {
   ): Promise<void> {
     const rawEvent = event as RawSlackMessageEvent;
     const processability = analyzeSlackMessageProcessability(rawEvent, botUserId, args.config.slackAllowedChannelIds);
+    const suppressedExternalCoordinationMessage = !processability.shouldProcess
+      && processability.reason === "ignored_other_user_mention_without_bot";
     if (!processability.shouldProcess) {
-      if (processability.reason === "ignored_other_user_mention_without_bot") {
+      if (suppressedExternalCoordinationMessage) {
         args.logger.info("Ignored Slack message with non-bot mention and no Cogito mention", {
           channelId: rawEvent.channel,
           threadTs: rawEvent.thread_ts ?? rawEvent.ts,
           userId: rawEvent.user,
           mentionedUserIds: processability.mentionedUserIds,
         });
+      } else {
+        return;
       }
-      return;
     }
 
     const message = normalizeSlackMessage(rawEvent);
     const threadKey = `${message.channelId}:${message.rootThreadTs}`;
     let observedIntent: ManagerIntentReport["intent"] | undefined;
     let streamActivationPromise: Promise<boolean> | undefined;
-    const streamController = createSlackReplyStreamController(args.webClient, {
-      channel: message.channelId,
-      threadTs: message.rootThreadTs,
-      recipientUserId: message.userId,
-      recipientTeamId: args.slackTeamId,
-      linearWorkspace: args.config.linearWorkspace,
-      onEvent: (streamEvent) => {
-        const logPayload = {
-          channelId: message.channelId,
+    const streamController = suppressedExternalCoordinationMessage
+      ? {
+          enableStreaming: async () => false,
+          disableStreaming: () => undefined,
+          pushTextDelta: (_delta: string) => undefined,
+          finalizeReply: async (reply: string) => reply,
+        }
+      : createSlackReplyStreamController(args.webClient, {
+          channel: message.channelId,
           threadTs: message.rootThreadTs,
-          intent: observedIntent,
-          reason: streamEvent.reason,
-          error: streamEvent.error,
-          streamTs: streamEvent.ts,
-        };
-        if (streamEvent.type === "stream_failed") {
-          args.logger.warn("Slack reply stream failed", logPayload);
-          return;
-        }
-        if (streamEvent.type === "stream_fallback") {
-          args.logger.info("Slack reply stream fell back to non-streaming reply", logPayload);
-          return;
-        }
-        if (streamEvent.type === "stream_started") {
-          args.logger.info("Slack reply stream started", logPayload);
-          return;
-        }
-        args.logger.info("Slack reply stream stopped", logPayload);
-      },
-    });
+          recipientUserId: message.userId,
+          recipientTeamId: args.slackTeamId,
+          linearWorkspace: args.config.linearWorkspace,
+          onEvent: (streamEvent) => {
+            const logPayload = {
+              channelId: message.channelId,
+              threadTs: message.rootThreadTs,
+              intent: observedIntent,
+              reason: streamEvent.reason,
+              error: streamEvent.error,
+              streamTs: streamEvent.ts,
+            };
+            if (streamEvent.type === "stream_failed") {
+              args.logger.warn("Slack reply stream failed", logPayload);
+              return;
+            }
+            if (streamEvent.type === "stream_fallback") {
+              args.logger.info("Slack reply stream fell back to non-streaming reply", logPayload);
+              return;
+            }
+            if (streamEvent.type === "stream_started") {
+              args.logger.info("Slack reply stream started", logPayload);
+              return;
+            }
+            args.logger.info("Slack reply stream stopped", logPayload);
+          },
+        });
 
     args.messageQueue.enqueue(threadKey, async () => {
       const paths = buildThreadPaths(args.config.workspaceDir, message.channelId, message.rootThreadTs);
@@ -170,6 +184,53 @@ export function createSlackMessageHandler(args: {
         text: message.text,
         attachments,
       });
+
+      if (suppressedExternalCoordinationMessage) {
+        const targetSlackUserIds = processability.mentionedUserIds.filter((userId) => userId !== botUserId);
+        try {
+          const hintResolution = await resolveExternalCoordinationHint({
+            config: args.config,
+            paths,
+            channelId: message.channelId,
+            rootThreadTs: message.rootThreadTs,
+            sourceMessageTs: message.ts,
+            sourceUserId: message.userId,
+            targetSlackUserIds,
+            requestText: message.text,
+            attachments: attachmentSummaries,
+          });
+          for (const diagnostic of hintResolution.diagnostics) {
+            const logPayload = {
+              channelId: message.channelId,
+              threadTs: message.rootThreadTs,
+              messageTs: message.ts,
+            };
+            if (diagnostic.level === "warn") {
+              args.logger.warn(diagnostic.message, logPayload);
+            } else {
+              args.logger.info(diagnostic.message, logPayload);
+            }
+          }
+          if (hintResolution.hint) {
+            await saveExternalCoordinationHint(paths, hintResolution.hint);
+            args.logger.info("Saved external coordination hint for ignored Slack message", {
+              channelId: message.channelId,
+              threadTs: message.rootThreadTs,
+              messageTs: message.ts,
+              issueId: hintResolution.hint.issueId,
+              targetSlackUserId: hintResolution.hint.targetSlackUserId,
+            });
+          }
+        } catch (error) {
+          args.logger.warn("External coordination hint resolution failed", {
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+            messageTs: message.ts,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        return;
+      }
 
       try {
         const managerResult = await handleManagerMessage(

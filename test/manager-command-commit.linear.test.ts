@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { commitManagerCommandProposals } from "../src/lib/manager-command-commit.js";
+import { saveExternalCoordinationHint } from "../src/lib/external-coordination-hint.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 import { recordPlanningOutcome } from "../src/state/workgraph/recorder.js";
 import {
   buildLinearTestEnv,
@@ -152,6 +154,100 @@ describe("manager command commit linear", () => {
     expect(result.rejected[0]?.reason).toContain("AIC-85");
     expect(result.rejected[0]?.reason).toContain("AIC-86");
     expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
+  });
+
+  it("accepts add_comment when the proposal matches the external coordination hint issue", async () => {
+    const rootThreadTs = "thread-external-coordination-comment";
+    const paths = buildThreadPaths(testContext.workspaceDir, "C0ALAMDRB9V", rootThreadTs);
+    await ensureThreadWorkspace(paths);
+    await saveExternalCoordinationHint(paths, {
+      issueId: "AIC-55",
+      issueTitle: "契約締結対応",
+      targetSlackUserId: "U-TAHIRA",
+      sourceMessageTs: "coordination-request-1",
+      sourceUserId: "U-KYAU",
+      requestText: "契約書ですがこちらご確認頂けますと！",
+      attachmentNames: ["contract.docx"],
+      resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+      recordedAt: "2026-03-31T01:36:00.000Z",
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-55",
+          body: "## Progress source\n- sourceMessageTs: coordination-reply-1\n- replyText: ありがとうございます！法務に回します！",
+          reasonSummary: "外部調整の進捗を記録する",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs,
+        messageTs: "coordination-reply-1",
+        userId: "U-TAHIRA",
+        text: "ありがとうございます！法務に回します！",
+      },
+      now: new Date("2026-03-31T04:21:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-55",
+      expect.stringContaining("replyText"),
+      expect.any(Object),
+    );
+  });
+
+  it("rejects add_comment when the proposal conflicts with the external coordination hint issue", async () => {
+    const rootThreadTs = "thread-external-coordination-comment-conflict";
+    const paths = buildThreadPaths(testContext.workspaceDir, "C0ALAMDRB9V", rootThreadTs);
+    await ensureThreadWorkspace(paths);
+    await saveExternalCoordinationHint(paths, {
+      issueId: "AIC-55",
+      issueTitle: "契約締結対応",
+      targetSlackUserId: "U-TAHIRA",
+      sourceMessageTs: "coordination-request-1",
+      sourceUserId: "U-KYAU",
+      requestText: "契約書ですがこちらご確認頂けますと！",
+      attachmentNames: ["contract.docx"],
+      resolutionSummary: "既存の契約締結対応 issue に一致しました。",
+      recordedAt: "2026-03-31T01:36:00.000Z",
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-56",
+          body: "## Progress source\n- replyText: ありがとうございます！法務に回します！",
+          reasonSummary: "外部調整の進捗を記録する",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs,
+        messageTs: "coordination-reply-2",
+        userId: "U-TAHIRA",
+        text: "ありがとうございます！法務に回します！",
+      },
+      now: new Date("2026-03-31T04:21:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("AIC-55");
     expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
   });
 
