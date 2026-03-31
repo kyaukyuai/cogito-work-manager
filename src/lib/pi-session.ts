@@ -155,7 +155,8 @@ export {
   buildOtherDirectedMessagePrompt,
   parseOtherDirectedMessageReply,
   type OtherDirectedMessageInput,
-  type OtherDirectedMessageOwnerCandidate,
+  type OtherDirectedMessageOwnerEntry,
+  type OtherDirectedMessageRecentThreadEntry,
   type OtherDirectedMessageResult,
 } from "../planners/other-directed-message/index.js";
 

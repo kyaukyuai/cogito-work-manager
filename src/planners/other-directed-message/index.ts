@@ -1,10 +1,11 @@
 export {
   otherDirectedMessageClassificationSchema,
-  otherDirectedMessageOwnerCandidateSchema,
+  otherDirectedMessageOwnerEntrySchema,
+  otherDirectedMessageRecentThreadEntrySchema,
   otherDirectedMessageReplySchema,
-  otherDirectedMessageSignalFamilySchema,
   type OtherDirectedMessageInput,
-  type OtherDirectedMessageOwnerCandidate,
+  type OtherDirectedMessageOwnerEntry,
+  type OtherDirectedMessageRecentThreadEntry,
   type OtherDirectedMessageResult,
 } from "./contract.js";
 export { buildOtherDirectedMessagePrompt } from "./prompt.js";

@@ -451,7 +451,7 @@ Person-to-person Slack coordination should remain split into three buckets:
 2. system follow-up notifications from review/heartbeat
 3. external coordination threads that are publicly ignored but may later map into hinted-issue progress/comments
 
-For bucket 3, explicit `@other-user without @Cogito` suppression remains deterministic. Plain-text other-directed messages may also enter this bucket through an LLM-assisted, confidence-gated classifier that is fed by code-side candidate and signal extraction. Suppression and hint creation are separate: a thread may be publicly ignored even when no safe hinted Slack target can be persisted.
+For bucket 3, explicit `@other-user without @Cogito` suppression remains deterministic. Plain-text other-directed messages may also enter this bucket through an LLM-first classifier that reads the latest message, recent thread context, and owner-map entries directly. Suppression and hint creation are separate: a thread may be publicly ignored even when no safe hinted Slack target can be persisted.
 
 Only the third bucket is allowed to auto-promote `Backlog -> In Progress`, and only when the thread-local hint resolves exactly to an existing issue and later replies clearly indicate progress.
 

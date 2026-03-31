@@ -6,18 +6,16 @@ export const otherDirectedMessageClassificationSchema = z.enum([
   "unclear",
 ]);
 
-export const otherDirectedMessageSignalFamilySchema = z.enum([
-  "line-opener",
-  "directed-verb",
-  "repeated-target",
-]);
+export const otherDirectedMessageRecentThreadEntrySchema = z.object({
+  userId: z.string().trim().min(1).optional(),
+  text: z.string().trim().min(1),
+});
 
-export const otherDirectedMessageOwnerCandidateSchema = z.object({
+export const otherDirectedMessageOwnerEntrySchema = z.object({
   entryId: z.string().trim().min(1),
-  label: z.string().trim().min(1),
+  linearAssignee: z.string().trim().min(1),
+  keywords: z.array(z.string().trim().min(1)).default([]),
   slackUserId: z.string().trim().min(1).optional(),
-  matchSource: z.enum(["id", "linearAssignee", "keyword"]),
-  matchedSignalFamilies: z.array(otherDirectedMessageSignalFamilySchema).default([]),
 });
 
 export const otherDirectedMessageReplySchema = z.object({
@@ -35,18 +33,23 @@ export const otherDirectedMessageReplySchema = z.object({
   }
 });
 
-export interface OtherDirectedMessageOwnerCandidate {
+export interface OtherDirectedMessageRecentThreadEntry {
+  userId?: string;
+  text: string;
+}
+
+export interface OtherDirectedMessageOwnerEntry {
   entryId: string;
-  label: string;
+  linearAssignee: string;
+  keywords: string[];
   slackUserId?: string;
-  matchSource: "id" | "linearAssignee" | "keyword";
-  matchedSignalFamilies: Array<"line-opener" | "directed-verb" | "repeated-target">;
 }
 
 export interface OtherDirectedMessageInput {
   messageText: string;
-  signalFamilies: Array<"line-opener" | "directed-verb" | "repeated-target">;
-  ownerCandidates: OtherDirectedMessageOwnerCandidate[];
+  recentThreadEntries: OtherDirectedMessageRecentThreadEntry[];
+  ownerEntries: OtherDirectedMessageOwnerEntry[];
+  assistantName: string;
   workspaceAgents?: string;
   workspaceMemory?: string;
   taskKey?: string;

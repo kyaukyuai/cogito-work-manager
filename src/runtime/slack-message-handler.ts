@@ -8,12 +8,10 @@ import { runOtherDirectedMessageTurn } from "../lib/pi-session.js";
 import { postSlackMentionMessage } from "../lib/slack-replies.js";
 import {
   analyzeSlackMessageProcessability,
-  extractPlainTextOtherDirectedCandidates,
   normalizeSlackMessage,
-  type PlainTextOtherDirectedCandidateExtraction,
-  type PlainTextOtherDirectedOwnerCandidate,
   type RawSlackMessageEvent,
 } from "../lib/slack.js";
+import { getSlackThreadContext } from "../lib/slack-context.js";
 import {
   appendThreadLog,
   buildThreadPaths,
@@ -37,9 +35,6 @@ import {
 import { createSlackReplyStreamController } from "../lib/slack-replies.js";
 import type { SystemTaskExecutor } from "./system-task-executor.js";
 import { ingestThreadAttachments } from "../gateways/slack-attachments/index.js";
-import { detectSlackOutboundPostRequest } from "../orchestrators/shared/slack-conversation.js";
-
-const OTHER_DIRECTED_MESSAGE_CONFIDENCE_THRESHOLD = 0.7;
 
 export function createSlackMessageHandler(args: {
   config: AppConfig;
@@ -81,18 +76,6 @@ export function createSlackMessageHandler(args: {
     const rawEvent = event as RawSlackMessageEvent;
     const processability = analyzeSlackMessageProcessability(rawEvent, botUserId, args.config.slackAllowedChannelIds);
     const normalizedText = typeof rawEvent.text === "string" ? rawEvent.text.trim() : "";
-    const explicitOutboundPostRequest = detectSlackOutboundPostRequest(normalizedText);
-    let plainTextOtherDirectedExtraction: PlainTextOtherDirectedCandidateExtraction | undefined;
-
-    if (
-      processability.shouldProcess
-      && !processability.hasBotMention
-      && !explicitOutboundPostRequest
-      && normalizedText
-    ) {
-      const ownerMap = await args.managerRepositories.ownerMap?.load?.().catch(() => undefined);
-      plainTextOtherDirectedExtraction = extractPlainTextOtherDirectedCandidates(normalizedText, ownerMap);
-    }
 
     const suppressedByMention = !processability.shouldProcess
       && processability.reason === "ignored_other_user_mention_without_bot";
@@ -213,28 +196,57 @@ export function createSlackMessageHandler(args: {
       });
 
       let plainTextSuppressedByClassifier = false;
-      let selectedOwnerCandidate: PlainTextOtherDirectedOwnerCandidate | undefined;
+      let selectedOwnerCandidate:
+        | {
+            entryId: string;
+            linearAssignee: string;
+            keywords: string[];
+            slackUserId?: string;
+          }
+        | undefined;
       let selectedOwnerSlackUserId: string | undefined;
       let selectedOwnerEntryId: string | undefined;
-      let selectedOwnerLabel: string | undefined;
       let classifierConfidence: number | undefined;
       let classifierClassification: "to_other_person" | "to_cogito" | "unclear" | undefined;
+      let assistantName = "コギト";
+      let recentThreadEntries: Array<{ userId?: string; text: string }> = [];
+      let ownerEntries: Array<{
+        entryId: string;
+        linearAssignee: string;
+        keywords: string[];
+        slackUserId?: string;
+      }> = [];
 
-      if (!suppressedByMention && plainTextOtherDirectedExtraction) {
+      if (!suppressedByMention && !processability.hasBotMention && normalizedText) {
         try {
+          const [ownerMap, policy, recentThreadContext] = await Promise.all([
+            Promise.resolve(args.managerRepositories.ownerMap?.load?.()).catch(() => undefined),
+            Promise.resolve(args.managerRepositories.policy?.load?.()).catch(() => undefined),
+            getSlackThreadContext(args.config.workspaceDir, message.channelId, message.rootThreadTs, 8).catch(() => undefined),
+          ]);
+          assistantName = policy?.assistantName?.trim() || "コギト";
+          ownerEntries = (ownerMap?.entries ?? []).map((entry) => ({
+            entryId: entry.id,
+            linearAssignee: entry.linearAssignee,
+            keywords: entry.keywords,
+            slackUserId: entry.slackUserId,
+          }));
+          recentThreadEntries = (recentThreadContext?.entries ?? [])
+            .filter((entry) => entry.ts !== message.ts)
+            .map((entry) => ({
+              userId: entry.userId,
+              text: (entry.text ?? "").trim(),
+            }))
+            .filter((entry) => entry.text)
+            .slice(-6);
           const classification = await runOtherDirectedMessageTurn(
             args.config,
             paths,
             {
               messageText: message.text,
-              signalFamilies: plainTextOtherDirectedExtraction.signalFamilies,
-              ownerCandidates: plainTextOtherDirectedExtraction.ownerCandidates.map((candidate) => ({
-                entryId: candidate.entryId,
-                label: candidate.label,
-                slackUserId: candidate.slackUserId,
-                matchSource: candidate.matchSource,
-                matchedSignalFamilies: candidate.matchedSignalFamilies,
-              })),
+              recentThreadEntries,
+              ownerEntries,
+              assistantName,
               taskKey: `${message.channelId}-${message.rootThreadTs}-${message.ts}-other-directed-message`,
             },
           );
@@ -242,22 +254,20 @@ export function createSlackMessageHandler(args: {
           classifierConfidence = classification.confidence;
           selectedOwnerEntryId = classification.selectedOwnerEntryId;
           selectedOwnerCandidate = classification.selectedOwnerEntryId
-            ? plainTextOtherDirectedExtraction.ownerCandidates.find(
-                (candidate) => candidate.entryId === classification.selectedOwnerEntryId,
+            ? ownerEntries.find(
+                (entry) => entry.entryId === classification.selectedOwnerEntryId,
               )
             : undefined;
           selectedOwnerSlackUserId = selectedOwnerCandidate?.slackUserId;
-          selectedOwnerLabel = selectedOwnerCandidate?.label;
-          plainTextSuppressedByClassifier =
-            classification.classification === "to_other_person"
-            && classification.confidence >= OTHER_DIRECTED_MESSAGE_CONFIDENCE_THRESHOLD;
+          plainTextSuppressedByClassifier = classification.classification === "to_other_person";
 
           args.logger.info("Evaluated plain-text other-directed Slack message candidate", {
             channelId: message.channelId,
             threadTs: message.rootThreadTs,
             messageTs: message.ts,
-            signalFamilies: plainTextOtherDirectedExtraction.signalFamilies,
-            candidateCount: plainTextOtherDirectedExtraction.ownerCandidates.length,
+            assistantName,
+            recentThreadEntryCount: recentThreadEntries.length,
+            ownerEntryCount: ownerEntries.length,
             classification: classification.classification,
             confidence: classification.confidence,
             selectedOwnerEntryId: classification.selectedOwnerEntryId,
@@ -268,8 +278,8 @@ export function createSlackMessageHandler(args: {
             channelId: message.channelId,
             threadTs: message.rootThreadTs,
             messageTs: message.ts,
-            signalFamilies: plainTextOtherDirectedExtraction.signalFamilies,
-            candidateCount: plainTextOtherDirectedExtraction.ownerCandidates.length,
+            recentThreadEntryCount: recentThreadEntries.length,
+            ownerEntryCount: ownerEntries.length,
             error: error instanceof Error ? error.message : String(error),
           });
         }
@@ -282,10 +292,9 @@ export function createSlackMessageHandler(args: {
             threadTs: message.rootThreadTs,
             userId: message.userId,
             ignoreReason: "ignored_other_directed_message_without_bot",
-            signalFamilies: plainTextOtherDirectedExtraction?.signalFamilies ?? [],
-            candidateCount: plainTextOtherDirectedExtraction?.ownerCandidates.length ?? 0,
+            recentThreadEntryCount: recentThreadEntries.length,
+            ownerEntryCount: ownerEntries.length,
             selectedOwnerEntryId,
-            selectedOwnerLabel,
             confidence: classifierConfidence,
             classification: classifierClassification,
           });
@@ -298,7 +307,7 @@ export function createSlackMessageHandler(args: {
           : selectedOwnerCandidate
             ? {
                 slackUserId: selectedOwnerSlackUserId,
-                resolutionSummary: `Resolved target from LLM-assisted plain-text classification (${selectedOwnerCandidate.matchSource}; signals=${selectedOwnerCandidate.matchedSignalFamilies.join(", ") || "none"}; confidence=${classifierConfidence ?? 0})`,
+                resolutionSummary: `Resolved target from LLM-first plain-text classification (entryId=${selectedOwnerCandidate.entryId}; confidence=${classifierConfidence ?? 0})`,
               }
             : undefined;
         try {

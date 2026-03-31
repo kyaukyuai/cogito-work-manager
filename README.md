@@ -103,7 +103,7 @@ This bot assumes `linear-cli v2.12.3` or newer. Runtime Linear reads and writes 
 
 Slack attachments are cataloged under each thread workspace. `pdf / docx / txt / md / csv / json` are eagerly extracted on ingest, and the manager agent can inspect them with the read-only tools `slack_list_thread_attachments` and `slack_read_thread_attachment`. If `OPENAI_API_KEY` is set, video and audio attachments are lazily transcribed on first read using `gpt-4o-mini-transcribe`, with about 20 MB chunking and a 30-minute cap. Document attachment reading still works when `OPENAI_API_KEY` is unset.
 
-The runtime can also publicly suppress plain-text Slack messages that are clearly directed to another person even when no explicit `@mention` is present. This path is LLM-assisted and confidence-gated: code extracts coarse signals and owner-map candidates, then an isolated classifier decides `to_other_person | to_cogito | unclear`. Suppression and external-coordination hint creation are separate, so a message may be suppressed even when no safe hinted Slack target can be persisted.
+The runtime can also publicly suppress plain-text Slack messages that are clearly directed to another person even when no explicit `@mention` is present. This path is LLM-first: an isolated classifier decides `to_other_person | to_cogito | unclear` from the latest message, recent thread context, and owner-map entries. Suppression and external-coordination hint creation are separate, so a message may be suppressed even when no safe hinted Slack target can be persisted.
 
 If `NOTION_API_TOKEN` is set, the bundled `ntn v0.4.0` can access Notion. The current scope includes page search, page facts, page content excerpts, database search, and database query. If `NOTION_AGENDA_PARENT_PAGE_ID` is also set, the bot can create agenda pages under the configured parent page. Existing pages can be updated via title changes, append operations, `replace_section` updates limited to `heading_2` sections on Cogito-managed pages, and archive/trash actions. Managed pages are tracked in `workspace/system/notion-pages.json`. Database row updates and deletes are out of scope. Notion is not used as the task system of record.
 
@@ -343,7 +343,7 @@ On `exe.dev`, this bot only needs Docker Compose on a VM. A public proxy is only
 10. Optional: `pdf / docx / md` attachments can be read from the thread
 11. Optional: when `OPENAI_API_KEY` is set, audio/video attachments are lazily transcribed
 12. `@other-user` posts without a Cogito mention are still suppressed deterministically
-13. Clearly other-directed plain-text posts can also be suppressed through the LLM-assisted, confidence-gated classifier
+13. Clearly other-directed plain-text posts can also be suppressed through the LLM-first classifier
 14. Suppressed coordination threads still persist thread log and attachments, and only create an external-coordination hint when a safe owner-map-backed target can be resolved
 
 ## Tests
