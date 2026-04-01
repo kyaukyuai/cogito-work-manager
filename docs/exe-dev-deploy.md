@@ -172,6 +172,9 @@ Linear runtime assumptions:
 - `team members --json`
 - `issue parent/children --json`
 - `issue create-batch --file ... --json`
+- `project list/view --json`
+- `project create --json`
+- `project update` plus `project view --json` refetch
 - `webhook list/create/update --json`
 - `linear capabilities --json` for runtime-surface validation at startup and in diagnostics
 

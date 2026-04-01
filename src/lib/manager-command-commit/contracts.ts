@@ -84,6 +84,45 @@ export const createIssueBatchProposalSchema = proposalBaseSchema.extend({
   })).min(1).max(8),
 });
 
+export const createProjectProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("create_project"),
+  name: z.string().trim().min(1),
+  description: optionalStringSchema,
+  teamKeys: z.array(z.string().trim().min(1)).min(1).max(8).optional(),
+  lead: optionalStringSchema,
+  status: optionalStringSchema,
+  startDate: optionalDateSchema,
+  targetDate: optionalDateSchema,
+});
+
+export const updateProjectProposalSchema = proposalBaseSchema.extend({
+  commandType: z.literal("update_project"),
+  projectId: z.string().trim().min(1),
+  name: optionalStringSchema,
+  description: optionalStringSchema,
+  teamKeys: z.array(z.string().trim().min(1)).min(1).max(8).optional(),
+  lead: optionalStringSchema,
+  status: optionalStringSchema,
+  startDate: optionalDateSchema,
+  targetDate: optionalDateSchema,
+}).superRefine((value, ctx) => {
+  if (
+    !value.name
+    && !value.description
+    && !value.teamKeys
+    && !value.lead
+    && !value.status
+    && !value.startDate
+    && !value.targetDate
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["projectId"],
+      message: "at least one project update field is required",
+    });
+  }
+});
+
 export const linkExistingIssueProposalSchema = proposalBaseSchema.extend({
   commandType: z.literal("link_existing_issue"),
   issueId: z.string().trim().min(1),
@@ -322,6 +361,8 @@ export const postSlackMessageProposalSchema = proposalBaseSchema.extend({
 export const managerCommandProposalSchema = z.discriminatedUnion("commandType", [
   createIssueProposalSchema,
   createIssueBatchProposalSchema,
+  createProjectProposalSchema,
+  updateProjectProposalSchema,
   linkExistingIssueProposalSchema,
   updateIssueStatusProposalSchema,
   updateIssuePriorityProposalSchema,
@@ -348,6 +389,8 @@ export const managerCommandProposalSchema = z.discriminatedUnion("commandType", 
 export type ManagerCommandProposal = z.infer<typeof managerCommandProposalSchema>;
 export type CreateIssueProposal = z.infer<typeof createIssueProposalSchema>;
 export type CreateIssueBatchProposal = z.infer<typeof createIssueBatchProposalSchema>;
+export type CreateProjectProposal = z.infer<typeof createProjectProposalSchema>;
+export type UpdateProjectProposal = z.infer<typeof updateProjectProposalSchema>;
 export type LinkExistingIssueProposal = z.infer<typeof linkExistingIssueProposalSchema>;
 export type UpdateIssueStatusProposal = z.infer<typeof updateIssueStatusProposalSchema>;
 export type UpdateIssuePriorityProposal = z.infer<typeof updateIssuePriorityProposalSchema>;

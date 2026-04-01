@@ -74,6 +74,8 @@ function buildLastManagerAgentTurnPath(paths: ThreadPaths): string {
 function isManagerCommandType(value: unknown): value is ManagerCommandProposal["commandType"] {
   return value === "create_issue"
     || value === "create_issue_batch"
+    || value === "create_project"
+    || value === "update_project"
     || value === "link_existing_issue"
     || value === "update_issue_status"
     || value === "update_issue_priority"
@@ -126,6 +128,10 @@ function buildProposalTargetSummary(proposal: ManagerCommandProposal): string | 
       return proposal.issue.title;
     case "create_issue_batch":
       return proposal.parent.title;
+    case "create_project":
+      return proposal.name;
+    case "update_project":
+      return proposal.projectId;
     case "link_existing_issue":
     case "update_issue_status":
     case "update_issue_priority":
@@ -153,6 +159,25 @@ function buildProposalDetailSummary(proposal: ManagerCommandProposal): string | 
     }
     case "create_issue_batch":
       return `children=${proposal.children.length} planningReason=${proposal.planningReason}`;
+    case "create_project": {
+      const parts = [
+        proposal.teamKeys?.length ? `teams=${proposal.teamKeys.join(",")}` : undefined,
+        proposal.status ? `status=${proposal.status}` : undefined,
+        proposal.lead ? `lead=${proposal.lead}` : undefined,
+        proposal.targetDate ? `target=${proposal.targetDate}` : undefined,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(" ") : undefined;
+    }
+    case "update_project": {
+      const parts = [
+        proposal.name ? `name=${proposal.name}` : undefined,
+        proposal.teamKeys?.length ? `teams=${proposal.teamKeys.join(",")}` : undefined,
+        proposal.status ? `status=${proposal.status}` : undefined,
+        proposal.lead ? `lead=${proposal.lead}` : undefined,
+        proposal.targetDate ? `target=${proposal.targetDate}` : undefined,
+      ].filter(Boolean);
+      return parts.length > 0 ? parts.join(" ") : undefined;
+    }
     case "update_issue_status": {
       const parts = [
         `signal=${proposal.signal}`,

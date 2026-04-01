@@ -145,6 +145,11 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Treat phrases like 後回し, 優先度を下げる, 優先度も下げて, or 優先度低めで as priority changes, not state changes.");
     expect(prompt).toContain("When a deprioritize request does not specify a concrete target level, default to priority=4 (Low).");
     expect(prompt).toContain("Priority changes must not change the issue state.");
+    expect(prompt).toContain("For Linear project list or inspection requests, use intent=query and inspect projects with linear_list_project_facts or linear_get_project_facts.");
+    expect(prompt).toContain("For explicit requests to create a Linear project, use intent=create_work, inspect likely existing projects first with linear_list_project_facts, and use propose_create_project instead of propose_create_issue.");
+    expect(prompt).toContain("For explicit requests to rename or otherwise update an existing Linear project, use intent=update_progress, inspect the target project first with linear_get_project_facts or linear_list_project_facts, and use propose_update_project instead of issue update tools.");
+    expect(prompt).toContain("When creating a Linear project and the user does not specify teams, omit teamKeys so the manager commit can use the fixed default team.");
+    expect(prompt).toContain("Do not route Linear project creation or updates through issue proposals.");
     expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");
     expect(prompt).toContain("If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn");
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");

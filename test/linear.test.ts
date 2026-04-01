@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCreateIssueArgs,
+  buildCreateProjectArgs,
   buildCreateBatchArgs,
   buildCreateLinearWebhookArgs,
   buildDeleteLinearWebhookArgs,
+  buildGetProjectArgs,
   buildIssueChildrenArgs,
   buildIssueCommentAddArgs,
   buildGetIssueArgs,
   buildIssueUrlArgs,
   buildListActiveIssuesArgs,
+  buildListProjectsArgs,
   buildListLinearWebhooksArgs,
   buildSearchIssuesArgs,
   buildTeamMembersArgs,
+  buildUpdateProjectArgs,
   buildUpdateLinearWebhookArgs,
   buildUpdateIssueArgs,
   normalizeLinearIssuePayload,
+  normalizeLinearProjectPayload,
   normalizeLinearWebhookPayload,
   normalizeRelationListPayload,
   normalizeTeamMembersPayload,
@@ -142,6 +147,64 @@ describe("linear command builders", () => {
     expect(buildGetIssueArgs("KYA-123", {
       LINEAR_API_KEY: "lin_api_test",
     }, { includeComments: true })).toEqual(["issue", "view", "KYA-123", "--json"]);
+  });
+
+  it("builds project list, view, create, and update args", () => {
+    expect(buildListProjectsArgs({}, {
+      LINEAR_API_KEY: "lin_api_test",
+      LINEAR_TEAM_KEY: "KYA",
+    })).toEqual(["project", "list", "--json", "--no-pager", "--team", "KYA"]);
+
+    expect(buildListProjectsArgs({ allTeams: true, status: "started" }, {
+      LINEAR_API_KEY: "lin_api_test",
+      LINEAR_TEAM_KEY: "KYA",
+    })).toEqual(["project", "list", "--json", "--no-pager", "--all-teams", "--status", "started"]);
+
+    expect(buildGetProjectArgs("auth-refresh", {
+      LINEAR_API_KEY: "lin_api_test",
+    })).toEqual(["project", "view", "auth-refresh", "--json"]);
+
+    expect(buildCreateProjectArgs({
+      name: "Auth refresh",
+      description: "Rotate sessions",
+      status: "planned",
+      targetDate: "2026-04-30",
+    }, {
+      LINEAR_API_KEY: "lin_api_test",
+      LINEAR_TEAM_KEY: "AIC",
+    })).toEqual([
+      "project",
+      "create",
+      "--name",
+      "Auth refresh",
+      "--json",
+      "--description",
+      "Rotate sessions",
+      "--team",
+      "AIC",
+      "--status",
+      "planned",
+      "--target-date",
+      "2026-04-30",
+    ]);
+
+    expect(buildUpdateProjectArgs({
+      projectId: "auth-refresh",
+      status: "started",
+      teamKeys: ["AIC", "OPS"],
+    }, {
+      LINEAR_API_KEY: "lin_api_test",
+    })).toEqual([
+      "project",
+      "update",
+      "auth-refresh",
+      "--status",
+      "started",
+      "--team",
+      "AIC",
+      "--team",
+      "OPS",
+    ]);
   });
 
   it("builds JSON search args with parent and date filters", () => {
@@ -441,6 +504,55 @@ describe("linear command builders", () => {
       id: "state-1",
       name: "Done",
       type: "completed",
+    });
+  });
+
+  it("normalizes project payloads", () => {
+    const project = normalizeLinearProjectPayload({
+      id: "project-1",
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      description: "Rotate sessions",
+      status: {
+        id: "status-1",
+        name: "In Progress",
+        type: "started",
+      },
+      lead: {
+        displayName: "y.kakui",
+      },
+      teams: [
+        { id: "team-1", key: "AIC", name: "AI Clone" },
+        "OPS",
+      ],
+      issueSummary: {
+        total: 5,
+        backlog: 3,
+        completed: 1,
+      },
+      url: "https://linear.app/project/auth-refresh",
+    });
+
+    expect(project).toMatchObject({
+      id: "project-1",
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      status: {
+        name: "In Progress",
+        type: "started",
+      },
+      lead: {
+        displayName: "y.kakui",
+      },
+      teams: [
+        { key: "AIC", name: "AI Clone" },
+        { key: "OPS" },
+      ],
+      issueSummary: {
+        total: 5,
+        backlog: 3,
+        completed: 1,
+      },
     });
   });
 

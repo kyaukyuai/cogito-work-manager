@@ -12,7 +12,9 @@ import { WEBHOOK_INITIAL_PROPOSAL_MARKER } from "../src/orchestrators/webhooks/i
 
 const linearMocks = vi.hoisted(() => ({
   getLinearIssue: vi.fn(),
+  getLinearProject: vi.fn(),
   listOpenLinearIssues: vi.fn(),
+  listLinearProjects: vi.fn(),
   searchLinearIssues: vi.fn(),
 }));
 
@@ -25,7 +27,9 @@ vi.mock("../src/lib/linear.js", async () => {
   return {
     ...actual,
     getLinearIssue: linearMocks.getLinearIssue,
+    getLinearProject: linearMocks.getLinearProject,
     listOpenLinearIssues: linearMocks.listOpenLinearIssues,
+    listLinearProjects: linearMocks.listLinearProjects,
     searchLinearIssues: linearMocks.searchLinearIssues,
   };
 });
@@ -136,7 +140,9 @@ describe("manager agent tools", () => {
   afterEach(async () => {
     notionMocks.getNotionPageContent.mockReset();
     linearMocks.getLinearIssue.mockReset();
+    linearMocks.getLinearProject.mockReset();
     linearMocks.listOpenLinearIssues.mockReset();
+    linearMocks.listLinearProjects.mockReset();
     linearMocks.searchLinearIssues.mockReset();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -321,6 +327,85 @@ describe("manager agent tools", () => {
           body: `${WEBHOOK_INITIAL_PROPOSAL_MARKER}\n\n既存の初回提案コメント`,
         }),
       ],
+    });
+  });
+
+  it("lists project facts for project queries", async () => {
+    linearMocks.listLinearProjects.mockResolvedValue([
+      {
+        id: "project-1",
+        slugId: "auth-refresh",
+        name: "Auth refresh",
+        description: "Rotate sessions and clean up auth debt.",
+        status: { id: "status-started", name: "Started", type: "started" },
+        lead: { id: "user-1", name: "y.kakui", displayName: "y.kakui" },
+        teams: [{ id: "team-aic", key: "AIC", name: "AI Clone" }],
+        targetDate: "2026-04-30",
+      },
+    ]);
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+    const tool = tools.find((entry) => entry.name === "linear_list_project_facts");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-project-list", { query: "auth", limit: 5 });
+    const details = result.details as Array<Record<string, unknown>>;
+
+    expect(linearMocks.listLinearProjects).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "auth",
+        limit: 5,
+      }),
+      expect.objectContaining({
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      }),
+      undefined,
+    );
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      statusName: "Started",
+      teams: [expect.objectContaining({ key: "AIC" })],
+      targetDate: "2026-04-30",
+    });
+  });
+
+  it("returns one project fact for linear_get_project_facts", async () => {
+    linearMocks.getLinearProject.mockResolvedValue({
+      id: "project-1",
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      description: "Rotate sessions and clean up auth debt.",
+      status: { id: "status-planned", name: "Planned", type: "planned" },
+      lead: { id: "user-1", name: "y.kakui", displayName: "y.kakui" },
+      teams: [{ id: "team-aic", key: "AIC", name: "AI Clone" }],
+      issueSummary: { total: 4, completed: 1, started: 2, unstarted: 1, backlog: 1, triage: 0, canceled: 0 },
+    });
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+    const tool = tools.find((entry) => entry.name === "linear_get_project_facts");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-project-get", { projectIdOrSlug: "auth-refresh" });
+
+    expect(linearMocks.getLinearProject).toHaveBeenCalledWith(
+      "auth-refresh",
+      expect.objectContaining({
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      }),
+      undefined,
+    );
+    expect(result.details).toMatchObject({
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      statusName: "Planned",
+      issueSummary: {
+        total: 4,
+        started: 2,
+      },
     });
   });
 
