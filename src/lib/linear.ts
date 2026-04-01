@@ -111,6 +111,12 @@ export interface LinearProjectIssueSummary {
   canceled?: number;
 }
 
+export interface LinearIssueProject {
+  id?: string | null;
+  name?: string | null;
+  slugId?: string | null;
+}
+
 export interface LinearIssue {
   id: string;
   identifier: string;
@@ -128,6 +134,7 @@ export interface LinearIssue {
   assignee?: LinearUser | null;
   labels?: LinearLabel[];
   state?: LinearWorkflowState | null;
+  project?: LinearIssueProject | null;
   parent?: Pick<LinearIssue, "id" | "identifier" | "title" | "url"> | null;
   children?: Array<Pick<LinearIssue, "id" | "identifier" | "title" | "url">>;
   relations?: Array<{
@@ -338,6 +345,12 @@ interface CliIssueRef {
   state?: CliIssueState | null;
 }
 
+interface CliIssueProject {
+  id?: string | null;
+  name?: string | null;
+  slugId?: string | null;
+}
+
 interface CliIssuePayload extends CliIssueRef {
   description?: string | null;
   createdAt?: string | null;
@@ -349,6 +362,7 @@ interface CliIssuePayload extends CliIssueRef {
   creator?: CliIssueUser | null;
   assignee?: CliIssueUser | null;
   labels?: CliIssueLabel[] | null;
+  project?: CliIssueProject | null;
   cycle?: {
     id?: string;
     number?: number | null;
@@ -725,6 +739,21 @@ function normalizeLinearProjectIssueSummary(raw: unknown): LinearProjectIssueSum
   return Object.values(summary).some((value) => value != null) ? summary : undefined;
 }
 
+function normalizeLinearIssueProject(raw: unknown): LinearIssueProject | undefined {
+  if (!isRecord(raw)) return undefined;
+  const id = toNullableString(raw.id);
+  const name = toNullableString(raw.name);
+  const slugId = toNullableString(raw.slugId);
+  if (!id && !name && !slugId) {
+    return undefined;
+  }
+  return {
+    id,
+    name,
+    slugId,
+  };
+}
+
 function deriveLatestActionKind(body: string): LinearIssue["latestActionKind"] {
   const trimmed = body.trim();
   if (trimmed.startsWith("## Progress update")) return "progress";
@@ -899,6 +928,7 @@ export function normalizeLinearIssuePayload(raw: unknown): LinearIssue | undefin
       ? raw.labels.map((label) => normalizeLinearLabel(label)).filter(Boolean) as LinearLabel[]
       : [],
     state: normalizedState,
+    project: normalizeLinearIssueProject(raw.project) ?? null,
     parent: toIssueRef(raw.parent) ?? null,
     children,
     relations: embeddedRelations.relations,

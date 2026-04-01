@@ -150,6 +150,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "When the user asks to run a built-in schedule immediately, reply briefly that built-in immediate run is not supported in this scope instead of forcing a proposal.",
     "If a scheduler request is missing only the execution prompt, ask one concise follow-up question. Otherwise prefer immediate valid proposals.",
     "For Linear project list or inspection requests, use intent=query and inspect projects with linear_list_project_facts or linear_get_project_facts.",
+    "For task-list queries grouped by project, inspect active issue facts and group by each issue's exact project field when present. Do not infer project membership from project-level summary counts.",
     "For explicit requests to create a Linear project, use intent=create_work, inspect likely existing projects first with linear_list_project_facts, and use propose_create_project instead of propose_create_issue.",
     "For explicit requests to rename or otherwise update an existing Linear project, use intent=update_progress, inspect the target project first with linear_get_project_facts or linear_list_project_facts, and use propose_update_project instead of issue update tools.",
     "When creating a Linear project and the user does not specify teams, omit teamKeys so the manager commit can use the fixed default team.",

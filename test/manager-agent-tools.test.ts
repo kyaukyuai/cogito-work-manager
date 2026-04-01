@@ -372,6 +372,40 @@ describe("manager agent tools", () => {
     });
   });
 
+  it("includes exact project membership in active issue facts", async () => {
+    linearMocks.listOpenLinearIssues.mockResolvedValue([
+      {
+        id: "issue-1",
+        identifier: "AIC-101",
+        title: "Read cloned dialog summaries",
+        state: { id: "state-backlog", name: "Backlog", type: "backlog" },
+        project: {
+          id: "project-1",
+          name: "ai-clone",
+          slugId: "b97730114138",
+        },
+        relations: [],
+        inverseRelations: [],
+      },
+    ]);
+
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+    const tool = tools.find((entry) => entry.name === "linear_list_active_issue_facts");
+
+    expect(tool).toBeDefined();
+    const result = await tool!.execute("tool-call-issue-list", { limit: 5 });
+    const details = result.details as Array<Record<string, unknown>>;
+
+    expect(details).toHaveLength(1);
+    expect(details[0]).toMatchObject({
+      identifier: "AIC-101",
+      project: {
+        name: "ai-clone",
+        slugId: "b97730114138",
+      },
+    });
+  });
+
   it("returns one project fact for linear_get_project_facts", async () => {
     linearMocks.getLinearProject.mockResolvedValue({
       id: "project-1",

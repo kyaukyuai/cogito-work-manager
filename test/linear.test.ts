@@ -403,6 +403,11 @@ describe("linear command builders", () => {
         name: "In Progress",
         color: "#f87462",
       },
+      project: {
+        id: "project-1",
+        name: "Auth refresh",
+        slugId: "auth-refresh",
+      },
       parent: {
         id: "issue-100",
         identifier: "TEST-100",
@@ -454,6 +459,10 @@ describe("linear command builders", () => {
       identifier: "TEST-123",
       title: "Fix authentication bug in login flow",
       priorityLabel: "High",
+      project: {
+        name: "Auth refresh",
+        slugId: "auth-refresh",
+      },
       cycle: {
         id: "cycle-1",
         number: 42,
