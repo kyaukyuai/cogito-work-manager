@@ -738,6 +738,7 @@ describe("prompt helpers", () => {
     });
 
     expect(prompt).toContain("If only one part of the latest message maps to one referenced issue and another part has no existing issue, update the matched issue and say the unmatched topic has no existing issue instead of failing the whole turn.");
+    expect(prompt).toContain("Do not silently fold a separate noun phrase or workstream into the matched issue unless the referenced issue title or title hint clearly covers it.");
     expect(prompt).toContain("In that partial-success case, also call report_partial_followup_resolution with matchedIssueIds and unmatchedTopics so the manager can preserve the unmatched topic in the final reply.");
   });
 

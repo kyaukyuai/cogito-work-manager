@@ -45,6 +45,11 @@ import {
   type OtherDirectedMessageResult,
 } from "../planners/other-directed-message/index.js";
 import {
+  runPartialFollowupUnmatchedTurnWithExecutor,
+  type PartialFollowupUnmatchedInput,
+  type PartialFollowupUnmatchedResult,
+} from "../planners/partial-followup-unmatched/index.js";
+import {
   runPersonalizationExtractionTurnWithExecutor,
   type PersonalizationExtractionInput,
   type PersonalizationExtractionResult,
@@ -148,6 +153,14 @@ export {
   type TaskPlanningResultClarify,
   type TaskPlanningResultCreate,
 } from "../planners/task-intake/index.js";
+
+export {
+  buildPartialFollowupUnmatchedPrompt,
+  parsePartialFollowupUnmatchedReply,
+  type PartialFollowupUnmatchedInput,
+  type PartialFollowupUnmatchedIssueRef,
+  type PartialFollowupUnmatchedResult,
+} from "../planners/partial-followup-unmatched/index.js";
 
 export {
   buildPersonalizationExtractionPrompt,
@@ -552,6 +565,19 @@ export async function runOtherDirectedMessageTurn(
     paths,
     input,
     runOtherDirectedMessageTurnWithExecutor,
+  );
+}
+
+export async function runPartialFollowupUnmatchedTurn(
+  config: AppConfig,
+  paths: ThreadPaths,
+  input: PartialFollowupUnmatchedInput,
+): Promise<PartialFollowupUnmatchedResult> {
+  return runWorkspaceCustomizedPlannerTurn(
+    config,
+    paths,
+    input,
+    runPartialFollowupUnmatchedTurnWithExecutor,
   );
 }
 

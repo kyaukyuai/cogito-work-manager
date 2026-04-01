@@ -10,6 +10,7 @@ import {
 } from "../orchestrators/query/handle-query.js";
 import {
   runManagerAgentTurn,
+  runPartialFollowupUnmatchedTurn,
   type ManagerAgentTurnObserver,
 } from "./pi-session.js";
 import type { ManagerMessageAttachmentSummary } from "../runtime/manager-prompts.js";
@@ -69,6 +70,7 @@ import {
   type ManagerPolicy,
 } from "../state/manager-state-contract.js";
 import type { PartialFollowupResolutionReport } from "./partial-followup-resolution.js";
+import type { PartialFollowupUnmatchedResult } from "../planners/partial-followup-unmatched/index.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
   getThreadPlanningContext,
@@ -102,7 +104,7 @@ import {
   clearExternalCoordinationHint,
   loadExternalCoordinationHint,
 } from "./external-coordination-hint.js";
-import { loadSystemThreadContext } from "./system-thread-context.js";
+import { loadSystemThreadContext, type SystemThreadContext } from "./system-thread-context.js";
 import {
   clearPendingManagerClarification,
   isPendingManagerClarificationContinuation,
@@ -692,6 +694,80 @@ function buildPartialFollowupSuccessReply(args: {
         formatSlackBullets(unmatchedTopics.map((topic) => `${topic}: 必要なら別 issue として起票してください`)),
       ]);
   return composeSlackReply([successReply, unmatchedReply]);
+}
+
+async function resolvePartialFollowupResolutionForReply(args: {
+  config: AppConfig;
+  paths: ThreadPaths;
+  message: ManagerSlackMessage;
+  intent: ManagerIntentReport["intent"] | undefined;
+  committed: ManagerCommittedCommand[];
+  commitRejections: ManagerProposalRejection[];
+  partialFollowupResolutionReport: PartialFollowupResolutionReport | undefined;
+  systemThreadContext: SystemThreadContext | undefined;
+  logger?: Pick<Console, "info" | "warn">;
+}): Promise<PartialFollowupResolutionReport | undefined> {
+  if (!isMutableIntent(args.intent) || args.committed.length === 0 || args.commitRejections.length > 0) {
+    return args.partialFollowupResolutionReport;
+  }
+  if (args.partialFollowupResolutionReport?.unmatchedTopics.length) {
+    return args.partialFollowupResolutionReport;
+  }
+  if (!args.systemThreadContext || args.systemThreadContext.issueRefs.length === 0) {
+    return args.partialFollowupResolutionReport;
+  }
+
+  const committedIssueIds = unique(args.committed.flatMap((entry) => entry.issueIds))
+    .filter((issueId) => /^AIC-\d+$/.test(issueId));
+  if (committedIssueIds.length === 0) {
+    return args.partialFollowupResolutionReport;
+  }
+
+  let fallbackResult: PartialFollowupUnmatchedResult;
+  try {
+    fallbackResult = await runPartialFollowupUnmatchedTurn(args.config, args.paths, {
+      messageText: args.message.text,
+      committedIssueIds,
+      referencedIssues: args.systemThreadContext.issueRefs.map((entry) => ({
+        issueId: entry.issueId,
+        titleHint: entry.titleHint,
+        role: entry.role,
+      })),
+      taskKey: `${args.message.channelId}-${args.message.rootThreadTs}-${args.message.messageTs}-partial-followup-unmatched`,
+    });
+  } catch (error) {
+    args.logger?.warn("Partial follow-up unmatched fallback failed", {
+      channelId: args.message.channelId,
+      threadTs: args.message.rootThreadTs,
+      messageTs: args.message.messageTs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return args.partialFollowupResolutionReport;
+  }
+
+  if (fallbackResult.unmatchedTopics.length === 0) {
+    return args.partialFollowupResolutionReport;
+  }
+
+  const matchedIssueIds = fallbackResult.matchedIssueIds
+    .filter((issueId) => committedIssueIds.includes(issueId));
+  if (matchedIssueIds.length === 0) {
+    return args.partialFollowupResolutionReport;
+  }
+
+  args.logger?.info("Recovered partial follow-up unmatched topics via fallback planner", {
+    channelId: args.message.channelId,
+    threadTs: args.message.rootThreadTs,
+    messageTs: args.message.messageTs,
+    matchedIssueIds,
+    unmatchedTopics: fallbackResult.unmatchedTopics,
+  });
+
+  return {
+    matchedIssueIds,
+    unmatchedTopics: fallbackResult.unmatchedTopics,
+    summary: fallbackResult.reasoningSummary,
+  };
 }
 
 function formatPendingOwnerMapConfirmationReply(summaryLines: string[]): string {
@@ -1668,11 +1744,22 @@ export async function handleManagerMessage(
       committed: commitResult.committed,
       commitRejections: commitResult.rejected,
     });
-    const partialFollowupSuccessReply = buildPartialFollowupSuccessReply({
+    const effectivePartialFollowupResolutionReport = await resolvePartialFollowupResolutionForReply({
+      config,
+      paths,
+      message,
       intent: agentIntent,
       committed: commitResult.committed,
       commitRejections: commitResult.rejected,
       partialFollowupResolutionReport: agentTurn.partialFollowupResolutionReport,
+      systemThreadContext,
+      logger: runtimeActions?.logger,
+    });
+    const partialFollowupSuccessReply = buildPartialFollowupSuccessReply({
+      intent: agentIntent,
+      committed: commitResult.committed,
+      commitRejections: commitResult.rejected,
+      partialFollowupResolutionReport: effectivePartialFollowupResolutionReport,
     });
     const groundedCreateWorkClarificationReply = buildGroundedCreateWorkClarificationReply({
       intent: agentIntent,
@@ -1891,7 +1978,7 @@ export async function handleManagerMessage(
       committedCommands: commitResult.committed.map(summarizeManagerCommittedCommand),
       rejectedProposals: commitResult.rejected.map(summarizeManagerProposalRejection),
       duplicateResolutions: agentTurn.duplicateResolutions,
-      partialFollowupUnmatchedTopics: agentTurn.partialFollowupResolutionReport?.unmatchedTopics,
+      partialFollowupUnmatchedTopics: effectivePartialFollowupResolutionReport?.unmatchedTopics,
       missingQuerySnapshot,
     });
     runtimeActions?.logger?.info("manager persistence step completed", {

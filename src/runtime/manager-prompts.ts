@@ -548,6 +548,7 @@ function buildSystemThreadFollowupHints(input: ManagerAgentInput): string[] {
     )).join(", ")}`,
     "- Use these referenced issues as strong follow-up hints for later progress, priority, or status updates in this same Slack thread.",
     "- If only one part of the latest message maps to one referenced issue and another part has no existing issue, update the matched issue and say the unmatched topic has no existing issue instead of failing the whole turn.",
+    "- Do not silently fold a separate noun phrase or workstream into the matched issue unless the referenced issue title or title hint clearly covers it.",
     "- In that partial-success case, also call report_partial_followup_resolution with matchedIssueIds and unmatchedTopics so the manager can preserve the unmatched topic in the final reply.",
   ];
 }
