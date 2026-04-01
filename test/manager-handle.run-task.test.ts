@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleManagerMessage } from "../src/lib/manager.js";
 import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
+import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { loadPendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
@@ -41,6 +42,11 @@ const notionMocks = vi.hoisted(() => ({
   archiveNotionPage: vi.fn(),
   createNotionAgendaPage: vi.fn(),
   updateNotionPage: vi.fn(),
+}));
+
+const recorderMocks = vi.hoisted(() => ({
+  recordIssueSignals: vi.fn(),
+  recordFollowupTransitions: vi.fn(),
 }));
 
 const piSessionMocks = vi.hoisted(() => ({
@@ -105,6 +111,15 @@ vi.mock("../src/lib/pi-session.js", () => ({
   runFollowupResolutionTurn: piSessionMocks.runFollowupResolutionTurn,
   runPartialFollowupUnmatchedTurn: piSessionMocks.runPartialFollowupUnmatchedTurn,
 }));
+
+vi.mock("../src/state/workgraph/recorder.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/state/workgraph/recorder.js")>("../src/state/workgraph/recorder.js");
+  return {
+    ...actual,
+    recordIssueSignals: recorderMocks.recordIssueSignals,
+    recordFollowupTransitions: recorderMocks.recordFollowupTransitions,
+  };
+});
 
 function defaultRunTaskRouter(input: { messageText: string }) {
   const text = input.messageText.trim();
@@ -206,6 +221,8 @@ describe("handleManagerMessage run_task flow", () => {
     notionMocks.archiveNotionPage.mockReset();
     notionMocks.createNotionAgendaPage.mockReset();
     notionMocks.updateNotionPage.mockReset();
+    recorderMocks.recordIssueSignals.mockReset().mockResolvedValue(undefined);
+    recorderMocks.recordFollowupTransitions.mockReset().mockResolvedValue(undefined);
 
     piSessionMocks.runManagerAgentTurn.mockReset().mockImplementation(createDefaultTestManagerAgentTurn({
       config: { ...config, workspaceDir },
@@ -425,5 +442,103 @@ describe("handleManagerMessage run_task flow", () => {
       source: "fallback",
       technicalFailure: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_run_task\"}",
     });
+  });
+
+  it("keeps run_task successful when update_issue_status local finalization fails after external mutation", async () => {
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-91",
+      identifier: "AIC-91",
+      title: "run_task hang containment",
+      url: "https://linear.app/kyaukyuai/issue/AIC-91",
+      assignee: { id: "user-1", displayName: "y.kakui" },
+      state: { id: "state-started", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+    recorderMocks.recordIssueSignals.mockRejectedValueOnce(new Error("workgraph append failed"));
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-91 の進捗を更新します。",
+      toolCalls: [],
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-91",
+          signal: "progress",
+          state: "Started",
+          commentBody: "## Progress update\nrun_task repair is in progress",
+          reasonSummary: "進捗を反映します。",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "run_task",
+        confidence: 0.95,
+        summary: "AIC-91 の進捗更新を実行します。",
+      },
+      taskExecutionDecision: {
+        decision: "execute",
+        targetIssueId: "issue-91",
+        targetIssueIdentifier: "AIC-91",
+        summary: "進捗更新を commit します。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-run-task-local-warning",
+        messageTs: "msg-run-task-local-warning-1",
+        userId: "U1",
+        text: "AIC-91 を進めて",
+      },
+      new Date("2026-04-01T04:10:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-91 の進捗を反映しました。");
+    expect(result.reply).toContain("Linear 更新自体は完了しましたが、内部記録の一部に失敗しました。");
+    expect(result.reply).not.toContain("完了できませんでした");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "agent",
+      intent: "run_task",
+      taskExecutionDecision: "execute",
+      taskExecutionTargetIssueIdentifier: "AIC-91",
+      commitWarnings: ["record_issue_signals: workgraph append failed"],
+      postCommitStatus: "partial-local-failure",
+    });
+
+    await expect(
+      loadLastManagerAgentTurn(
+        buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-run-task-local-warning"),
+      ),
+    ).resolves.toMatchObject({
+      commitWarnings: ["record_issue_signals: workgraph append failed"],
+      postCommitStatus: "partial-local-failure",
+      committedCommands: [
+        expect.objectContaining({
+          commandType: "update_issue_status",
+          postCommitStatus: "partial-local-failure",
+          postCommitWarnings: ["record_issue_signals: workgraph append failed"],
+        }),
+      ],
+    });
+
+    const followupResult = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-run-task-local-warning",
+        messageTs: "msg-run-task-local-warning-2",
+        userId: "U1",
+        text: "了解です",
+      },
+      new Date("2026-04-01T04:11:00.000Z"),
+    );
+
+    expect(followupResult.handled).toBe(true);
   });
 });

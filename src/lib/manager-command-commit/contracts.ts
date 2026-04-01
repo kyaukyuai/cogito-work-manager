@@ -473,6 +473,8 @@ export interface ManagerCommittedCommand {
   issueIds: string[];
   summary: string;
   publicReply?: string;
+  postCommitWarnings?: string[];
+  postCommitStatus?: "complete" | "partial-local-failure";
   notionPageTargetEffect?: {
     action: "set-active" | "clear";
     pageId: string;

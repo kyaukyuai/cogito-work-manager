@@ -28,6 +28,8 @@ export interface LastManagerCommittedCommandSummary {
   issueIds: string[];
   summary: string;
   publicReply?: string;
+  postCommitWarnings?: string[];
+  postCommitStatus?: ManagerCommittedCommand["postCommitStatus"];
 }
 
 export interface LastManagerRejectedProposalSummary extends LastManagerProposalSummary {
@@ -56,6 +58,8 @@ export interface LastManagerAgentTurn {
   invalidProposalCount?: number;
   proposals?: LastManagerProposalSummary[];
   committedCommands?: LastManagerCommittedCommandSummary[];
+  commitWarnings?: string[];
+  postCommitStatus?: ManagerCommittedCommand["postCommitStatus"];
   rejectedProposals?: LastManagerRejectedProposalSummary[];
   duplicateResolutions?: LastManagerDuplicateResolution[];
   partialFollowupUnmatchedTopics?: string[];
@@ -217,6 +221,10 @@ function parseCommittedCommandSummaries(value: unknown): LastManagerCommittedCom
       issueIds: parseStringArray(record.issueIds) ?? [],
       summary: record.summary,
       publicReply: typeof record.publicReply === "string" ? record.publicReply : undefined,
+      postCommitWarnings: parseStringArray(record.postCommitWarnings),
+      postCommitStatus: record.postCommitStatus === "complete" || record.postCommitStatus === "partial-local-failure"
+        ? record.postCommitStatus
+        : undefined,
     } satisfies LastManagerCommittedCommandSummary];
   });
   return committed.length > 0 ? committed : undefined;
@@ -342,6 +350,10 @@ export async function loadLastManagerAgentTurn(
       invalidProposalCount: typeof parsed.invalidProposalCount === "number" ? parsed.invalidProposalCount : undefined,
       proposals: parseProposalSummaries(parsed.proposals),
       committedCommands: parseCommittedCommandSummaries(parsed.committedCommands),
+      commitWarnings: parseStringArray(parsed.commitWarnings),
+      postCommitStatus: parsed.postCommitStatus === "complete" || parsed.postCommitStatus === "partial-local-failure"
+        ? parsed.postCommitStatus
+        : undefined,
       rejectedProposals: parseRejectedProposalSummaries(parsed.rejectedProposals),
       duplicateResolutions: parseLastManagerDuplicateResolutions(parsed.duplicateResolutions),
       partialFollowupUnmatchedTopics: parseStringArray(parsed.partialFollowupUnmatchedTopics),
@@ -389,6 +401,8 @@ export function summarizeManagerCommittedCommand(command: ManagerCommittedComman
     issueIds: [...command.issueIds],
     summary: command.summary,
     publicReply: command.publicReply,
+    postCommitWarnings: command.postCommitWarnings ? [...command.postCommitWarnings] : undefined,
+    postCommitStatus: command.postCommitStatus,
   };
 }
 

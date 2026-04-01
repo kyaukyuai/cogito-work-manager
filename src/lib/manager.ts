@@ -170,6 +170,8 @@ export interface ManagerHandleResult {
       proposalCount: number;
       invalidProposalCount?: number;
       committedCommands: string[];
+      commitWarnings?: string[];
+      postCommitStatus?: "complete" | "partial-local-failure";
       commitRejections: string[];
       pendingClarificationDecision?: PendingClarificationDecisionReport["decision"];
       pendingClarificationPersistence?: PendingClarificationDecisionReport["persistence"];
@@ -529,6 +531,44 @@ function buildCompactSuccessfulMutationReply(args: {
     return publicReply;
   }
   return joinSlackSentences([publicReply, followupSentence]) ?? publicReply;
+}
+
+function collectCommittedPostCommitWarnings(committed: ManagerCommittedCommand[]): string[] {
+  return unique(
+    committed.flatMap((entry) => entry.postCommitWarnings ?? [])
+      .map((warning) => warning.trim())
+      .filter(Boolean),
+  );
+}
+
+function deriveCommittedPostCommitStatus(
+  committed: ManagerCommittedCommand[],
+): "complete" | "partial-local-failure" | undefined {
+  if (committed.length === 0) {
+    return undefined;
+  }
+  return committed.some((entry) => entry.postCommitStatus === "partial-local-failure")
+    ? "partial-local-failure"
+    : "complete";
+}
+
+function appendPostCommitWarningNotice(args: {
+  intent: ManagerIntentReport["intent"] | undefined;
+  reply: string;
+  committed: ManagerCommittedCommand[];
+  commitRejections: ManagerProposalRejection[];
+}): string {
+  if (!isMutableIntent(args.intent) || args.commitRejections.length > 0) {
+    return args.reply;
+  }
+  const warnings = collectCommittedPostCommitWarnings(args.committed);
+  if (warnings.length === 0) {
+    return args.reply;
+  }
+  return composeSlackReply([
+    args.reply,
+    "Linear 更新自体は完了しましたが、内部記録の一部に失敗しました。必要なら diagnostics を確認してください。",
+  ]);
 }
 
 function stripSlackSentenceEnding(text: string): string {
@@ -1755,6 +1795,8 @@ export async function handleManagerMessage(
       systemThreadContext,
       logger: runtimeActions?.logger,
     });
+    const commitWarnings = collectCommittedPostCommitWarnings(commitResult.committed);
+    const postCommitStatus = deriveCommittedPostCommitStatus(commitResult.committed);
     const partialFollowupSuccessReply = buildPartialFollowupSuccessReply({
       intent: agentIntent,
       committed: commitResult.committed,
@@ -1776,9 +1818,15 @@ export async function handleManagerMessage(
           preferCommittedPublicReply: shouldPreferCommittedPublicReply(agentIntent),
           preferRejectionReply,
         });
+    const warningAwareReply = appendPostCommitWarningNotice({
+      intent: agentIntent,
+      reply: mergedReplyBase,
+      committed: commitResult.committed,
+      commitRejections: commitResult.rejected,
+    });
     const mergedReply = commitResult.pendingConfirmation?.kind === "owner-map"
       ? commitResult.pendingConfirmation.previewReply
-      : mergedReplyBase;
+      : warningAwareReply;
 
     if (
       externalCoordinationHint
@@ -1976,6 +2024,8 @@ export async function handleManagerMessage(
       invalidProposalCount: agentTurn.invalidProposalCount,
       proposals: agentTurn.proposals.map(summarizeManagerProposal),
       committedCommands: commitResult.committed.map(summarizeManagerCommittedCommand),
+      commitWarnings,
+      postCommitStatus,
       rejectedProposals: commitResult.rejected.map(summarizeManagerProposalRejection),
       duplicateResolutions: agentTurn.duplicateResolutions,
       partialFollowupUnmatchedTopics: effectivePartialFollowupResolutionReport?.unmatchedTopics,
@@ -2005,6 +2055,8 @@ export async function handleManagerMessage(
           invalidProposalCount: agentTurn.invalidProposalCount,
           committedCommands: commitResult.committed.map((entry) => entry.commandType),
           commitRejections: commitResult.rejected.map((entry) => entry.reason),
+          commitWarnings,
+          postCommitStatus,
           pendingClarificationDecision: agentTurn.pendingClarificationDecision?.decision,
           pendingClarificationPersistence: agentTurn.pendingClarificationDecision?.persistence,
           pendingClarificationDecisionSummary: agentTurn.pendingClarificationDecision?.summary,
