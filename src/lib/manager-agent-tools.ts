@@ -517,6 +517,7 @@ function buildIssueFacts(issue: LinearIssue): Record<string, unknown> {
     cycle: issue.cycle ?? undefined,
     updatedAt: issue.updatedAt ?? undefined,
     assignee: issue.assignee ?? undefined,
+    project: issue.project ?? undefined,
     parent: issue.parent ?? undefined,
     children: issue.children ?? [],
     relations: issue.relations ?? [],
@@ -788,7 +789,7 @@ function createLinearReadTools(
       name: "linear_list_active_issue_facts",
       label: "Linear List Active Issue Facts",
       description: "List active Linear issues as raw facts for query, prioritization, and next-step reasoning.",
-      promptSnippet: "Use this for task lists and broad active-work queries. Decide prioritization yourself from the returned facts.",
+      promptSnippet: "Use this for task lists and broad active-work queries. The returned facts include exact project membership when assigned, so group by issue.project instead of inferring from project summary counts.",
       parameters: Type.Object({
         limit: Type.Optional(Type.Number({ description: "Maximum number of issues to fetch." })),
       }),
