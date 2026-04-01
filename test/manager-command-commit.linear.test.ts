@@ -27,6 +27,11 @@ const slackContextMocks = vi.hoisted(() => ({
   getSlackThreadContext: vi.fn(),
 }));
 
+const recorderMocks = vi.hoisted(() => ({
+  recordIssueSignals: vi.fn(),
+  recordFollowupTransitions: vi.fn(),
+}));
+
 vi.mock("../src/lib/linear.js", () => ({
   addLinearComment: linearMocks.addLinearComment,
   addLinearProgressComment: linearMocks.addLinearProgressComment,
@@ -44,6 +49,15 @@ vi.mock("../src/lib/slack-context.js", () => ({
   getSlackThreadContext: slackContextMocks.getSlackThreadContext,
 }));
 
+vi.mock("../src/state/workgraph/recorder.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/state/workgraph/recorder.js")>("../src/state/workgraph/recorder.js");
+  return {
+    ...actual,
+    recordIssueSignals: recorderMocks.recordIssueSignals,
+    recordFollowupTransitions: recorderMocks.recordFollowupTransitions,
+  };
+});
+
 function createLinearTimeoutError(message: string): Error & { timeoutMs: number } {
   const error = new Error(message) as Error & { timeoutMs: number };
   error.name = "LinearCommandTimeoutError";
@@ -56,6 +70,7 @@ describe("manager command commit linear", () => {
 
   beforeEach(async () => {
     testContext = await createManagerCommandCommitTestContext();
+    const actualRecorder = await vi.importActual<typeof import("../src/state/workgraph/recorder.js")>("../src/state/workgraph/recorder.js");
     linearMocks.addLinearComment.mockReset();
     linearMocks.addLinearProgressComment.mockReset();
     linearMocks.addLinearRelation.mockReset();
@@ -71,6 +86,8 @@ describe("manager command commit linear", () => {
       rootThreadTs: "thread-default",
       entries: [],
     });
+    recorderMocks.recordIssueSignals.mockReset().mockImplementation(actualRecorder.recordIssueSignals);
+    recorderMocks.recordFollowupTransitions.mockReset().mockImplementation(actualRecorder.recordFollowupTransitions);
   });
 
   afterEach(async () => {
@@ -298,6 +315,65 @@ describe("manager command commit linear", () => {
       expect.any(Object),
     );
     expect(result.committed[0]?.publicReply).toBe("AIC-501 を完了にしました。");
+  });
+
+  it("keeps update_issue_status successful when local finalization fails after external writes", async () => {
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-91",
+      identifier: "AIC-91",
+      title: "run_task hang containment",
+      state: { id: "state-started", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+    recorderMocks.recordIssueSignals.mockRejectedValueOnce(new Error("workgraph append failed"));
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_issue_status",
+          issueId: "AIC-91",
+          signal: "progress",
+          state: "Started",
+          commentBody: "## Progress update\nrun_task repair is in progress",
+          reasonSummary: "進捗を残す",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-local-finalization-warning",
+        messageTs: "msg-local-finalization-warning-1",
+        userId: "U1",
+        text: "AIC-91 は対応中です",
+      },
+      now: new Date("2026-04-01T04:00:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(result.committed[0]).toMatchObject({
+      commandType: "update_issue_status",
+      issueIds: ["AIC-91"],
+      postCommitStatus: "partial-local-failure",
+      postCommitWarnings: ["record_issue_signals: workgraph append failed"],
+    });
+    expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issueId: "AIC-91",
+      }),
+      expect.any(Object),
+    );
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-91",
+      "## Progress update\nrun_task repair is in progress",
+      expect.any(Object),
+    );
+    expect(recorderMocks.recordFollowupTransitions).toHaveBeenCalled();
   });
 
   it("normalizes cancel aliases to Canceled and avoids completed wording in the reply", async () => {

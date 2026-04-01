@@ -323,8 +323,12 @@ describe("manager diagnostics", () => {
           commandType: "update_issue_status",
           issueIds: ["AIC-67"],
           summary: "AIC-67 を Canceled にしました。",
+          postCommitWarnings: ["record_issue_signals: workgraph append failed"],
+          postCommitStatus: "partial-local-failure",
         },
       ],
+      commitWarnings: ["record_issue_signals: workgraph append failed"],
+      postCommitStatus: "partial-local-failure",
       rejectedProposals: [
         {
           commandType: "add_comment",
@@ -365,8 +369,12 @@ describe("manager diagnostics", () => {
         expect.objectContaining({
           commandType: "update_issue_status",
           issueIds: ["AIC-67"],
+          postCommitWarnings: ["record_issue_signals: workgraph append failed"],
+          postCommitStatus: "partial-local-failure",
         }),
       ],
+      commitWarnings: ["record_issue_signals: workgraph append failed"],
+      postCommitStatus: "partial-local-failure",
       rejectedProposals: [
         expect.objectContaining({
           commandType: "add_comment",

@@ -225,6 +225,37 @@ async function runLoggedUpdateIssueStatusStep<T>(
   }
 }
 
+async function runLoggedUpdateIssueStatusFinalizationStep(
+  args: CommitManagerCommandArgs,
+  proposal: UpdateIssueStatusProposal,
+  step: string,
+  warnings: string[],
+  action: () => Promise<void>,
+): Promise<void> {
+  args.logger?.info("update_issue_status local finalization step started", {
+    issueId: proposal.issueId,
+    signal: proposal.signal,
+    step,
+  });
+  try {
+    await action();
+    args.logger?.info("update_issue_status local finalization step completed", {
+      issueId: proposal.issueId,
+      signal: proposal.signal,
+      step,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    warnings.push(`${step}: ${message}`);
+    args.logger?.warn("update_issue_status local finalization step failed after external mutation", {
+      issueId: proposal.issueId,
+      signal: proposal.signal,
+      step,
+      error: message,
+    });
+  }
+}
+
 async function runLoggedUpdateIssuePriorityStep<T>(
   args: CommitManagerCommandArgs,
   proposal: UpdateIssuePriorityProposal,
@@ -484,6 +515,7 @@ export async function commitUpdateIssueStatusProposal(
   const updatedIssues: LinearIssue[] = [];
   const blockedStateByIssueId = new Map<string, boolean>();
   const replyExtras: string[] = [];
+  const postCommitWarnings: string[] = [];
 
   if (proposal.signal === "progress") {
     const progressComment = proposal.commentBody ?? buildStatusSourceComment(message, "## Progress source");
@@ -628,30 +660,36 @@ export async function commitUpdateIssueStatusProposal(
     message.text,
     args.now,
   );
-  await runLoggedUpdateIssueStatusStep(args, proposal, "save_followups", () => args.repositories.followups.save(nextFollowups));
-  await runLoggedUpdateIssueStatusStep(args, proposal, "record_issue_signals", () => recordIssueSignals(args.repositories.workgraph, {
-    occurredAt,
-    source: {
-      channelId: message.channelId,
-      rootThreadTs: message.rootThreadTs,
-      messageTs: message.messageTs,
-    },
-    textSnippet: message.text,
-    updates: updatedIssues.map((issue) => ({
-      issueId: issue.identifier,
-      signal: proposal.signal,
-      blockedStateApplied: blockedStateByIssueId.get(issue.identifier),
-      dueDate: issue.dueDate ?? undefined,
-    })),
-  }));
-  await runLoggedUpdateIssueStatusStep(args, proposal, "record_followup_transitions", () => recordFollowupTransitions(args.repositories.workgraph, followups, nextFollowups, {
-    occurredAt,
-    source: {
-      channelId: message.channelId,
-      rootThreadTs: message.rootThreadTs,
-      messageTs: message.messageTs,
-    },
-  }));
+  await runLoggedUpdateIssueStatusFinalizationStep(args, proposal, "save_followups", postCommitWarnings, () => (
+    args.repositories.followups.save(nextFollowups)
+  ));
+  await runLoggedUpdateIssueStatusFinalizationStep(args, proposal, "record_issue_signals", postCommitWarnings, async () => {
+    await recordIssueSignals(args.repositories.workgraph, {
+      occurredAt,
+      source: {
+        channelId: message.channelId,
+        rootThreadTs: message.rootThreadTs,
+        messageTs: message.messageTs,
+      },
+      textSnippet: message.text,
+      updates: updatedIssues.map((issue) => ({
+        issueId: issue.identifier,
+        signal: proposal.signal,
+        blockedStateApplied: blockedStateByIssueId.get(issue.identifier),
+        dueDate: issue.dueDate ?? undefined,
+      })),
+    });
+  });
+  await runLoggedUpdateIssueStatusFinalizationStep(args, proposal, "record_followup_transitions", postCommitWarnings, async () => {
+    await recordFollowupTransitions(args.repositories.workgraph, followups, nextFollowups, {
+      occurredAt,
+      source: {
+        channelId: message.channelId,
+        rootThreadTs: message.rootThreadTs,
+        messageTs: message.messageTs,
+      },
+    });
+  });
 
   return {
     commandType: proposal.commandType,
@@ -660,6 +698,8 @@ export async function commitUpdateIssueStatusProposal(
     publicReply: updatedIssues.length === 1
       ? formatCompactStatusReply(proposal.signal, updatedIssues[0], replyExtras)
       : undefined,
+    postCommitWarnings: postCommitWarnings.length > 0 ? [...postCommitWarnings] : undefined,
+    postCommitStatus: postCommitWarnings.length > 0 ? "partial-local-failure" : "complete",
   };
 }
 
