@@ -12,6 +12,7 @@ Cogito is an execution-manager assistant that continuously watches dedicated Sla
 - Splits larger requests into a parent issue plus execution-sized child issues
 - Auto-assigns work using the owner map
 - Reflects due dates into Linear when the request contains a deadline
+- Lists, creates, and updates Linear projects through typed read/proposal/commit paths
 - Detects overdue, stale, blocked, and owner/due-date-missing issues and reports them to the control room
 - Optionally uses Notion as reference material and can create agenda pages under a configured parent page
 - Does not maintain a separate internal todo system
@@ -99,7 +100,7 @@ Optional:
 - `WORKGRAPH_AUTO_COMPACT_MAX_ACTIVE_EVENTS`
 - `LOG_LEVEL`
 
-This bot assumes `linear-cli v2.12.3` or newer. Runtime Linear reads and writes use `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, and `issue create-batch --file ... --json`. Startup and diagnostics verify the required runtime surface with `linear capabilities --json`. The bot accepts the additive `stateName` field from `issue list --json` while remaining compatible with nested `state.name`. Multiline descriptions and comments use `--description-file` and `--body-file`. Relation add is treated as retry-safe. High-value writes pass `LINEAR_WRITE_TIMEOUT_MS` to prefer machine-readable `timeout_error`; when unset, the repo defaults to `25000ms`. If `timeout_error` contains `appliedState` or `callerGuidance`, those fields are preserved for repo-side reconciliation.
+This bot assumes `linear-cli v2.12.3` or newer. Runtime Linear reads and writes use `issue list/view/create/update --json`, `issue comment add --json`, `issue relation add/list --json`, `team members --json`, `issue parent/children --json`, `issue create-batch --file ... --json`, `project list/view --json`, `project create --json`, and `project update` followed by `project view --json` for canonical refetch. Startup and diagnostics verify the required runtime surface with `linear capabilities --json`. The bot accepts the additive `stateName` field from `issue list --json` while remaining compatible with nested `state.name`. Multiline descriptions and comments use `--description-file` and `--body-file`. Relation add is treated as retry-safe. High-value writes pass `LINEAR_WRITE_TIMEOUT_MS` to prefer machine-readable `timeout_error`; when unset, the repo defaults to `25000ms`. If `timeout_error` contains `appliedState` or `callerGuidance`, those fields are preserved for repo-side reconciliation.
 
 Slack attachments are cataloged under each thread workspace. `pdf / docx / txt / md / csv / json` are eagerly extracted on ingest, and the manager agent can inspect them with the read-only tools `slack_list_thread_attachments` and `slack_read_thread_attachment`. If `OPENAI_API_KEY` is set, video and audio attachments are lazily transcribed on first read using `gpt-4o-mini-transcribe`, with about 20 MB chunking and a 30-minute cap. Document attachment reading still works when `OPENAI_API_KEY` is unset.
 

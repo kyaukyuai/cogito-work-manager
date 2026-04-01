@@ -17,6 +17,7 @@ This design does not assume skill-driven production behavior. The primary runtim
 - As of 2026-03-31, follow-up priority changes are first-class proposals and commits through `propose_update_issue_priority` / `update_issue_priority`, rather than being overloaded onto status-change paths
 - As of 2026-04-01, top-level system-generated Slack posts persist typed issue references into the actual Slack thread workspace as `scratch/system-thread-context.json`, so later human follow-ups in that real Slack thread can reuse root review/heartbeat/scheduler/webhook context
 - As of 2026-04-01, pre-AIC-119 system-generated Slack threads can lazily recover `system-thread-context.json` from the actual root Slack post on the first later follow-up, so older review threads can reuse root issue refs without a batch migration
+- As of 2026-04-01, the manager read/write surface also covers Linear projects, including project facts inspection plus typed project create/update proposals committed through the same manager boundary
 - As of 2026-03-31, the Linear runtime contract assumes `linear-cli v2.12.3`, accepts additive `linear capabilities --json` schema changes, and preserves `timeout_error.appliedState` and `callerGuidance` for repo-side reconciliation
 - Business judgment on the primary path must be explicit in agent proposals; manager commit is responsible only for validation, dedupe, execution, and state updates
 - Emergency fallback is safety-only and must not replace primary-path business judgment
@@ -27,6 +28,7 @@ This design does not assume skill-driven production behavior. The primary runtim
 - Reliably convert Slack- and webhook-originated requests into work items
 - Handle progress, blocked, research, and follow-up states within one consistent model
 - Safely execute creation, updates, comments, assignment, relations, status changes, and priority changes against Linear
+- Safely inspect, create, and update Linear projects without bypassing manager commit
 - Preserve explicit contracts and regression-testability even when LLMs are involved
 - Run control-room review and heartbeat on the same execution-manager model
 
@@ -89,12 +91,16 @@ Examples:
 - `linear_list_active_issue_facts`
 - `linear_get_issue_facts`
 - `linear_list_review_facts`
+- `linear_list_project_facts`
+- `linear_get_project_facts`
 - `workgraph_get_thread_context`
 - `slack_list_thread_attachments`
 - `slack_read_thread_attachment`
 - `propose_create_issue`
+- `propose_create_project`
 - `propose_update_issue_status`
 - `propose_update_issue_priority`
+- `propose_update_project`
 - `propose_review_followup`
 
 The agent stops at proposals. Manager commit is responsible for schema validation, execution, and state updates.

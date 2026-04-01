@@ -16,10 +16,12 @@ const linearMocks = vi.hoisted(() => ({
   addLinearRelation: vi.fn(),
   assignLinearIssue: vi.fn(),
   createManagedLinearIssue: vi.fn(),
+  createManagedLinearProject: vi.fn(),
   createManagedLinearIssueBatch: vi.fn(),
   getLinearIssue: vi.fn(),
   searchLinearIssues: vi.fn(),
   updateManagedLinearIssue: vi.fn(),
+  updateManagedLinearProject: vi.fn(),
   updateLinearIssueStateWithComment: vi.fn(),
 }));
 
@@ -38,10 +40,12 @@ vi.mock("../src/lib/linear.js", () => ({
   addLinearRelation: linearMocks.addLinearRelation,
   assignLinearIssue: linearMocks.assignLinearIssue,
   createManagedLinearIssue: linearMocks.createManagedLinearIssue,
+  createManagedLinearProject: linearMocks.createManagedLinearProject,
   createManagedLinearIssueBatch: linearMocks.createManagedLinearIssueBatch,
   getLinearIssue: linearMocks.getLinearIssue,
   searchLinearIssues: linearMocks.searchLinearIssues,
   updateManagedLinearIssue: linearMocks.updateManagedLinearIssue,
+  updateManagedLinearProject: linearMocks.updateManagedLinearProject,
   updateLinearIssueStateWithComment: linearMocks.updateLinearIssueStateWithComment,
 }));
 
@@ -76,10 +80,12 @@ describe("manager command commit linear", () => {
     linearMocks.addLinearRelation.mockReset();
     linearMocks.assignLinearIssue.mockReset();
     linearMocks.createManagedLinearIssue.mockReset();
+    linearMocks.createManagedLinearProject.mockReset();
     linearMocks.createManagedLinearIssueBatch.mockReset();
     linearMocks.getLinearIssue.mockReset();
     linearMocks.searchLinearIssues.mockReset().mockResolvedValue([]);
     linearMocks.updateManagedLinearIssue.mockReset();
+    linearMocks.updateManagedLinearProject.mockReset();
     linearMocks.updateLinearIssueStateWithComment.mockReset();
     slackContextMocks.getSlackThreadContext.mockReset().mockResolvedValue({
       channelId: "C0ALAMDRB9V",
@@ -1464,6 +1470,109 @@ describe("manager command commit linear", () => {
     expect(projection.threads["C0ALAMDRB9V:thread-parent-update"]).toMatchObject({
       parentIssueId: "AIC-39",
       childIssueIds: expect.arrayContaining(["AIC-40"]),
+    });
+  });
+
+  it("creates a Linear project through manager commit", async () => {
+    linearMocks.createManagedLinearProject.mockResolvedValueOnce({
+      id: "project-1",
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      description: "Rotate sessions and clean up auth debt.",
+      status: { id: "status-planned", name: "Planned", type: "planned" },
+      teams: [{ id: "team-aic", key: "AIC", name: "AI Clone" }],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "create_project",
+          name: "Auth refresh",
+          description: "Rotate sessions and clean up auth debt.",
+          status: "planned",
+          reasonSummary: "認証刷新を issue ではなく project として管理する。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-create-project",
+        messageTs: "msg-create-project-1",
+        userId: "U1",
+        text: "Auth refresh の Linear Project を作って",
+      },
+      now: new Date("2026-04-01T06:00:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.createManagedLinearProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Auth refresh",
+        description: "Rotate sessions and clean up auth debt.",
+        status: "planned",
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]).toMatchObject({
+      commandType: "create_project",
+      issueIds: [],
+      publicReply: "Linear Project「Auth refresh」を作成しました。",
+    });
+  });
+
+  it("updates a Linear project through manager commit", async () => {
+    linearMocks.updateManagedLinearProject.mockResolvedValueOnce({
+      id: "project-1",
+      slugId: "auth-refresh",
+      name: "Auth refresh",
+      description: "Rotate sessions and ship incremental cleanup.",
+      status: { id: "status-started", name: "Started", type: "started" },
+      teams: [{ id: "team-aic", key: "AIC", name: "AI Clone" }],
+      targetDate: "2026-04-30",
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "update_project",
+          projectId: "auth-refresh",
+          status: "started",
+          targetDate: "2026-04-30",
+          reasonSummary: "Auth refresh project を着手状態にする。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-update-project",
+        messageTs: "msg-update-project-1",
+        userId: "U1",
+        text: "Auth refresh project を started に更新して",
+      },
+      now: new Date("2026-04-01T06:05:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.updateManagedLinearProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "auth-refresh",
+        status: "started",
+        targetDate: "2026-04-30",
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]).toMatchObject({
+      commandType: "update_project",
+      issueIds: [],
+      publicReply: "Linear Project「Auth refresh」を更新しました。",
     });
   });
 });

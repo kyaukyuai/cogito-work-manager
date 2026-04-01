@@ -35,6 +35,7 @@ export interface LinearCliCapabilitiesPayload {
 interface RequiredCapability {
   path: string;
   minJsonContractVersion?: CapabilityContractVersion;
+  requireJsonSupport?: boolean;
 }
 
 const REQUIRED_RUNTIME_CAPABILITIES: RequiredCapability[] = [
@@ -50,6 +51,10 @@ const REQUIRED_RUNTIME_CAPABILITIES: RequiredCapability[] = [
   { path: "linear issue children", minJsonContractVersion: "v1" },
   { path: "linear issue create-batch", minJsonContractVersion: "v1" },
   { path: "linear team members", minJsonContractVersion: "v1" },
+  { path: "linear project list", minJsonContractVersion: "v2" },
+  { path: "linear project view", minJsonContractVersion: "v2" },
+  { path: "linear project create" },
+  { path: "linear project update", requireJsonSupport: false },
   { path: "linear webhook list" },
   { path: "linear webhook create" },
   { path: "linear webhook update" },
@@ -194,11 +199,11 @@ export function validateLinearCliCapabilities(payload: LinearCliCapabilitiesPayl
       errors.push(`missing ${requirement.path}`);
       continue;
     }
-    if (!command.json.supported) {
+    if (requirement.requireJsonSupport !== false && !command.json.supported) {
       errors.push(`${requirement.path} missing --json support`);
       continue;
     }
-    if (requirement.minJsonContractVersion) {
+    if (requirement.requireJsonSupport !== false && requirement.minJsonContractVersion) {
       const actual = parseContractVersion(command.json.contractVersion);
       const required = parseContractVersion(requirement.minJsonContractVersion);
       if (actual == null || required == null || actual < required) {

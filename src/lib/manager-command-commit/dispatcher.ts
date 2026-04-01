@@ -14,7 +14,9 @@ import {
 import {
   commitCreateIssueBatchProposal,
   commitCreateIssueProposal,
+  commitCreateProjectProposal,
   commitLinkExistingIssueProposal,
+  commitUpdateProjectProposal,
   commitAddCommentProposal,
   commitAddRelationProposal,
   commitAssignIssueProposal,
@@ -61,6 +63,8 @@ type CommandHandlerMap = {
 const commandHandlers = {
   create_issue: commitCreateIssueProposal,
   create_issue_batch: commitCreateIssueBatchProposal,
+  create_project: commitCreateProjectProposal,
+  update_project: commitUpdateProjectProposal,
   link_existing_issue: commitLinkExistingIssueProposal,
   update_issue_status: commitUpdateIssueStatusProposal,
   update_issue_priority: commitUpdateIssuePriorityProposal,
@@ -127,6 +131,10 @@ function formatProposalExecutionFailure(proposal: ManagerCommandProposal, error:
   const message = error instanceof Error ? error.message : String(error);
   const targetIssueId = "issueId" in proposal ? proposal.issueId : undefined;
   switch (proposal.commandType) {
+    case "create_project":
+      return `Linear Project の作成を完了できませんでした: ${message}`;
+    case "update_project":
+      return `Linear Project の更新を完了できませんでした: ${message}`;
     case "update_issue_status":
       return `${targetIssueId ?? "issue"} の状態更新を完了できませんでした: ${message}`;
     case "update_issue_priority":

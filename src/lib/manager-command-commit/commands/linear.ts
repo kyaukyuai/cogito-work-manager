@@ -5,6 +5,10 @@ export {
   fingerprintText,
 } from "./linear-create.js";
 export {
+  commitCreateProjectProposal,
+  commitUpdateProjectProposal,
+} from "./linear-projects.js";
+export {
   commitUpdateIssueStatusProposal,
   commitUpdateIssuePriorityProposal,
   commitAssignIssueProposal,
