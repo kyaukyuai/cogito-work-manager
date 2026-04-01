@@ -17,6 +17,7 @@ import { getSlackThreadContext } from "../../slack-context.js";
 import { loadThreadQueryContinuation } from "../../query-continuation.js";
 import { buildThreadPaths } from "../../thread-workspace.js";
 import { loadExternalCoordinationHint } from "../../external-coordination-hint.js";
+import { loadSystemThreadContext } from "../../system-thread-context.js";
 import { buildWorkgraphThreadKey } from "../../../state/workgraph/events.js";
 import { getThreadPlanningContext } from "../../../state/workgraph/queries.js";
 import { recordFollowupTransitions, recordIssueSignals } from "../../../state/workgraph/recorder.js";
@@ -50,6 +51,7 @@ interface CommitIssueHints {
   recentIssueIds: string[];
   candidateIssueIds: string[];
   queryShownIssueIds: string[];
+  systemThreadContextIssueIds: string[];
   latestFocusIssueId?: string;
   lastResolvedIssueId?: string;
   externalCoordinationHintIssueId?: string;
@@ -72,6 +74,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
   );
   const lastQueryContext = await loadThreadQueryContinuation(threadPaths).catch(() => undefined);
   const externalCoordinationHint = await loadExternalCoordinationHint(threadPaths).catch(() => undefined);
+  const systemThreadContext = await loadSystemThreadContext(threadPaths).catch(() => undefined);
   const planningContext = await getThreadPlanningContext(args.repositories.workgraph, threadKey);
   const latestFocusIssueId = planningContext?.thread.latestFocusIssueId;
   const lastResolvedIssueId = planningContext?.latestResolvedIssue?.issueId ?? planningContext?.thread.lastResolvedIssueId;
@@ -87,6 +90,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
     ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
     ...queryShownIssueIds,
+    ...(systemThreadContext?.issueRefs.map((entry) => entry.issueId) ?? []),
     externalCoordinationHint?.issueId,
     ...(explicitIssueIds.length === 0 && recentIssueIds.length === 1 ? recentIssueIds : []),
   ]);
@@ -97,6 +101,7 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
     recentIssueIds,
     candidateIssueIds,
     queryShownIssueIds,
+    systemThreadContextIssueIds: unique(systemThreadContext?.issueRefs.map((entry) => entry.issueId) ?? []),
     latestFocusIssueId,
     lastResolvedIssueId,
     externalCoordinationHintIssueId: externalCoordinationHint?.issueId,
@@ -140,6 +145,7 @@ function validateIssueTargetHints(
     && proposalIssueId !== hints.latestFocusIssueId
     && proposalIssueId !== hints.lastResolvedIssueId
     && !hints.queryShownIssueIds.includes(proposalIssueId)
+    && !hints.systemThreadContextIssueIds.includes(proposalIssueId)
     && proposalIssueId !== hints.externalCoordinationHintIssueId
   ) {
     return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";

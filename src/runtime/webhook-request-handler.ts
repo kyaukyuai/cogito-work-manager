@@ -12,6 +12,7 @@ import {
   verifyLinearWebhookRequest,
 } from "../lib/linear-webhook.js";
 import { sendSlackReply } from "../lib/slack-replies.js";
+import { persistSystemRootSlackThread } from "../lib/system-thread-context.js";
 import type { AppConfig } from "../lib/config.js";
 import {
   appendThreadLog,
@@ -165,6 +166,16 @@ export function createWebhookRequestHandler(args: {
       channel: currentPolicy.controlRoomChannelId,
       reply: notificationReply,
       linearWorkspace: args.config.linearWorkspace,
+      onPosted: async (posted) => {
+        if (!posted.ts) return;
+        await persistSystemRootSlackThread({
+          workspaceDir: args.config.workspaceDir,
+          channelId: currentPolicy.controlRoomChannelId,
+          rootPostedTs: posted.ts,
+          postedText: posted.text,
+          report: result.agentResult?.systemThreadContextReport,
+        });
+      },
     });
     await appendThreadLog(paths, {
       type: "assistant",

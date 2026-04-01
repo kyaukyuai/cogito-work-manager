@@ -371,6 +371,7 @@ export async function sendSlackReply(
     threadTs?: string;
     linearWorkspace: string;
     updateTs?: string;
+    onPosted?: (result: { ts?: string; text: string }) => Promise<void> | void;
   },
 ): Promise<string> {
   const payload = buildSlackMessagePayload(args.reply, { linearWorkspace: args.linearWorkspace });
@@ -382,17 +383,25 @@ export async function sendSlackReply(
         text: payload.text,
         blocks: payload.blocks,
       });
+      await args.onPosted?.({
+        ts: args.updateTs,
+        text: payload.text,
+      });
       return payload.text;
     } catch {
       // Fall back to a fresh thread reply when the placeholder cannot be updated.
     }
   }
 
-  await webClient.chat.postMessage({
+  const result = await webClient.chat.postMessage({
     channel: args.channel,
     thread_ts: args.threadTs,
     text: payload.text,
     blocks: payload.blocks,
+  });
+  await args.onPosted?.({
+    ts: result.ts,
+    text: payload.text,
   });
   return payload.text;
 }

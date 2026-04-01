@@ -3,6 +3,7 @@ import type { ExternalCoordinationHint } from "../lib/external-coordination-hint
 import type { PendingManagerClarification } from "../lib/pending-manager-clarification.js";
 import type { PendingManagerConfirmation } from "../lib/pending-manager-confirmation.js";
 import type { ThreadQueryContinuation } from "../lib/query-continuation.js";
+import type { SystemThreadContext } from "../lib/system-thread-context.js";
 import type { ThreadNotionPageTarget } from "../lib/thread-notion-page-target.js";
 import {
   buildSlackGreetingPromptHints,
@@ -39,6 +40,7 @@ export interface ManagerAgentInput {
   lastQueryContext?: ThreadQueryContinuation;
   currentThreadNotionPageTarget?: ThreadNotionPageTarget;
   externalCoordinationHint?: ExternalCoordinationHint;
+  systemThreadContext?: SystemThreadContext;
   combinedRequestText?: string;
   pendingClarification?: PendingManagerClarification;
   pendingConfirmation?: PendingManagerConfirmation;
@@ -117,6 +119,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For webhook-issue-created system tasks, for execution or implementation issues propose a first approach, a practical breakdown, key risks, and what to verify next.",
     "For webhook-issue-created system tasks, for thin issues do not stop at generalities. State hypotheses, the first thing to confirm, and a provisional path forward.",
     "For webhook-issue-created system tasks, use report_task_execution_decision once with decision=execute when you propose a comment, and use noop only for duplicate-marker or technical inability.",
+    "For system-generated top-level Slack posts that explicitly reference concrete issue IDs, call report_system_thread_context once with all referenced issue IDs so later human follow-ups in the same Slack thread can inherit that context.",
+    "In review and heartbeat root posts, include every concrete issue ID you explicitly mention in report_system_thread_context.",
+    "If a system-generated root post does not reference any concrete issue ID, omit report_system_thread_context.",
     "In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn. The one exception is owner-map updates, which may go through a manager-owned preview-and-confirm step before commit.",
     "Report your current intent with report_manager_intent once per turn before or during tool usage.",
     "When intent=conversation, include conversationKind=greeting | smalltalk | other in report_manager_intent.",
@@ -211,6 +216,9 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Use slack_list_thread_attachments to inspect the current thread attachment inventory and slack_read_thread_attachment to read extracted text or transcript windows.",
     "Do not treat a plain Slack thread message addressed to another person as intent=post_slack_message unless the user explicitly asks you to send or post a message on their behalf.",
     "When External coordination hint context is present for the current thread, treat short replies from that hinted target user such as ありがとうございます！法務に回します！, 確認します, 送ります, 共有しました, or 回します as coordination progress for the hinted issue, not as generic conversation or outbound Slack posting.",
+    "When System thread context is present for the current thread, treat its referenced issue IDs as strong hints for follow-up updates in that same Slack thread.",
+    "If the latest follow-up message contains multiple subtopics and one part clearly maps to a referenced issue while another part has no matching issue, prefer partial success: commit the matched issue update and mention the unmatched topic in the public reply.",
+    "Do not ask for an issue ID for the whole turn when at least one follow-up subtopic clearly maps to a referenced system-thread issue.",
     "For a likely external coordination follow-up, inspect the hinted issue first with linear_get_issue_facts.",
     "If the hinted issue is still Backlog and the reply shows real coordination progress or handoff, prefer propose_update_issue_status with signal=progress, state=In Progress, and a source comment.",
     "If the hinted issue is already In Progress or another active open state, prefer propose_update_issue_status with signal=progress and a source comment without changing the state.",
@@ -522,6 +530,22 @@ function buildExternalCoordinationHints(input: ManagerAgentInput): string[] {
   ];
 }
 
+function buildSystemThreadFollowupHints(input: ManagerAgentInput): string[] {
+  const context = input.systemThreadContext;
+  if (!context || context.issueRefs.length === 0) {
+    return [];
+  }
+
+  return [
+    `- This Slack thread started from a system-generated ${context.sourceKind} post.`,
+    `- Referenced issues: ${context.issueRefs.map((entry) => (
+      entry.titleHint ? `${entry.issueId} (${entry.titleHint})` : entry.issueId
+    )).join(", ")}`,
+    "- Use these referenced issues as strong follow-up hints for later progress, priority, or status updates in this same Slack thread.",
+    "- If only one part of the latest message maps to one referenced issue and another part has no existing issue, update the matched issue and say the unmatched topic has no existing issue instead of failing the whole turn.",
+  ];
+}
+
 function buildCapabilityQueryHints(text: string | undefined): string[] {
   const capabilityQuery = text ? detectSlackCapabilityQuery(text) : undefined;
   if (capabilityQuery?.type !== "slack-outbound-mention") {
@@ -551,6 +575,7 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
   const scopeCorrectionHints = buildScopeCorrectionHints(input.text);
   const priorityUpdateHints = buildPriorityUpdateHints(input.text);
   const externalCoordinationHints = buildExternalCoordinationHints(input);
+  const systemThreadFollowupHints = buildSystemThreadFollowupHints(input);
   const workspaceConfigUpdateHints = buildWorkspaceConfigUpdateHints(
     detectWorkspaceConfigUpdateTarget(input.text),
   );
@@ -617,6 +642,17 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- recordedAt: ${input.externalCoordinationHint.recordedAt}`,
       ]
     : ["- (none)"];
+  const systemThreadContextLines = input.systemThreadContext
+    ? [
+        `- sourceKind: ${input.systemThreadContext.sourceKind}`,
+        `- rootPostedTs: ${input.systemThreadContext.rootPostedTs}`,
+        `- issueRefs: ${input.systemThreadContext.issueRefs.map((entry) => (
+          entry.titleHint ? `${entry.issueId} (${entry.titleHint})${entry.role ? ` [${entry.role}]` : ""}` : `${entry.issueId}${entry.role ? ` [${entry.role}]` : ""}`
+        )).join(", ") || "(none)"}`,
+        `- summary: ${input.systemThreadContext.summary ?? "(none)"}`,
+        `- recordedAt: ${input.systemThreadContext.recordedAt}`,
+      ]
+    : ["- (none)"];
   const attachmentLines = input.attachments && input.attachments.length > 0
     ? input.attachments.map((attachment) => [
         `- attachmentId: ${attachment.attachmentId}`,
@@ -681,6 +717,9 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
     "",
     "External coordination hint:",
     ...externalCoordinationHintLines,
+    "",
+    "System thread context:",
+    ...systemThreadContextLines,
     ...workspaceAgentsSection,
     ...workspaceMemorySection,
     ...agendaTemplateSection,
@@ -727,6 +766,13 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
           "",
           "External coordination hints:",
           ...externalCoordinationHints,
+        ]
+      : []),
+    ...(systemThreadFollowupHints.length > 0
+      ? [
+          "",
+          "System thread follow-up hints:",
+          ...systemThreadFollowupHints,
         ]
       : []),
     ...(workspaceConfigUpdateHints.length > 0

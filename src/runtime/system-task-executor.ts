@@ -25,11 +25,20 @@ import {
   extractSchedulerRunCommitSummary,
   type JstClock,
 } from "./app-runtime-shared.js";
+import {
+  persistSystemRootSlackThread,
+  type SystemThreadContextReport,
+} from "../lib/system-thread-context.js";
 
 export interface ExecuteManagerSystemTaskArgs {
   paths: ThreadPaths;
   input: Parameters<typeof runManagerSystemTurn>[2];
   fallback: () => Promise<string>;
+}
+
+export interface ExecuteManagerSystemTaskResult {
+  reply: string;
+  systemThreadContextReport?: SystemThreadContextReport;
 }
 
 export interface CustomSchedulerJobResult {
@@ -39,7 +48,7 @@ export interface CustomSchedulerJobResult {
 }
 
 export interface SystemTaskExecutor {
-  executeManagerSystemTask: (task: ExecuteManagerSystemTaskArgs) => Promise<string>;
+  executeManagerSystemTask: (task: ExecuteManagerSystemTaskArgs) => Promise<ExecuteManagerSystemTaskResult>;
   executeCustomSchedulerJob: (
     job: SchedulerJob,
     trigger: "scheduled" | "manual",
@@ -56,7 +65,7 @@ export function createSystemTaskExecutor(args: {
   getManagerPolicy: () => ManagerPolicy;
   clock: JstClock;
 }): SystemTaskExecutor {
-  async function executeManagerSystemTask(task: ExecuteManagerSystemTaskArgs): Promise<string> {
+  async function executeManagerSystemTask(task: ExecuteManagerSystemTaskArgs): Promise<ExecuteManagerSystemTaskResult> {
     try {
       if (
         task.input.kind === "heartbeat"
@@ -150,17 +159,22 @@ export function createSystemTaskExecutor(args: {
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      return mergedReply;
+      return {
+        reply: mergedReply,
+        systemThreadContextReport: agentResult.systemThreadContextReport,
+      };
     } catch (error) {
       args.logger.warn("Manager system agent fell back to safety-only response", {
         channelId: task.input.channelId,
         threadTs: task.input.rootThreadTs,
         error: error instanceof Error ? error.message : String(error),
       });
-      return buildSlackVisibleFailureReply({
-        error,
-        fallbackReply: await task.fallback(),
-      });
+      return {
+        reply: buildSlackVisibleFailureReply({
+          error,
+          fallbackReply: await task.fallback(),
+        }),
+      };
     }
   }
 
@@ -177,7 +191,7 @@ export function createSystemTaskExecutor(args: {
       text: job.prompt,
     });
 
-    const rawReply = await executeManagerSystemTask({
+    const managerTaskResult = await executeManagerSystemTask({
       paths,
       input: {
         kind: "scheduler",
@@ -195,11 +209,22 @@ export function createSystemTaskExecutor(args: {
       },
       fallback: async () => "処理に失敗しました。設定や連携を確認してください。",
     });
+    const rawReply = managerTaskResult.reply;
 
     const postedReply = await sendSlackReply(args.webClient, {
       channel: job.channelId,
       reply: rawReply,
       linearWorkspace: args.config.linearWorkspace,
+      onPosted: async (result) => {
+        if (!result.ts) return;
+        await persistSystemRootSlackThread({
+          workspaceDir: args.config.workspaceDir,
+          channelId: job.channelId,
+          rootPostedTs: result.ts,
+          postedText: result.text,
+          report: managerTaskResult.systemThreadContextReport,
+        });
+      },
     });
 
     await appendThreadLog(paths, {

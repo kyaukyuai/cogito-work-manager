@@ -336,6 +336,10 @@ Person-to-person Slack coordination is split into three categories:
    - If the runtime can resolve an exact existing issue, it stores `scratch/external-coordination-hint.json`.
    - Later short replies such as `Thanks`, `I'll confirm`, `Shared`, or `I'll send this to legal` can become progress or comments on that hinted issue.
    - Only `Backlog -> In Progress` is auto-promoted from this hinted path; all other state changes still require explicit signals.
+4. System-generated root thread
+   - A top-level review, heartbeat, scheduler, or webhook post.
+   - The runtime persists the posted assistant root message into the actual Slack thread workspace and stores typed issue refs in `scratch/system-thread-context.json`.
+   - Later human follow-ups in that real Slack thread can reuse those issue refs as strong hints, including partial-success updates such as lowering one issue's priority while replying that another subtopic has no matching issue.
 
 If `BOT_UID` and `BOT_GID` are correct, these files remain editable by the host operator without `sudo`.
 

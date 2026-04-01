@@ -1,5 +1,10 @@
 import { Readable } from "node:stream";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildThreadPaths } from "../src/lib/thread-workspace.js";
+import { loadSystemThreadContext } from "../src/lib/system-thread-context.js";
 
 const linearWebhookMocks = vi.hoisted(() => ({
   isDuplicateWebhookDelivery: vi.fn(),
@@ -27,7 +32,7 @@ vi.mock("../src/lib/linear.js", () => linearMocks);
 vi.mock("../src/lib/slack-replies.js", () => slackReplyMocks);
 vi.mock("../src/orchestrators/webhooks/handle-issue-created.js", () => webhookOrchestratorMocks);
 
-function buildConfig() {
+function buildConfig(workspaceDir = "/tmp/cogito-runtime-test") {
   return {
     slackAppToken: "xapp-test",
     slackBotToken: "xoxb-test",
@@ -42,7 +47,7 @@ function buildConfig() {
     botThinkingLevel: "minimal" as const,
     botMaxOutputTokens: undefined,
     botRetryMaxRetries: 0,
-    workspaceDir: "/tmp/cogito-runtime-test",
+    workspaceDir,
     linearWebhookEnabled: true,
     linearWebhookPublicUrl: "https://example.com",
     linearWebhookSecret: "secret",
@@ -93,6 +98,8 @@ function createResponse() {
 }
 
 describe("webhook request handler", () => {
+  let workspaceDir: string;
+
   beforeEach(() => {
     vi.resetModules();
     linearWebhookMocks.isDuplicateWebhookDelivery.mockReset();
@@ -104,10 +111,17 @@ describe("webhook request handler", () => {
     linearMocks.getLinearIssue.mockReset();
     slackReplyMocks.sendSlackReply.mockReset();
     webhookOrchestratorMocks.handleIssueCreatedWebhook.mockReset();
+    workspaceDir = "/tmp/cogito-runtime-test";
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    if (workspaceDir !== "/tmp/cogito-runtime-test") {
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   it("marks in-flight duplicate deliveries and skips queueing", async () => {
@@ -135,7 +149,7 @@ describe("webhook request handler", () => {
     const enqueue = vi.fn();
 
     const handler = createWebhookRequestHandler({
-      config: buildConfig(),
+      config: buildConfig(workspaceDir),
       logger: createLogger() as never,
       webClient: {} as never,
       managerRepositories: {
@@ -192,7 +206,7 @@ describe("webhook request handler", () => {
     slackReplyMocks.sendSlackReply.mockResolvedValue("posted");
 
     const handler = createWebhookRequestHandler({
-      config: buildConfig(),
+      config: buildConfig(workspaceDir),
       logger: createLogger() as never,
       webClient: {} as never,
       managerRepositories: {
@@ -236,5 +250,98 @@ describe("webhook request handler", () => {
         reply: expect.stringContaining("AIC-123 の webhook 自動処理に失敗しました。"),
       }),
     );
+  });
+
+  it("persists actual Slack thread context for top-level webhook notifications", async () => {
+    workspaceDir = await mkdtemp(join(tmpdir(), "cogito-webhook-thread-context-"));
+    const { createWebhookRequestHandler } = await import("../src/runtime/webhook-request-handler.js");
+    const save = vi.fn();
+    const load = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    let queuedJob: Promise<void> | undefined;
+
+    linearWebhookMocks.verifyLinearWebhookRequest.mockReturnValue({ ok: true });
+    linearWebhookMocks.parseLinearWebhookEvent.mockReturnValue({
+      kind: "issue-created",
+      event: {
+        deliveryId: "delivery-1",
+        webhookId: "webhook-1",
+        issueId: "issue-1",
+        issueIdentifier: "AIC-123",
+        receivedAt: "2026-03-27T07:00:00.000Z",
+      },
+    });
+    linearWebhookMocks.isDuplicateWebhookDelivery.mockReturnValue(false);
+    linearWebhookMocks.upsertWebhookDelivery.mockImplementation((_deliveries, entry) => [entry]);
+    linearWebhookMocks.updateWebhookDeliveryStatus.mockReturnValue([
+      { deliveryId: "delivery-1", status: "committed", createdIssueIds: [] },
+    ]);
+    webhookOrchestratorMocks.handleIssueCreatedWebhook.mockResolvedValue({
+      status: "committed",
+      reply: "AIC-123 に初期コメントを追加しました。",
+      createdIssueIds: [],
+      agentResult: {
+        reply: "AIC-123 に初期コメントを追加しました。",
+        toolCalls: [],
+        proposals: [],
+        invalidProposalCount: 0,
+        systemThreadContextReport: {
+          sourceKind: "webhook",
+          issueRefs: [{ issueId: "AIC-123", titleHint: "契約締結対応", role: "primary" }],
+          summary: "webhook issue created notification",
+        },
+      },
+    });
+    linearMocks.getLinearIssue.mockResolvedValue({
+      id: "issue-1",
+      identifier: "AIC-123",
+      title: "契約締結対応",
+      url: "https://linear.app/kyaukyuai/issue/AIC-123",
+      relations: [],
+      inverseRelations: [],
+    });
+    slackReplyMocks.sendSlackReply.mockImplementation(async (_webClient, args) => {
+      await args.onPosted?.({
+        ts: "1774949999.111111",
+        text: "posted webhook summary",
+      });
+      return "posted webhook summary";
+    });
+
+    const handler = createWebhookRequestHandler({
+      config: buildConfig(workspaceDir),
+      logger: createLogger() as never,
+      webClient: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn().mockResolvedValue({ controlRoomChannelId: "CROOM" }) },
+        webhookDeliveries: { load, save },
+      } as never,
+      linearEnv: {},
+      webhookQueue: {
+        enqueue: (_key, job) => {
+          queuedJob = job();
+        },
+      },
+      clock: {
+        currentDateInJst: () => "2026-03-27",
+        currentDateTimeInJst: () => "2026-03-27 16:00 JST",
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    const request = createRequest();
+    const response = createResponse();
+    await handler.handleWebhookRequest(request as never, response as never);
+    await queuedJob;
+
+    const actualThreadPaths = buildThreadPaths(workspaceDir, "CROOM", "1774949999.111111");
+    await expect(loadSystemThreadContext(actualThreadPaths)).resolves.toMatchObject({
+      sourceKind: "webhook",
+      issueRefs: [expect.objectContaining({ issueId: "AIC-123" })],
+    });
   });
 });

@@ -58,6 +58,10 @@ import {
   type PendingClarificationDecisionReport,
   type TaskExecutionDecisionReport,
 } from "./manager-command-commit.js";
+import {
+  systemThreadContextReportSchema,
+  type SystemThreadContextReport,
+} from "./system-thread-context.js";
 
 function buildLinearEnv(config: AppConfig): LinearCommandEnv {
   return {
@@ -661,6 +665,31 @@ function createPendingClarificationDecisionTool(): ToolDefinition {
       return {
         content: [{ type: "text", text: "Pending clarification decision recorded." }],
         details: { pendingClarificationDecision: typed },
+      };
+    },
+  };
+}
+
+function createSystemThreadContextTool(): ToolDefinition {
+  return {
+    name: "report_system_thread_context",
+    label: "Report System Thread Context",
+    description: "Record the issue context referenced by a system-generated root Slack post so later human follow-ups in the same Slack thread can inherit it safely.",
+    promptSnippet: "Use this in review, heartbeat, scheduler, or webhook system turns when your root reply explicitly references one or more concrete issue IDs.",
+    parameters: Type.Object({
+      sourceKind: Type.String({ description: "review | heartbeat | scheduler | webhook" }),
+      issueRefs: Type.Array(Type.Object({
+        issueId: Type.String({ description: "Issue identifier like AIC-123." }),
+        titleHint: Type.Optional(Type.String({ description: "Short title hint for the referenced issue." })),
+        role: Type.Optional(Type.String({ description: "primary | related" })),
+      })),
+      summary: Type.Optional(Type.String({ description: "Optional short summary of the root system post focus." })),
+    }),
+    async execute(_toolCallId, params) {
+      const typed = systemThreadContextReportSchema.parse(params) as SystemThreadContextReport;
+      return {
+        content: [{ type: "text", text: "System thread context recorded." }],
+        details: { systemThreadContextReport: typed },
       };
     },
   };
@@ -1685,6 +1714,7 @@ export function createManagerAgentTools(
     createPendingClarificationDecisionTool(),
     createTaskExecutionDecisionTool(),
     createQuerySnapshotTool(),
+    createSystemThreadContextTool(),
     ...createLinearReadTools(config, helpers),
     ...createSchedulerReadTools(config, repositories),
     ...createWorkspaceReadTools(config, repositories),
