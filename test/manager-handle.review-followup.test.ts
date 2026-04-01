@@ -55,6 +55,11 @@ const piSessionMocks = vi.hoisted(() => ({
   runTaskPlanningTurn: vi.fn(),
   runResearchSynthesisTurn: vi.fn(),
   runFollowupResolutionTurn: vi.fn(),
+  runPartialFollowupUnmatchedTurn: vi.fn().mockResolvedValue({
+    matchedIssueIds: [],
+    unmatchedTopics: [],
+    reasoningSummary: "No unmatched follow-up topics.",
+  }),
 }));
 
 vi.mock("../src/lib/linear.js", () => ({
@@ -102,6 +107,7 @@ vi.mock("../src/lib/pi-session.js", () => ({
   runTaskPlanningTurn: piSessionMocks.runTaskPlanningTurn,
   runResearchSynthesisTurn: piSessionMocks.runResearchSynthesisTurn,
   runFollowupResolutionTurn: piSessionMocks.runFollowupResolutionTurn,
+  runPartialFollowupUnmatchedTurn: piSessionMocks.runPartialFollowupUnmatchedTurn,
 }));
 
 function stripTaskTitle(text: string): string {
