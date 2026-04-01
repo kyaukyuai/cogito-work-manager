@@ -62,6 +62,10 @@ import {
   systemThreadContextReportSchema,
   type SystemThreadContextReport,
 } from "./system-thread-context.js";
+import {
+  partialFollowupResolutionReportSchema,
+  type PartialFollowupResolutionReport,
+} from "./partial-followup-resolution.js";
 
 function buildLinearEnv(config: AppConfig): LinearCommandEnv {
   return {
@@ -690,6 +694,27 @@ function createSystemThreadContextTool(): ToolDefinition {
       return {
         content: [{ type: "text", text: "System thread context recorded." }],
         details: { systemThreadContextReport: typed },
+      };
+    },
+  };
+}
+
+function createPartialFollowupResolutionTool(): ToolDefinition {
+  return {
+    name: "report_partial_followup_resolution",
+    label: "Report Partial Follow-up Resolution",
+    description: "Record which matched issue updates should proceed and which remaining subtopics have no matching existing issue.",
+    promptSnippet: "Use this once when a follow-up update partially maps to known issues but one or more remaining subtopics do not match an existing issue.",
+    parameters: Type.Object({
+      matchedIssueIds: Type.Array(Type.String({ description: "Matched issue identifiers like AIC-123." })),
+      unmatchedTopics: Type.Array(Type.String({ description: "Subtopics in the latest message that have no matching existing issue." })),
+      summary: Type.Optional(Type.String({ description: "Optional short summary of this partial follow-up resolution." })),
+    }),
+    async execute(_toolCallId, params) {
+      const typed = partialFollowupResolutionReportSchema.parse(params) as PartialFollowupResolutionReport;
+      return {
+        content: [{ type: "text", text: "Partial follow-up resolution recorded." }],
+        details: { partialFollowupResolutionReport: typed },
       };
     },
   };
@@ -1715,6 +1740,7 @@ export function createManagerAgentTools(
     createTaskExecutionDecisionTool(),
     createQuerySnapshotTool(),
     createSystemThreadContextTool(),
+    createPartialFollowupResolutionTool(),
     ...createLinearReadTools(config, helpers),
     ...createSchedulerReadTools(config, repositories),
     ...createWorkspaceReadTools(config, repositories),

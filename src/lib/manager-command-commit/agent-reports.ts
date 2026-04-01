@@ -17,6 +17,10 @@ import {
   systemThreadContextReportSchema,
   type SystemThreadContextReport,
 } from "../system-thread-context.js";
+import {
+  partialFollowupResolutionReportSchema,
+  type PartialFollowupResolutionReport,
+} from "../partial-followup-resolution.js";
 
 export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerIntentReport | undefined {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
@@ -73,6 +77,23 @@ export function extractSystemThreadContextReport(
     }
     const details = toolCall.details as { systemThreadContextReport?: unknown } | undefined;
     const parsed = systemThreadContextReportSchema.safeParse(details?.systemThreadContextReport);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  return undefined;
+}
+
+export function extractPartialFollowupResolutionReport(
+  toolCalls: ManagerAgentToolCall[],
+): PartialFollowupResolutionReport | undefined {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall?.toolName !== "report_partial_followup_resolution") {
+      continue;
+    }
+    const details = toolCall.details as { partialFollowupResolutionReport?: unknown } | undefined;
+    const parsed = partialFollowupResolutionReportSchema.safeParse(details?.partialFollowupResolutionReport);
     if (parsed.success) {
       return parsed.data;
     }

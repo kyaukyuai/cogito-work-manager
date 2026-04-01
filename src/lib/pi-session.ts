@@ -69,6 +69,7 @@ import {
   extractDuplicateResolutionSummaries,
   extractIntentReport,
   extractManagerCommandProposals,
+  extractPartialFollowupResolutionReport,
   extractPendingClarificationDecision,
   extractSystemThreadContextReport,
   extractTaskExecutionDecision,
@@ -79,6 +80,7 @@ import {
   type TaskExecutionDecisionReport,
 } from "./manager-command-commit.js";
 import type { SystemThreadContextReport } from "./system-thread-context.js";
+import type { PartialFollowupResolutionReport } from "./partial-followup-resolution.js";
 import type { LinearDuplicateResolutionSummary } from "./linear-duplicate-resolution.js";
 import { buildSystemPaths, loadWorkspaceCustomization, type WorkspaceCustomizationContext } from "./system-workspace.js";
 import type { ThreadPaths } from "./thread-workspace.js";
@@ -100,6 +102,7 @@ export interface ManagerAgentTurnResult {
   taskExecutionDecision?: TaskExecutionDecisionReport;
   duplicateResolutions?: LinearDuplicateResolutionSummary[];
   systemThreadContextReport?: SystemThreadContextReport;
+  partialFollowupResolutionReport?: PartialFollowupResolutionReport;
 }
 
 export interface ManagerAgentTurnObserver {
@@ -630,6 +633,7 @@ async function runStructuredPromptTurn(
         taskExecutionDecision: extractTaskExecutionDecision(toolCalls),
         duplicateResolutions: extractDuplicateResolutionSummaries(toolCalls),
         systemThreadContextReport: extractSystemThreadContextReport(toolCalls),
+        partialFollowupResolutionReport: extractPartialFollowupResolutionReport(toolCalls),
       };
     },
   });

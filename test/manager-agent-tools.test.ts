@@ -167,6 +167,30 @@ describe("manager agent tools", () => {
     })).rejects.toThrow(/conversationKind/i);
   });
 
+  it("validates partial follow-up resolution reports", async () => {
+    const tools = createManagerAgentTools(config, buildRepositoriesForTools());
+    const tool = tools.find((entry) => entry.name === "report_partial_followup_resolution");
+
+    expect(tool).toBeDefined();
+
+    const ok = await tool!.execute("tool-call-partial-followup-ok", {
+      matchedIssueIds: ["AIC-87"],
+      unmatchedTopics: ["議事録連携"],
+      summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
+    });
+    expect(ok.details).toMatchObject({
+      partialFollowupResolutionReport: {
+        matchedIssueIds: ["AIC-87"],
+        unmatchedTopics: ["議事録連携"],
+      },
+    });
+
+    await expect(tool!.execute("tool-call-partial-followup-invalid", {
+      matchedIssueIds: ["AIC-87", "AIC-87"],
+      unmatchedTopics: ["議事録連携", "議事録連携"],
+    })).rejects.toThrow(/duplicates/i);
+  });
+
   it("returns dueRelativeLabel and daysUntilDue in review facts", async () => {
     vi.useFakeTimers();
     try {

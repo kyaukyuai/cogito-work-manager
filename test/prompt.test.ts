@@ -716,6 +716,31 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("- url: https://www.notion.so/notion-page-current");
   });
 
+  it("requires a typed partial-followup report for system-thread partial success", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "1774944062.253979",
+      messageTs: "1775011240.537289",
+      userId: "U123",
+      text: "取得すべきmtg定例の名前と議事録連携は、後回しになりました",
+      currentDate: "2026-04-01",
+      systemThreadContext: {
+        sourceKind: "legacy-system",
+        rootPostedTs: "1774944062.253979",
+        issueRefs: [
+          { issueId: "AIC-86", titleHint: "役員チャンネル招待", role: "related" },
+          { issueId: "AIC-87", titleHint: "収集すべきMTG定例名", role: "primary" },
+        ],
+        summary: "Recovered from pre-AIC-119 root Slack post",
+        recordedAt: "2026-04-01T02:40:42.923Z",
+      },
+    });
+
+    expect(prompt).toContain("If only one part of the latest message maps to one referenced issue and another part has no existing issue, update the matched issue and say the unmatched topic has no existing issue instead of failing the whole turn.");
+    expect(prompt).toContain("In that partial-success case, also call report_partial_followup_resolution with matchedIssueIds and unmatchedTopics so the manager can preserve the unmatched topic in the final reply.");
+  });
+
   it("adds database-only guidance for Notion database requests", () => {
     const prompt = buildManagerAgentPrompt({
       kind: "message",
