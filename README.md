@@ -264,6 +264,7 @@ Slack mention and person-to-person coordination flows are split into three categ
    - Only `Backlog -> In Progress` is auto-promoted from that hinted path; other state changes still require explicit signals.
 4. System-generated root threads
    - Top-level review, heartbeat, scheduler, and webhook posts also persist typed issue refs into the actual Slack thread workspace as `scratch/system-thread-context.json`.
+   - For pre-AIC-119 system threads that never wrote that file, the runtime can lazily recover root issue refs from the actual root Slack post on the first later follow-up.
    - Later human follow-ups in that same real Slack thread can reuse those issue refs as strong hints.
    - This enables partial success follow-ups such as lowering the priority of one referenced issue while explicitly saying that another subtopic has no existing issue.
 

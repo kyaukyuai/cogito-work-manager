@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OwnerMap } from "../src/state/manager-state-contract.js";
 
@@ -43,7 +46,7 @@ vi.mock("../src/lib/external-coordination-hint.js", () => ({
   saveExternalCoordinationHint: coordinationHintMocks.saveExternalCoordinationHint,
 }));
 
-function buildConfig() {
+function buildConfig(workspaceDir = "/tmp/cogito-runtime-test") {
   return {
     slackAppToken: "xapp-test",
     slackBotToken: "xoxb-test",
@@ -58,7 +61,7 @@ function buildConfig() {
     botThinkingLevel: "minimal" as const,
     botMaxOutputTokens: undefined,
     botRetryMaxRetries: 0,
-    workspaceDir: "/tmp/cogito-runtime-test",
+    workspaceDir,
     linearWebhookEnabled: false,
     linearWebhookPublicUrl: undefined,
     linearWebhookSecret: undefined,
@@ -123,6 +126,8 @@ function buildOwnerMap(): OwnerMap {
 }
 
 describe("slack message handler", () => {
+  let temporaryWorkspaceDir: string | undefined;
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.resetModules();
@@ -140,6 +145,13 @@ describe("slack message handler", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  afterEach(async () => {
+    if (temporaryWorkspaceDir) {
+      await rm(temporaryWorkspaceDir, { recursive: true, force: true });
+      temporaryWorkspaceDir = undefined;
+    }
   });
 
   it("refreshes heartbeat configuration after update_builtin_schedule commits", async () => {
@@ -410,6 +422,92 @@ describe("slack message handler", () => {
         classification: "to_other_person",
       }),
     );
+  });
+
+  it("lazy-recovers legacy system thread context from the actual root Slack post before manager handling", async () => {
+    temporaryWorkspaceDir = await mkdtemp(join(tmpdir(), "cogito-slack-handler-"));
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    let pendingJob: Promise<void> | undefined;
+    plannerMocks.runOtherDirectedMessageTurn.mockResolvedValueOnce({
+      classification: "to_cogito",
+      confidence: 0.88,
+      reasoningSummary: "This is a follow-up for Cogito to process, not a direct outbound message.",
+    });
+    managerMocks.handleManagerMessage.mockResolvedValueOnce({
+      handled: true,
+      reply: "AIC-87 の優先度を Low に下げました。議事録連携に対応する issue は見当たらないため、必要なら別 issue として起票してください。",
+      diagnostics: {
+        agent: {
+          source: "agent",
+          intent: "update_progress",
+          toolCalls: [],
+          proposalCount: 1,
+          invalidProposalCount: 0,
+          committedCommands: ["update_issue_priority"],
+          commitRejections: [],
+          missingQuerySnapshot: false,
+        },
+      },
+    });
+    webClient.conversations.replies = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          ts: "1774944062.253979",
+          user: "UBOT",
+          text: [
+            ":city_sunset: 夕方レビュー (2026-03-31)",
+            "AIC-86/87（役員チャンネル招待・MTG定例名確認）: m.tahira アサイン済みだが stale 1日。今週中の着手確認を推奨",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(temporaryWorkspaceDir),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn() },
+        ownerMap: { load: vi.fn().mockResolvedValue(buildOwnerMap()) },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "1775010000.000001",
+      thread_ts: "1774944062.253979",
+      text: "取得すべきmtg定例の名前と議事録連携は、後回しになりました",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+    await pendingJob;
+
+    expect(webClient.conversations.replies).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        ts: "1774944062.253979",
+      }),
+    );
+    expect(managerMocks.handleManagerMessage).toHaveBeenCalledTimes(1);
+    expect(managerMocks.handleManagerMessage.mock.calls[0]?.[2]).toMatchObject({
+      rootThreadTs: "1774944062.253979",
+      text: "取得すべきmtg定例の名前と議事録連携は、後回しになりました",
+    });
   });
 
   it("suppresses plain-text direct-address messages without saving a hint when the selected owner has no slackUserId", async () => {

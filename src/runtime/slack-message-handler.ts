@@ -22,6 +22,7 @@ import {
   resolveExternalCoordinationHint,
   saveExternalCoordinationHint,
 } from "../lib/external-coordination-hint.js";
+import { loadSystemThreadContext } from "../lib/system-thread-context.js";
 import type { AppConfig } from "../lib/config.js";
 import type { SystemPaths } from "../lib/system-workspace.js";
 import type { ManagerPolicy } from "../state/manager-state-contract.js";
@@ -35,6 +36,7 @@ import {
 import { createSlackReplyStreamController } from "../lib/slack-replies.js";
 import type { SystemTaskExecutor } from "./system-task-executor.js";
 import { ingestThreadAttachments } from "../gateways/slack-attachments/index.js";
+import { recoverLegacySystemThreadContextFromSlackHistory } from "../gateways/slack-system-thread-context/index.js";
 
 export function createSlackMessageHandler(args: {
   config: AppConfig;
@@ -146,6 +148,40 @@ export function createSlackMessageHandler(args: {
           threadTs: message.rootThreadTs,
           error: error instanceof Error ? error.message : String(error),
         });
+      }
+
+      if (message.ts !== message.rootThreadTs) {
+        const systemThreadContext = await loadSystemThreadContext(paths).catch(() => undefined);
+        if (!systemThreadContext) {
+          try {
+            const recoveryResult = await recoverLegacySystemThreadContextFromSlackHistory({
+              paths,
+              webClient: args.webClient,
+              channelId: message.channelId,
+              rootThreadTs: message.rootThreadTs,
+              botUserId,
+            });
+            for (const diagnostic of recoveryResult.diagnostics) {
+              const logPayload = {
+                channelId: message.channelId,
+                threadTs: message.rootThreadTs,
+                messageTs: message.ts,
+              };
+              if (diagnostic.level === "warn") {
+                args.logger.warn(diagnostic.message, logPayload);
+              } else {
+                args.logger.info(diagnostic.message, logPayload);
+              }
+            }
+          } catch (error) {
+            args.logger.warn("Legacy system thread context recovery failed", {
+              channelId: message.channelId,
+              threadTs: message.rootThreadTs,
+              messageTs: message.ts,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
 
       await appendThreadLog(paths, {

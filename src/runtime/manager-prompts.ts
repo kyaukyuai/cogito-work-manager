@@ -217,6 +217,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "Do not treat a plain Slack thread message addressed to another person as intent=post_slack_message unless the user explicitly asks you to send or post a message on their behalf.",
     "When External coordination hint context is present for the current thread, treat short replies from that hinted target user such as ありがとうございます！法務に回します！, 確認します, 送ります, 共有しました, or 回します as coordination progress for the hinted issue, not as generic conversation or outbound Slack posting.",
     "When System thread context is present for the current thread, treat its referenced issue IDs as strong hints for follow-up updates in that same Slack thread.",
+    "If System thread context is present and it grounds the target issue for the latest follow-up, do not fall back to a stale issue-ID clarification request just because a pending clarification context also exists.",
     "If the latest follow-up message contains multiple subtopics and one part clearly maps to a referenced issue while another part has no matching issue, prefer partial success: commit the matched issue update and mention the unmatched topic in the public reply.",
     "Do not ask for an issue ID for the whole turn when at least one follow-up subtopic clearly maps to a referenced system-thread issue.",
     "For a likely external coordination follow-up, inspect the hinted issue first with linear_get_issue_facts.",
@@ -536,8 +537,12 @@ function buildSystemThreadFollowupHints(input: ManagerAgentInput): string[] {
     return [];
   }
 
+  const sourceKindLabel = context.sourceKind === "legacy-system"
+    ? "legacy system-generated root post recovered from Slack history"
+    : `system-generated ${context.sourceKind} post`;
+
   return [
-    `- This Slack thread started from a system-generated ${context.sourceKind} post.`,
+    `- This Slack thread started from a ${sourceKindLabel}.`,
     `- Referenced issues: ${context.issueRefs.map((entry) => (
       entry.titleHint ? `${entry.issueId} (${entry.titleHint})` : entry.issueId
     )).join(", ")}`,
