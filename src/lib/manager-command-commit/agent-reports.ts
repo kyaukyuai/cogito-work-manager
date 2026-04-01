@@ -13,6 +13,10 @@ import {
   summarizeResolvedLinearDuplicateCandidates,
   type LinearDuplicateResolutionSummary,
 } from "../linear-duplicate-resolution.js";
+import {
+  systemThreadContextReportSchema,
+  type SystemThreadContextReport,
+} from "../system-thread-context.js";
 
 export function extractIntentReport(toolCalls: ManagerAgentToolCall[]): ManagerIntentReport | undefined {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
@@ -52,6 +56,23 @@ export function extractTaskExecutionDecision(
     }
     const details = toolCall.details as { taskExecutionDecision?: unknown } | undefined;
     const parsed = taskExecutionDecisionSchema.safeParse(details?.taskExecutionDecision);
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+  return undefined;
+}
+
+export function extractSystemThreadContextReport(
+  toolCalls: ManagerAgentToolCall[],
+): SystemThreadContextReport | undefined {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall?.toolName !== "report_system_thread_context") {
+      continue;
+    }
+    const details = toolCall.details as { systemThreadContextReport?: unknown } | undefined;
+    const parsed = systemThreadContextReportSchema.safeParse(details?.systemThreadContextReport);
     if (parsed.success) {
       return parsed.data;
     }

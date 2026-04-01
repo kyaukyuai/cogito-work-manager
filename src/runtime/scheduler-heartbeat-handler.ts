@@ -1,6 +1,7 @@
 import type { WebClient } from "@slack/web-api";
 import { parseHeartbeatManagerReply, type HeartbeatExecutionResult } from "../lib/heartbeat.js";
 import { sendSlackReply } from "../lib/slack-replies.js";
+import { persistSystemRootSlackThread } from "../lib/system-thread-context.js";
 import {
   buildHeartbeatPaths,
   buildSchedulerPaths,
@@ -37,7 +38,7 @@ export function createSchedulerHeartbeatHandler(args: {
       text: argsForHeartbeat.prompt,
     });
 
-    const reply = await args.systemTaskExecutor.executeManagerSystemTask({
+    const result = await args.systemTaskExecutor.executeManagerSystemTask({
       paths,
       input: {
         kind: "heartbeat",
@@ -50,7 +51,7 @@ export function createSchedulerHeartbeatHandler(args: {
       },
       fallback: async () => "heartbeat noop: agent-fallback",
     });
-    const parsedHeartbeatReply = parseHeartbeatManagerReply(reply);
+    const parsedHeartbeatReply = parseHeartbeatManagerReply(result.reply);
     if (parsedHeartbeatReply.status === "noop") {
       await appendThreadLog(paths, {
         type: "system",
@@ -69,6 +70,16 @@ export function createSchedulerHeartbeatHandler(args: {
       channel: argsForHeartbeat.channelId,
       reply: parsedHeartbeatReply.reply,
       linearWorkspace: args.config.linearWorkspace,
+      onPosted: async (posted) => {
+        if (!posted.ts) return;
+        await persistSystemRootSlackThread({
+          workspaceDir: args.config.workspaceDir,
+          channelId: argsForHeartbeat.channelId,
+          rootPostedTs: posted.ts,
+          postedText: posted.text,
+          report: result.systemThreadContextReport,
+        });
+      },
     });
 
     await appendThreadLog(paths, {
@@ -93,7 +104,7 @@ export function createSchedulerHeartbeatHandler(args: {
       const mappedKind = job.action;
       const paths = buildSchedulerPaths(args.config.workspaceDir, job.id);
       await ensureThreadWorkspace(paths);
-      const reply = await args.systemTaskExecutor.executeManagerSystemTask({
+      const result = await args.systemTaskExecutor.executeManagerSystemTask({
         paths,
         input: {
           kind: mappedKind,
@@ -113,17 +124,27 @@ export function createSchedulerHeartbeatHandler(args: {
           return "Manager review is temporarily unavailable. Please retry this review from the control room if needed.";
         },
       });
-      if (reply === "Manager review is temporarily unavailable. Please retry this review from the control room if needed.") {
+      if (result.reply === "Manager review is temporarily unavailable. Please retry this review from the control room if needed.") {
         return {
           delivered: false,
-          summary: reply,
+          summary: result.reply,
         };
       }
 
       const postedReply = await sendSlackReply(args.webClient, {
         channel: job.channelId,
-        reply,
+        reply: result.reply,
         linearWorkspace: args.config.linearWorkspace,
+        onPosted: async (posted) => {
+          if (!posted.ts) return;
+          await persistSystemRootSlackThread({
+            workspaceDir: args.config.workspaceDir,
+            channelId: job.channelId,
+            rootPostedTs: posted.ts,
+            postedText: posted.text,
+            report: result.systemThreadContextReport,
+          });
+        },
       });
 
       return {

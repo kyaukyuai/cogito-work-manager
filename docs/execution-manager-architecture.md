@@ -15,6 +15,7 @@ This design does not assume skill-driven production behavior. The primary runtim
 - As of 2026-03-30, Slack attachments are stored as thread-local catalogs with eager extraction for `pdf / docx / txt / md / csv / json`, and with lazy audio/video transcription when `OPENAI_API_KEY` is available; the read surface is exposed through `slack_list_thread_attachments` and `slack_read_thread_attachment`
 - As of 2026-03-31, messages that mention another Slack user without mentioning Cogito are publicly ignored but still persisted; when the runtime can resolve exactly one existing issue, it records a thread-local `external-coordination-hint` so later replies can update or comment on that hinted issue
 - As of 2026-03-31, follow-up priority changes are first-class proposals and commits through `propose_update_issue_priority` / `update_issue_priority`, rather than being overloaded onto status-change paths
+- As of 2026-04-01, top-level system-generated Slack posts persist typed issue references into the actual Slack thread workspace as `scratch/system-thread-context.json`, so later human follow-ups in that real Slack thread can reuse root review/heartbeat/scheduler/webhook context
 - As of 2026-03-31, the Linear runtime contract assumes `linear-cli v2.12.3`, accepts additive `linear capabilities --json` schema changes, and preserves `timeout_error.appliedState` and `callerGuidance` for repo-side reconciliation
 - Business judgment on the primary path must be explicit in agent proposals; manager commit is responsible only for validation, dedupe, execution, and state updates
 - Emergency fallback is safety-only and must not replace primary-path business judgment
@@ -118,6 +119,7 @@ Allowed local state includes:
 - Slack thread to issue linkage
 - pending follow-up state
 - thread-local external coordination hints
+- thread-local system root issue context for system-generated Slack threads
 - thread-local attachment catalogs and derived extracts/transcripts
 - planner decision history
 - dedupe and retry history

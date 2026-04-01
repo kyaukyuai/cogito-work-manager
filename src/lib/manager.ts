@@ -101,6 +101,7 @@ import {
   clearExternalCoordinationHint,
   loadExternalCoordinationHint,
 } from "./external-coordination-hint.js";
+import { loadSystemThreadContext } from "./system-thread-context.js";
 import {
   clearPendingManagerClarification,
   isPendingManagerClarificationContinuation,
@@ -491,6 +492,10 @@ function extractCompactAgentFollowupSentence(agentReply: string): string | undef
   return sentences.find((sentence) => /^(次|引き続き|必要なら|まずは|残りは|続けて)/.test(sentence));
 }
 
+function agentReplyContainsUnmatchedTopicNote(agentReply: string): boolean {
+  return /(対応する issue は見当たらない|対応するイシューは見当たらない|対応する issue はない|対応するイシューはない|既存 issue は見当たらない|既存イシューは見当たらない)/.test(agentReply);
+}
+
 function buildCompactSuccessfulMutationReply(args: {
   intent: ManagerIntentReport["intent"] | undefined;
   agentReply: string;
@@ -502,6 +507,7 @@ function buildCompactSuccessfulMutationReply(args: {
     || args.intent === "create_work"
     || args.commitRejections.length > 0
     || args.committed.length !== 1
+    || agentReplyContainsUnmatchedTopicNote(args.agentReply)
   ) {
     return undefined;
   }
@@ -1472,6 +1478,7 @@ export async function handleManagerMessage(
     const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
     const currentThreadNotionPageTarget = await loadThreadNotionPageTarget(paths).catch(() => undefined);
     const externalCoordinationHint = await loadExternalCoordinationHint(paths).catch(() => undefined);
+    const systemThreadContext = await loadSystemThreadContext(paths).catch(() => undefined);
     const pendingManagerClarification = await loadPendingManagerClarification(paths, now).catch(() => undefined);
     const pendingManagerConfirmation = await loadPendingManagerConfirmation(paths, now).catch(() => undefined);
     const pendingConfirmationDecision = pendingManagerConfirmation
@@ -1547,6 +1554,7 @@ export async function handleManagerMessage(
       lastQueryContext,
       currentThreadNotionPageTarget,
       externalCoordinationHint,
+      systemThreadContext,
       pendingClarification: pendingManagerClarification,
       pendingConfirmation: pendingManagerConfirmation,
     }, runtimeActions?.managerAgentObserver);
