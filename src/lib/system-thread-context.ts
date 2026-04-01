@@ -13,6 +13,7 @@ export const systemThreadContextSourceKindSchema = z.enum([
   "heartbeat",
   "scheduler",
   "webhook",
+  "legacy-system",
 ]);
 
 export const systemThreadIssueRefSchema = z.object({

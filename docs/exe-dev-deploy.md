@@ -339,6 +339,7 @@ Person-to-person Slack coordination is split into three categories:
 4. System-generated root thread
    - A top-level review, heartbeat, scheduler, or webhook post.
    - The runtime persists the posted assistant root message into the actual Slack thread workspace and stores typed issue refs in `scratch/system-thread-context.json`.
+   - If an older pre-AIC-119 system thread is missing that file, the next human follow-up can lazily recover it from the actual root Slack post before manager handling continues.
    - Later human follow-ups in that real Slack thread can reuse those issue refs as strong hints, including partial-success updates such as lowering one issue's priority while replying that another subtopic has no matching issue.
 
 If `BOT_UID` and `BOT_GID` are correct, these files remain editable by the host operator without `sudo`.
