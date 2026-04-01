@@ -58,6 +58,7 @@ export interface LastManagerAgentTurn {
   committedCommands?: LastManagerCommittedCommandSummary[];
   rejectedProposals?: LastManagerRejectedProposalSummary[];
   duplicateResolutions?: LastManagerDuplicateResolution[];
+  partialFollowupUnmatchedTopics?: string[];
   missingQuerySnapshot?: boolean;
   technicalFailure?: string;
 }
@@ -343,6 +344,7 @@ export async function loadLastManagerAgentTurn(
       committedCommands: parseCommittedCommandSummaries(parsed.committedCommands),
       rejectedProposals: parseRejectedProposalSummaries(parsed.rejectedProposals),
       duplicateResolutions: parseLastManagerDuplicateResolutions(parsed.duplicateResolutions),
+      partialFollowupUnmatchedTopics: parseStringArray(parsed.partialFollowupUnmatchedTopics),
       missingQuerySnapshot: parsed.missingQuerySnapshot === true,
       technicalFailure: typeof parsed.technicalFailure === "string" ? parsed.technicalFailure : undefined,
     };

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractDuplicateResolutionSummaries } from "../src/lib/manager-command-commit.js";
+import {
+  extractDuplicateResolutionSummaries,
+  extractPartialFollowupResolutionReport,
+} from "../src/lib/manager-command-commit.js";
 
 describe("manager agent reports", () => {
   it("extracts duplicate resolution summaries from resolved candidate tool calls", () => {
@@ -59,5 +62,42 @@ describe("manager agent reports", () => {
     ]);
 
     expect(summaries).toEqual([]);
+  });
+
+  it("extracts partial follow-up resolution reports", () => {
+    const report = extractPartialFollowupResolutionReport([
+      {
+        toolName: "report_partial_followup_resolution",
+        details: {
+          partialFollowupResolutionReport: {
+            matchedIssueIds: ["AIC-87"],
+            unmatchedTopics: ["議事録連携"],
+            summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
+          },
+        },
+      },
+    ]);
+
+    expect(report).toEqual({
+      matchedIssueIds: ["AIC-87"],
+      unmatchedTopics: ["議事録連携"],
+      summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
+    });
+  });
+
+  it("ignores malformed partial follow-up resolution reports", () => {
+    const report = extractPartialFollowupResolutionReport([
+      {
+        toolName: "report_partial_followup_resolution",
+        details: {
+          partialFollowupResolutionReport: {
+            matchedIssueIds: ["not-an-issue-id"],
+            unmatchedTopics: ["議事録連携", "議事録連携"],
+          },
+        },
+      },
+    ]);
+
+    expect(report).toBeUndefined();
   });
 });

@@ -68,6 +68,7 @@ import {
 import {
   type ManagerPolicy,
 } from "../state/manager-state-contract.js";
+import type { PartialFollowupResolutionReport } from "./partial-followup-resolution.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
 import {
   getThreadPlanningContext,
@@ -645,6 +646,52 @@ function buildPartialSuccessfulMutationReply(args: {
       ]);
   const rejectionReply = buildCommitRejectionReply(args.commitRejections);
   return composeSlackReply([successReply, rejectionReply].filter(Boolean));
+}
+
+function buildPartialFollowupSuccessReply(args: {
+  intent: ManagerIntentReport["intent"] | undefined;
+  committed: ManagerCommittedCommand[];
+  commitRejections: ManagerProposalRejection[];
+  partialFollowupResolutionReport: PartialFollowupResolutionReport | undefined;
+}): string | undefined {
+  if (
+    !isMutableIntent(args.intent)
+    || args.committed.length === 0
+    || args.commitRejections.length > 0
+    || !args.partialFollowupResolutionReport
+    || args.partialFollowupResolutionReport.unmatchedTopics.length === 0
+  ) {
+    return undefined;
+  }
+
+  const committedIssueIds = new Set(args.committed.flatMap((entry) => entry.issueIds));
+  const matchedIssueIds = args.partialFollowupResolutionReport.matchedIssueIds
+    .filter((issueId) => committedIssueIds.has(issueId));
+  if (matchedIssueIds.length === 0) {
+    return undefined;
+  }
+
+  const successLines = args.committed
+    .map((entry) => entry.publicReply?.trim() || entry.summary.trim())
+    .filter(Boolean);
+  if (successLines.length === 0) {
+    return undefined;
+  }
+
+  const successReply = successLines.length === 1
+    ? successLines[0]
+    : composeSlackReply([
+        `${successLines.length}件反映しました。`,
+        formatSlackBullets(successLines.map((line) => stripSlackSentenceEnding(line))),
+      ]);
+  const unmatchedTopics = args.partialFollowupResolutionReport.unmatchedTopics;
+  const unmatchedReply = unmatchedTopics.length === 1
+    ? `「${unmatchedTopics[0]}」に対応する既存 issue は見当たらないため、必要なら別 issue として起票してください。`
+    : composeSlackReply([
+        "既存 issue が見当たらない項目があります。",
+        formatSlackBullets(unmatchedTopics.map((topic) => `${topic}: 必要なら別 issue として起票してください`)),
+      ]);
+  return composeSlackReply([successReply, unmatchedReply]);
 }
 
 function formatPendingOwnerMapConfirmationReply(summaryLines: string[]): string {
@@ -1621,6 +1668,12 @@ export async function handleManagerMessage(
       committed: commitResult.committed,
       commitRejections: commitResult.rejected,
     });
+    const partialFollowupSuccessReply = buildPartialFollowupSuccessReply({
+      intent: agentIntent,
+      committed: commitResult.committed,
+      commitRejections: commitResult.rejected,
+      partialFollowupResolutionReport: agentTurn.partialFollowupResolutionReport,
+    });
     const groundedCreateWorkClarificationReply = buildGroundedCreateWorkClarificationReply({
       intent: agentIntent,
       committed: commitResult.committed,
@@ -1629,7 +1682,7 @@ export async function handleManagerMessage(
     });
     const mergedReplyBase = missingQuerySnapshot
       ? buildSafetyQueryReply()
-      : compactSuccessfulMutationReply ?? partialSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
+      : partialFollowupSuccessReply ?? compactSuccessfulMutationReply ?? partialSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
           agentReply: agentTurn.reply,
           commitSummaries: commitResult.replySummaries,
           commitRejections: commitResult.rejected,
@@ -1838,6 +1891,7 @@ export async function handleManagerMessage(
       committedCommands: commitResult.committed.map(summarizeManagerCommittedCommand),
       rejectedProposals: commitResult.rejected.map(summarizeManagerProposalRejection),
       duplicateResolutions: agentTurn.duplicateResolutions,
+      partialFollowupUnmatchedTopics: agentTurn.partialFollowupResolutionReport?.unmatchedTopics,
       missingQuerySnapshot,
     });
     runtimeActions?.logger?.info("manager persistence step completed", {

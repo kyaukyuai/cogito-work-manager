@@ -1696,7 +1696,7 @@ describe("handleManagerMessage update flows", () => {
     });
 
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
-      reply: "AIC-87 の優先度を Low に下げました。議事録連携に対応する issue は見当たらないため、必要なら別 issue として起票してください。",
+      reply: "AIC-87 の優先度を Low に下げました。",
       toolCalls: [
         {
           toolName: "report_manager_intent",
@@ -1705,6 +1705,16 @@ describe("handleManagerMessage update flows", () => {
               intent: "update_progress",
               confidence: 0.9,
               summary: "AIC-87 の優先度を下げ、議事録連携は issue なしと返す",
+            },
+          },
+        },
+        {
+          toolName: "report_partial_followup_resolution",
+          details: {
+            partialFollowupResolutionReport: {
+              matchedIssueIds: ["AIC-87"],
+              unmatchedTopics: ["議事録連携"],
+              summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
             },
           },
         },
@@ -1722,6 +1732,11 @@ describe("handleManagerMessage update flows", () => {
         intent: "update_progress",
         confidence: 0.9,
         summary: "AIC-87 の優先度を下げ、議事録連携は issue なしと返す",
+      },
+      partialFollowupResolutionReport: {
+        matchedIssueIds: ["AIC-87"],
+        unmatchedTopics: ["議事録連携"],
+        summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
       },
     });
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
@@ -1751,7 +1766,7 @@ describe("handleManagerMessage update flows", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("AIC-87 の優先度を Low");
-    expect(result.reply).toContain("議事録連携に対応する issue は見当たらない");
+    expect(result.reply).toContain("「議事録連携」に対応する既存 issue は見当たらない");
     expect(result.reply).not.toContain("issue ID を教えてください");
     expect(linearMocks.updateManagedLinearIssue).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1785,7 +1800,7 @@ describe("handleManagerMessage update flows", () => {
     });
 
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
-      reply: "AIC-87 の優先度を Low に下げました。議事録連携に対応する issue は見当たらないため、必要なら別 issue として起票してください。",
+      reply: "AIC-87 の優先度を Low に下げました。",
       toolCalls: [
         {
           toolName: "report_manager_intent",
@@ -1794,6 +1809,16 @@ describe("handleManagerMessage update flows", () => {
               intent: "update_progress",
               confidence: 0.9,
               summary: "AIC-87 の優先度を下げ、議事録連携は issue なしと返す",
+            },
+          },
+        },
+        {
+          toolName: "report_partial_followup_resolution",
+          details: {
+            partialFollowupResolutionReport: {
+              matchedIssueIds: ["AIC-87"],
+              unmatchedTopics: ["議事録連携"],
+              summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
             },
           },
         },
@@ -1827,6 +1852,11 @@ describe("handleManagerMessage update flows", () => {
         persistence: "keep",
         summary: "Recovered system thread context grounds AIC-87 for this follow-up.",
       },
+      partialFollowupResolutionReport: {
+        matchedIssueIds: ["AIC-87"],
+        unmatchedTopics: ["議事録連携"],
+        summary: "AIC-87 is matched but meeting-notes integration has no existing issue.",
+      },
     });
     linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
       id: "issue-aic-87",
@@ -1855,8 +1885,93 @@ describe("handleManagerMessage update flows", () => {
 
     expect(result.handled).toBe(true);
     expect(result.reply).toContain("AIC-87 の優先度を Low");
-    expect(result.reply).toContain("議事録連携に対応する issue は見当たらない");
+    expect(result.reply).toContain("「議事録連携」に対応する既存 issue は見当たらない");
     await expect(loadPendingManagerClarification(paths, new Date("2026-04-01T01:22:00.000Z"))).resolves.toBeUndefined();
+  });
+
+  it("does not append unmatched-topic notes when the partial follow-up report does not match committed issues", async () => {
+    const paths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-partial-followup-unmatched-mismatch");
+    await ensureThreadWorkspace(paths);
+    await saveSystemThreadContext(paths, {
+      sourceKind: "review",
+      rootPostedTs: "thread-partial-followup-unmatched-mismatch",
+      issueRefs: [
+        { issueId: "AIC-87", titleHint: "収集すべきMTG定例名", role: "primary" },
+      ],
+      summary: "review follow-up",
+      recordedAt: "2026-04-01T03:09:00.000Z",
+    });
+
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-87 の優先度を Low に下げました。",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "update_progress",
+              confidence: 0.9,
+              summary: "AIC-87 の優先度を下げる",
+            },
+          },
+        },
+        {
+          toolName: "report_partial_followup_resolution",
+          details: {
+            partialFollowupResolutionReport: {
+              matchedIssueIds: ["AIC-55"],
+              unmatchedTopics: ["議事録連携"],
+            },
+          },
+        },
+      ],
+      proposals: [
+        {
+          commandType: "update_issue_priority",
+          issueId: "AIC-87",
+          priority: 4,
+          reasonSummary: "取得すべきMTG定例名は後回しになったため優先度を下げる",
+        },
+      ],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.9,
+        summary: "AIC-87 の優先度を下げる",
+      },
+      partialFollowupResolutionReport: {
+        matchedIssueIds: ["AIC-55"],
+        unmatchedTopics: ["議事録連携"],
+      },
+    });
+    linearMocks.updateManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-aic-87",
+      identifier: "AIC-87",
+      title: "金澤さんに収集すべきMTG定例名を確認する",
+      url: "https://linear.app/kyaukyuai/issue/AIC-87",
+      priority: 4,
+      priorityLabel: "Low",
+      state: { id: "state-backlog", name: "Backlog", type: "backlog" },
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-partial-followup-unmatched-mismatch",
+        messageTs: "msg-partial-followup-unmatched-mismatch-1",
+        userId: "U1",
+        text: "取得すべきmtg定例の名前は、後回しになりました",
+      },
+      new Date("2026-04-01T03:10:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-87 の優先度を Low");
+    expect(result.reply).not.toContain("議事録連携");
   });
 
   it("rewrites explicit-issue mismatch rejections into a short clarify after partial success", async () => {

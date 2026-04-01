@@ -22,6 +22,7 @@ export {
   extractDuplicateResolutionSummaries,
   extractIntentReport,
   extractManagerCommandProposals,
+  extractPartialFollowupResolutionReport,
   extractPendingClarificationDecision,
   extractSystemThreadContextReport,
   extractTaskExecutionDecision,
