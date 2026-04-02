@@ -119,11 +119,15 @@ import {
 } from "./external-coordination-hint.js";
 import { loadSystemThreadContext, type SystemThreadContext } from "./system-thread-context.js";
 import {
+  originalMessageForPendingClarification,
+  persistPendingManagerClarification,
+  validatePendingClarificationDecision,
+} from "./manager-pending-clarification.js";
+import {
   clearPendingManagerClarification,
   isPendingManagerClarificationContinuation,
   isPendingManagerClarificationStatusQuestion,
   loadPendingManagerClarification,
-  savePendingManagerClarification,
   type PendingManagerClarification,
 } from "./pending-manager-clarification.js";
 import {
@@ -371,64 +375,6 @@ function buildSafetyQueryReply(): string {
 
 function isSchedulerRunRequestText(text: string): boolean {
   return /(今すぐ実行|テスト実行|試しに一度動かして|実行して)/.test(text);
-}
-
-function originalMessageForPendingClarification(
-  pendingClarification: PendingManagerClarification | undefined,
-  decision: PendingClarificationDecisionReport["decision"] | undefined,
-  messageText: string,
-): string {
-  if (decision === "continue_pending" && pendingClarification) {
-    return pendingClarification.originalUserMessage;
-  }
-  return messageText;
-}
-
-function validatePendingClarificationDecision(args: {
-  messageText: string;
-  pendingClarification?: PendingManagerClarification;
-  intent?: ManagerIntentReport["intent"];
-  queryKind?: ManagerIntentReport["queryKind"];
-  pendingDecision?: PendingClarificationDecisionReport;
-}): void {
-  if (!args.pendingClarification) {
-    return;
-  }
-  if (!isPendingManagerClarificationStatusQuestion(args.messageText)) {
-    return;
-  }
-  if (args.pendingDecision?.decision !== "status_question") {
-    throw new Error("manager agent pending clarification status question misclassified");
-  }
-  if (args.pendingDecision.persistence !== "keep") {
-    throw new Error("manager agent pending clarification status question missing keep persistence");
-  }
-  if (args.intent === "query" && args.queryKind === "list-active") {
-    throw new Error("manager agent pending clarification status question misclassified as list-active query");
-  }
-}
-
-async function persistPendingManagerClarification(args: {
-  paths: ThreadPaths;
-  intent: "run_task" | "create_work" | "create_schedule" | "run_schedule" | "update_progress" | "update_completed" | "update_blocked" | "update_schedule" | "delete_schedule" | "followup_resolution" | "post_slack_message";
-  originalUserMessage: string;
-  lastUserMessage: string;
-  clarificationReply: string;
-  missingDecisionSummary?: string;
-  threadParentIssueId?: string;
-  relatedIssueIds?: string[];
-  now: Date;
-}): Promise<void> {
-  await savePendingManagerClarification(args.paths, {
-    intent: args.intent,
-    originalUserMessage: args.originalUserMessage,
-    lastUserMessage: args.lastUserMessage,
-    clarificationReply: args.clarificationReply,
-    missingDecisionSummary: args.missingDecisionSummary,
-    threadParentIssueId: args.threadParentIssueId,
-    relatedIssueIds: unique(args.relatedIssueIds ?? []),
-    recordedAt: args.now.toISOString(),
-  });
 }
 
 function formatCommitLogs(commitSummaries: string[]): string {
