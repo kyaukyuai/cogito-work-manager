@@ -64,6 +64,23 @@ describe("linear command builders", () => {
     expect(args).toContain("2026-03-20");
   });
 
+  it("passes project during issue creation when provided", () => {
+    const args = buildCreateIssueArgs(
+      {
+        title: "Clone response log pipeline",
+        description: "# Summary\n- collect",
+        project: "ai-clone",
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "KYA",
+      },
+    );
+
+    expect(args).toContain("--project");
+    expect(args).toContain("ai-clone");
+  });
+
   it("falls back to workspace args when api key is absent", () => {
     const args = buildListActiveIssuesArgs(10, {
       LINEAR_WORKSPACE: "kyaukyuai",
@@ -262,6 +279,12 @@ describe("linear command builders", () => {
         LINEAR_API_KEY: "lin_api_test",
       }),
     ).toEqual(["issue", "create-batch", "--file", "/tmp/issue-batch.json", "--json"]);
+
+    expect(
+      buildCreateBatchArgs("/tmp/issue-batch.json", {
+        LINEAR_API_KEY: "lin_api_test",
+      }, { project: "ai-clone" }),
+    ).toEqual(["issue", "create-batch", "--file", "/tmp/issue-batch.json", "--project", "ai-clone", "--json"]);
   });
 
   it("builds Linear webhook list/create/update/delete args", () => {

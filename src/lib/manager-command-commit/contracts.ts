@@ -27,7 +27,9 @@ export const createIssuePayloadBaseSchema = z.object({
   priority: z.number().int().min(0).max(4).optional(),
 });
 
-export const createIssuePayloadSchema = createIssuePayloadBaseSchema.superRefine((value, ctx) => {
+export const createIssuePayloadSchema = createIssuePayloadBaseSchema.extend({
+  project: optionalStringSchema,
+}).superRefine((value, ctx) => {
   if (value.assigneeMode === "assign" && !value.assignee) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

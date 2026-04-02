@@ -156,6 +156,7 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For explicit requests to rename or otherwise update an existing Linear project, use intent=update_progress, inspect the target project first with linear_get_project_facts or linear_list_project_facts, and use propose_update_project instead of issue update tools.",
     "When creating a Linear project and the user does not specify teams, omit teamKeys so the manager commit can use the fixed default team.",
     "Do not route Linear project creation or updates through issue proposals.",
+    "When the user explicitly asks to create an issue inside an existing Linear project, inspect that project first with linear_list_project_facts or linear_get_project_facts and set issue.project to the exact project name or slug ID in propose_create_issue or propose_create_issue_batch.",
     "If a pending manager clarification context exists, call report_pending_clarification_decision once and include both decision and persistence.",
     "Use persistence=keep when the existing pending clarification should stay as-is, replace when this turn should create or overwrite the pending clarification state, and clear when the pending state should be removed.",
     "For query replies, call report_query_snapshot once with issueIds, shownIssueIds, remainingIssueIds, totalItemCount, replySummary, and scope.",

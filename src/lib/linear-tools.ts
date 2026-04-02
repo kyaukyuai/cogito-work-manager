@@ -101,6 +101,7 @@ export function createLinearCustomTools(
         description: Type.String({ description: "A short markdown description for the issue." }),
         state: Type.Optional(Type.String({ description: "Optional initial issue state, such as backlog or started." })),
         dueDate: Type.Optional(Type.String({ description: "Optional due date in YYYY-MM-DD format." })),
+        project: Type.Optional(Type.String({ description: "Optional exact project name or slug ID." })),
       }),
       async execute(_toolCallId, params, signal) {
         const result = await createLinearIssue(params as Parameters<typeof createLinearIssue>[0], env, signal);
@@ -188,6 +189,7 @@ export function createLinearCustomTools(
         description: Type.String({ description: "Markdown description." }),
         dueDate: Type.Optional(Type.String({ description: "Due date in YYYY-MM-DD." })),
         priority: Type.Optional(Type.Number({ description: "Priority 1-4." })),
+        project: Type.Optional(Type.String({ description: "Optional exact project name or slug ID." })),
       }),
       async execute(_toolCallId, params, signal) {
         const issue = await createManagedLinearIssue(params as Parameters<typeof createManagedLinearIssue>[0], env, signal);
@@ -209,6 +211,7 @@ export function createLinearCustomTools(
         assignee: Type.Optional(Type.String({ description: "Assignee display name, email, or username." })),
         dueDate: Type.Optional(Type.String({ description: "Due date in YYYY-MM-DD." })),
         priority: Type.Optional(Type.Number({ description: "Priority 1-4." })),
+        project: Type.Optional(Type.String({ description: "Optional exact project name or slug ID." })),
       }),
       async execute(_toolCallId, params, signal) {
         const issue = await createManagedLinearIssue(params as Parameters<typeof createManagedLinearIssue>[0], env, signal);
