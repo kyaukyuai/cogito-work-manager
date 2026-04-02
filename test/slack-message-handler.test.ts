@@ -12,6 +12,8 @@ const threadWorkspaceMocks = vi.hoisted(() => ({
   appendThreadLog: vi.fn(),
   buildThreadPaths: vi.fn((workspaceDir: string, channelId: string, threadTs: string) => ({
     rootDir: `${workspaceDir}/${channelId}/${threadTs}`,
+    sessionFile: `${workspaceDir}/${channelId}/${threadTs}/session.jsonl`,
+    logFile: `${workspaceDir}/${channelId}/${threadTs}/log.jsonl`,
     attachmentsDir: `${workspaceDir}/attachments`,
     scratchDir: `${workspaceDir}/scratch`,
   })),
@@ -27,12 +29,26 @@ const plannerMocks = vi.hoisted(() => ({
   runOtherDirectedMessageTurn: vi.fn(),
 }));
 
+const humanSmalltalkSuppressionMocks = vi.hoisted(() => ({
+  loadHumanToHumanSmalltalkReplyGateContext: vi.fn(),
+  evaluateHumanToHumanSmalltalkReplyGate: vi.fn(),
+  persistHumanToHumanSmalltalkReplySuppressionOnLastTurn: vi.fn(),
+}));
+
 vi.mock("../src/lib/manager.js", () => ({
   handleManagerMessage: managerMocks.handleManagerMessage,
 }));
 
 vi.mock("../src/lib/pi-session.js", () => ({
   runOtherDirectedMessageTurn: plannerMocks.runOtherDirectedMessageTurn,
+}));
+
+vi.mock("../src/runtime/human-to-human-smalltalk-suppression.js", () => ({
+  HUMAN_TO_HUMAN_SMALLTALK_IGNORE_REASON: "ignored_human_to_human_smalltalk_without_bot",
+  loadHumanToHumanSmalltalkReplyGateContext: humanSmalltalkSuppressionMocks.loadHumanToHumanSmalltalkReplyGateContext,
+  evaluateHumanToHumanSmalltalkReplyGate: humanSmalltalkSuppressionMocks.evaluateHumanToHumanSmalltalkReplyGate,
+  persistHumanToHumanSmalltalkReplySuppressionOnLastTurn:
+    humanSmalltalkSuppressionMocks.persistHumanToHumanSmalltalkReplySuppressionOnLastTurn,
 }));
 
 vi.mock("../src/lib/thread-workspace.js", () => ({
@@ -140,6 +156,36 @@ describe("slack message handler", () => {
     });
     coordinationHintMocks.saveExternalCoordinationHint.mockReset();
     plannerMocks.runOtherDirectedMessageTurn.mockReset();
+    humanSmalltalkSuppressionMocks.loadHumanToHumanSmalltalkReplyGateContext.mockReset().mockResolvedValue({
+      currentHasBotMention: false,
+      rootHumanDirectedWithoutBot: false,
+      activeThreadContextFlags: {
+        lastQueryContext: false,
+        pendingManagerClarification: false,
+        pendingManagerConfirmation: false,
+        systemThreadContext: false,
+        externalCoordinationHint: false,
+        recentCommittedCommands: false,
+        recentTaskExecution: false,
+      },
+      hasActiveThreadContext: false,
+    });
+    humanSmalltalkSuppressionMocks.evaluateHumanToHumanSmalltalkReplyGate.mockReset().mockReturnValue({
+      shouldSuppress: false,
+      currentHasBotMention: false,
+      rootHumanDirectedWithoutBot: false,
+      activeThreadContextFlags: {
+        lastQueryContext: false,
+        pendingManagerClarification: false,
+        pendingManagerConfirmation: false,
+        systemThreadContext: false,
+        externalCoordinationHint: false,
+        recentCommittedCommands: false,
+        recentTaskExecution: false,
+      },
+      hasActiveThreadContext: false,
+    });
+    humanSmalltalkSuppressionMocks.persistHumanToHumanSmalltalkReplySuppressionOnLastTurn.mockReset();
     vi.unstubAllGlobals();
   });
 
@@ -830,6 +876,116 @@ describe("slack message handler", () => {
     expect(managerMocks.handleManagerMessage).toHaveBeenCalledTimes(1);
     expect(plannerMocks.runOtherDirectedMessageTurn).toHaveBeenCalledTimes(1);
     expect(coordinationHintMocks.resolveExternalCoordinationHint).not.toHaveBeenCalled();
+  });
+
+  it("suppresses public replies for human-to-human smalltalk threads without Cogito intent", async () => {
+    const { createSlackMessageHandler } = await import("../src/runtime/slack-message-handler.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+    let pendingJob: Promise<void> | undefined;
+
+    humanSmalltalkSuppressionMocks.loadHumanToHumanSmalltalkReplyGateContext.mockResolvedValue({
+      currentHasBotMention: false,
+      rootHumanDirectedWithoutBot: true,
+      activeThreadContextFlags: {
+        lastQueryContext: false,
+        pendingManagerClarification: false,
+        pendingManagerConfirmation: false,
+        systemThreadContext: false,
+        externalCoordinationHint: false,
+        recentCommittedCommands: false,
+        recentTaskExecution: false,
+      },
+      hasActiveThreadContext: false,
+    });
+    humanSmalltalkSuppressionMocks.evaluateHumanToHumanSmalltalkReplyGate.mockReturnValue({
+      shouldSuppress: true,
+      ignoreReason: "ignored_human_to_human_smalltalk_without_bot",
+      intent: "conversation",
+      conversationKind: "smalltalk",
+      currentHasBotMention: false,
+      rootHumanDirectedWithoutBot: true,
+      activeThreadContextFlags: {
+        lastQueryContext: false,
+        pendingManagerClarification: false,
+        pendingManagerConfirmation: false,
+        systemThreadContext: false,
+        externalCoordinationHint: false,
+        recentCommittedCommands: false,
+        recentTaskExecution: false,
+      },
+      hasActiveThreadContext: false,
+    });
+    managerMocks.handleManagerMessage.mockResolvedValue({
+      handled: true,
+      reply: "ありがとうございます！何かお手伝いできることがあればお気軽にどうぞ。",
+      diagnostics: {
+        agent: {
+          source: "agent",
+          intent: "conversation",
+          conversationKind: "smalltalk",
+          toolCalls: [],
+          proposalCount: 0,
+          invalidProposalCount: 0,
+          committedCommands: [],
+          commitRejections: [],
+          missingQuerySnapshot: false,
+        },
+      },
+    });
+
+    const handler = createSlackMessageHandler({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: {
+        policy: { load: vi.fn().mockResolvedValue({ heartbeatEnabled: false, heartbeatIntervalMin: 30, heartbeatActiveLookbackHours: 24 }) },
+        ownerMap: { load: vi.fn().mockResolvedValue(buildOwnerMap()) },
+      } as never,
+      slackTeamId: "T123",
+      setManagerPolicy: vi.fn(),
+      messageQueue: {
+        enqueue: (_key, job) => {
+          pendingJob = job();
+        },
+      },
+      systemTaskExecutor: {
+        executeCustomSchedulerJob: vi.fn(),
+        executeManagerSystemTask: vi.fn(),
+      },
+    });
+
+    await handler.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "111.900",
+      thread_ts: "111.000",
+      text: "なるほど、すごいですね",
+    }, "UBOT");
+
+    await vi.runAllTimersAsync();
+    await pendingJob;
+
+    expect(managerMocks.handleManagerMessage).toHaveBeenCalledTimes(1);
+    expect(humanSmalltalkSuppressionMocks.persistHumanToHumanSmalltalkReplySuppressionOnLastTurn).toHaveBeenCalledWith(
+      expect.anything(),
+      "ignored_human_to_human_smalltalk_without_bot",
+    );
+    expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(webClient.chat.startStream).not.toHaveBeenCalled();
+    expect(threadWorkspaceMocks.appendThreadLog).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ type: "assistant" }),
+    );
+    expect(logger.info).toHaveBeenCalledWith(
+      "Suppressed public reply for human-to-human smalltalk thread without Cogito mention",
+      expect.objectContaining({
+        channelId: "C123",
+        ignoreReason: "ignored_human_to_human_smalltalk_without_bot",
+        conversationKind: "smalltalk",
+      }),
+    );
   });
 
   it("keeps ignored coordination posts silent when no exact issue hint is available", async () => {

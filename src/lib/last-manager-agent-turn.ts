@@ -65,6 +65,7 @@ export interface LastManagerAgentTurn {
   partialFollowupUnmatchedTopics?: string[];
   missingQuerySnapshot?: boolean;
   technicalFailure?: string;
+  publicReplySuppressedReason?: "ignored_human_to_human_smalltalk_without_bot";
 }
 
 function buildLastManagerAgentTurnPath(paths: ThreadPaths): string {
@@ -384,6 +385,9 @@ export async function loadLastManagerAgentTurn(
       partialFollowupUnmatchedTopics: parseStringArray(parsed.partialFollowupUnmatchedTopics),
       missingQuerySnapshot: parsed.missingQuerySnapshot === true,
       technicalFailure: typeof parsed.technicalFailure === "string" ? parsed.technicalFailure : undefined,
+      publicReplySuppressedReason: parsed.publicReplySuppressedReason === "ignored_human_to_human_smalltalk_without_bot"
+        ? parsed.publicReplySuppressedReason
+        : undefined,
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
