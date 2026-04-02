@@ -211,6 +211,68 @@ describe("app runtime Slack streaming", () => {
     );
   });
 
+  it("keeps deterministic project-grouped query replies on the non-streaming path", async () => {
+    vi.useRealTimers();
+    const { createAppRuntimeHandlers } = await import("../src/runtime/app-runtime.js");
+    const webClient = createWebClient();
+    const logger = createLogger();
+
+    managerMocks.handleManagerMessage.mockImplementation(async (...callArgs: any[]) => {
+      const runtimeActions = callArgs[5];
+      runtimeActions.managerAgentObserver?.onReplyStreamingPolicy?.({
+        mode: "disabled",
+        reason: "deterministic-project-grouped-query",
+      });
+      runtimeActions.managerAgentObserver?.onIntentReport({
+        intent: "query",
+        queryKind: "list-active",
+        confidence: 0.95,
+      });
+      runtimeActions.managerAgentObserver?.onTextDelta("途中の一覧");
+      return buildManagerResult("プロジェクトごとにまとめます。\n\nai-clone（2件）", "query");
+    });
+
+    const handlers = createAppRuntimeHandlers({
+      config: buildConfig(),
+      logger: logger as never,
+      webClient,
+      systemPaths: {} as never,
+      managerRepositories: { policy: { load: vi.fn() } } as never,
+      linearEnv: {},
+      slackTeamId: "T123",
+      getManagerPolicy: () => ({ controlRoomChannelId: "CROOM" }) as never,
+      setManagerPolicy: vi.fn(),
+    });
+
+    await handlers.handleSlackMessageEvent({
+      channel: "C123",
+      user: "U123",
+      ts: "111.223",
+      text: "project ごとのタスク一覧をだして",
+    }, "UBOT");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(webClient.chat.startStream).not.toHaveBeenCalled();
+    expect(webClient.chat.appendStream).not.toHaveBeenCalled();
+    expect(webClient.chat.stopStream).not.toHaveBeenCalled();
+    expect(webClient.chat.delete).not.toHaveBeenCalled();
+    expect(webClient.chat.postMessage).toHaveBeenCalledTimes(1);
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith({
+      channel: "C123",
+      thread_ts: "111.223",
+      text: "プロジェクトごとにまとめます。\n\nai-clone（2件）",
+      blocks: expect.any(Array),
+    });
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      "Slack reply stream failed",
+      expect.anything(),
+    );
+    expect(logger.info).not.toHaveBeenCalledWith(
+      "Slack reply stream fell back to non-streaming reply",
+      expect.anything(),
+    );
+  });
+
   it("keeps mutable turns on the processing notice plus final update path", async () => {
     const { createAppRuntimeHandlers } = await import("../src/runtime/app-runtime.js");
     const webClient = createWebClient();

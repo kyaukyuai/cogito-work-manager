@@ -1711,6 +1711,10 @@ export async function handleManagerMessage(
     const effectiveLastQueryContext = isExplicitProjectGroupedTaskListQuery(message.text)
       ? undefined
       : lastQueryContext;
+    const deterministicReplyStreamingDisabled = isProjectGroupedTaskListQuery({
+      messageText: message.text,
+      lastQueryContext: effectiveLastQueryContext,
+    });
     const currentThreadNotionPageTarget = await loadThreadNotionPageTarget(paths).catch(() => undefined);
     const externalCoordinationHint = await loadExternalCoordinationHint(paths).catch(() => undefined);
     const systemThreadContext = await loadSystemThreadContext(paths).catch(() => undefined);
@@ -1774,6 +1778,13 @@ export async function handleManagerMessage(
           },
         },
       };
+    }
+
+    if (deterministicReplyStreamingDisabled) {
+      runtimeActions?.managerAgentObserver?.onReplyStreamingPolicy?.({
+        mode: "disabled",
+        reason: "deterministic-project-grouped-query",
+      });
     }
 
     const agentTurn = await runManagerAgentTurn(config, paths, {

@@ -110,9 +110,15 @@ export interface ManagerAgentTurnResult {
   partialFollowupResolutionReport?: PartialFollowupResolutionReport;
 }
 
+export interface ManagerReplyStreamingPolicy {
+  mode: "default" | "disabled";
+  reason?: string;
+}
+
 export interface ManagerAgentTurnObserver {
   onIntentReport?: (report: ManagerIntentReport) => void;
   onTextDelta?: (delta: string) => void;
+  onReplyStreamingPolicy?: (policy: ManagerReplyStreamingPolicy) => void;
 }
 
 export {

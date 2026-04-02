@@ -1361,4 +1361,95 @@ describe("handleManagerMessage query flows", () => {
       loadThreadQueryContinuation(staleSafetyPaths),
     ).resolves.toBeUndefined();
   });
+
+  it("disables streaming policy for project-grouped continuation queries", async () => {
+    const continuationPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-continuation");
+    await ensureThreadWorkspace(continuationPaths);
+    await saveThreadQueryContinuation(
+      continuationPaths,
+      {
+        kind: "list-active",
+        scope: "team",
+        userMessage: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+        replySummary: "[project-grouped-exact] exact project-grouped task list",
+        issueIds: ["AIC-129", "AIC-128", "AIC-55", "AIC-133"],
+        shownIssueIds: ["AIC-129", "AIC-128"],
+        remainingIssueIds: ["AIC-55", "AIC-133"],
+        totalItemCount: 4,
+        recordedAt: "2026-04-02T03:10:00.000Z",
+      },
+    );
+
+    piSessionMocks.runManagerAgentTurn.mockReset().mockResolvedValueOnce({
+      reply: "プロジェクトごとにまとめます。\n\noperation（1件）\n- AIC-55 Contract closing",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "team",
+              confidence: 0.95,
+              summary: "project-grouped continuation query です。",
+            },
+          },
+        },
+        {
+          toolName: "linear_list_active_issue_facts",
+          details: [
+            makeIssueFact("AIC-55", "Contract closing", "operation"),
+            makeIssueFact("AIC-133", "Project-less issue 1"),
+          ],
+        },
+        {
+          toolName: "report_query_snapshot",
+          details: {
+            querySnapshot: {
+              issueIds: ["AIC-55", "AIC-133"],
+              shownIssueIds: ["AIC-55", "AIC-133"],
+              remainingIssueIds: [],
+              totalItemCount: 2,
+              replySummary: "ignored agent snapshot",
+              scope: "team",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "list-active",
+        queryScope: "team",
+        confidence: 0.95,
+        summary: "project-grouped continuation query です。",
+      },
+    });
+
+    const onReplyStreamingPolicy = vi.fn();
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-continuation",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "他には？",
+      },
+      new Date("2026-04-02T03:11:00.000Z"),
+      undefined,
+      {
+        managerAgentObserver: {
+          onReplyStreamingPolicy,
+        },
+      },
+    );
+
+    expect(onReplyStreamingPolicy).toHaveBeenCalledWith({
+      mode: "disabled",
+      reason: "deterministic-project-grouped-query",
+    });
+  });
 });
