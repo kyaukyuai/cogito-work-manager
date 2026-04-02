@@ -1,4 +1,4 @@
-export const REQUIRED_LINEAR_CLI_VERSION = "2.12.3";
+export const REQUIRED_LINEAR_CLI_VERSION = "2.12.4";
 export const REQUIRED_LINEAR_AUTOMATION_CONTRACT_VERSION = "v4";
 
 type CapabilityContractVersion = `v${number}`;
