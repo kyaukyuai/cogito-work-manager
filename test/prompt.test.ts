@@ -147,6 +147,9 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Priority changes must not change the issue state.");
     expect(prompt).toContain("For Linear project list or inspection requests, use intent=query and inspect projects with linear_list_project_facts or linear_get_project_facts.");
     expect(prompt).toContain("For task-list queries grouped by project, inspect active issue facts and group by each issue's exact project field when present. Do not infer project membership from project-level summary counts.");
+    expect(prompt).toContain("For explicit project-grouped task-list queries such as project ごとのタスク一覧 or プロジェクト別の一覧, use the exact issue.project field from linear_list_active_issue_facts.");
+    expect(prompt).toContain("For explicit project-grouped task-list queries, do not compress multiple issues into one displayed bullet like AIC-103〜105 or AIC-61・AIC-87.");
+    expect(prompt).toContain("If exact issue facts for a project-grouped task-list query are unavailable, do not guess the grouping from project summary counts or issue titles.");
     expect(prompt).toContain("For explicit requests to create a Linear project, use intent=create_work, inspect likely existing projects first with linear_list_project_facts, and use propose_create_project instead of propose_create_issue.");
     expect(prompt).toContain("For explicit requests to rename or otherwise update an existing Linear project, use intent=update_progress, inspect the target project first with linear_get_project_facts or linear_list_project_facts, and use propose_update_project instead of issue update tools.");
     expect(prompt).toContain("When creating a Linear project and the user does not specify teams, omit teamKeys so the manager commit can use the fixed default team.");

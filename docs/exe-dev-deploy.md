@@ -186,6 +186,7 @@ Slack attachment behavior:
 - audio/video can be lazily transcribed when `OPENAI_API_KEY` is present
 - plain-text other-directed messages are evaluated by an LLM-first classifier before public suppression
 - suppression and external-coordination hint creation are separate; the thread may stay publicly silent even when no safe hinted Slack target can be stored
+- explicit project-grouped task-list replies are rendered from exact `issue.project` membership with exact per-project counts and deterministic `他N件` compaction when the list is long
 
 Notion behavior:
 

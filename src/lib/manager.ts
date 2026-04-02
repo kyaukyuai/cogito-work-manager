@@ -9,6 +9,11 @@ import {
   type ManagerQueryKind,
 } from "../orchestrators/query/handle-query.js";
 import {
+  buildProjectGroupedTaskReply,
+  isProjectGroupedTaskListQuery,
+  normalizeProjectGroupedTaskIssueFacts,
+} from "../orchestrators/query/project-grouped-task-list.js";
+import {
   runManagerAgentTurn,
   runPartialFollowupUnmatchedTurn,
   type ManagerAgentTurnObserver,
@@ -880,6 +885,69 @@ interface ThreadQueryContinuationSnapshotInput {
   replySummary?: string;
   scope?: ThreadQueryScope;
   referenceItems?: ThreadQueryReferenceItem[];
+}
+
+function extractActiveIssueFactsResult(toolCalls: Array<{ toolName: string; details?: unknown; isError?: boolean }>): unknown {
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall?.toolName !== "linear_list_active_issue_facts" || toolCall.isError) {
+      continue;
+    }
+    return toolCall.details;
+  }
+  return undefined;
+}
+
+function buildProjectGroupedTaskListReplyOverride(args: {
+  intent?: ManagerIntentReport["intent"];
+  queryKind?: ManagerIntentReport["queryKind"];
+  messageText: string;
+  lastQueryContext?: ThreadQueryContinuation;
+  toolCalls: Array<{ toolName: string; details?: unknown; isError?: boolean }>;
+}): {
+  reply: string;
+  snapshot?: CompleteThreadQueryContinuationSnapshotInput;
+} | undefined {
+  if (args.intent !== "query" || args.queryKind !== "list-active") {
+    return undefined;
+  }
+  if (!isProjectGroupedTaskListQuery({
+    messageText: args.messageText,
+    lastQueryContext: args.lastQueryContext,
+  })) {
+    return undefined;
+  }
+
+  const normalizedIssues = normalizeProjectGroupedTaskIssueFacts(
+    extractActiveIssueFactsResult(args.toolCalls),
+  );
+  if (!normalizedIssues) {
+    return {
+      reply: "プロジェクトごとの一覧を正確に組み立てられませんでした。もう一度お試しください。",
+    };
+  }
+
+  const rendered = buildProjectGroupedTaskReply({
+    messageText: args.messageText,
+    issues: normalizedIssues,
+    lastQueryContext: args.lastQueryContext,
+  });
+  return {
+    reply: rendered.reply,
+    snapshot: {
+      issueIds: rendered.issueIds,
+      shownIssueIds: rendered.shownIssueIds,
+      remainingIssueIds: rendered.remainingIssueIds,
+      totalItemCount: rendered.totalItemCount,
+      replySummary: rendered.replySummary,
+      scope: args.lastQueryContext && !isProjectGroupedTaskListQuery({
+        messageText: args.messageText,
+        lastQueryContext: undefined,
+      })
+        ? "thread-context"
+        : "team",
+    },
+  };
 }
 
 function normalizeQuerySnapshotIssueIds(values: unknown): string[] {
@@ -1764,7 +1832,17 @@ export async function handleManagerMessage(
     const completeQuerySnapshot = hasCompleteQuerySnapshot(extractedQuerySnapshot)
       ? extractedQuerySnapshot
       : undefined;
-    const missingQuerySnapshot = agentIntent === "query" && !completeQuerySnapshot;
+    const projectGroupedTaskListReplyOverride = buildProjectGroupedTaskListReplyOverride({
+      intent: agentIntent,
+      queryKind: agentTurn.intentReport?.queryKind,
+      messageText: message.text,
+      lastQueryContext,
+      toolCalls: agentTurn.toolCalls,
+    });
+    const effectiveQuerySnapshot = projectGroupedTaskListReplyOverride?.snapshot ?? completeQuerySnapshot;
+    const missingQuerySnapshot = agentIntent === "query"
+      && !effectiveQuerySnapshot
+      && !projectGroupedTaskListReplyOverride;
     const preferRejectionReply = isMutableIntent(agentIntent)
       && commitResult.committed.length === 0
       && commitResult.rejected.length > 0;
@@ -1809,7 +1887,8 @@ export async function handleManagerMessage(
       rejected: commitResult.rejected,
       pendingClarificationPersistence: agentTurn.pendingClarificationDecision?.persistence,
     });
-    const mergedReplyBase = missingQuerySnapshot
+    const mergedReplyBase = projectGroupedTaskListReplyOverride?.reply
+      ?? (missingQuerySnapshot
       ? buildSafetyQueryReply()
       : partialFollowupSuccessReply ?? compactSuccessfulMutationReply ?? partialSuccessfulMutationReply ?? groundedCreateWorkClarificationReply ?? groundedCreateWorkReply ?? mergeAgentReplyWithCommit({
           agentReply: agentTurn.reply,
@@ -1817,7 +1896,7 @@ export async function handleManagerMessage(
           commitRejections: commitResult.rejected,
           preferCommittedPublicReply: shouldPreferCommittedPublicReply(agentIntent),
           preferRejectionReply,
-        });
+        }));
     const warningAwareReply = appendPostCommitWarningNotice({
       intent: agentIntent,
       reply: mergedReplyBase,
@@ -1840,18 +1919,18 @@ export async function handleManagerMessage(
       if (!queryKind) {
         throw new Error("manager agent query missing queryKind");
       }
-      if (completeQuerySnapshot) {
+      if (effectiveQuerySnapshot) {
         await persistQueryContinuationForAction({
           paths,
           action: "query",
           queryKind,
           messageText: message.text,
           now,
-          snapshot: completeQuerySnapshot,
+          snapshot: effectiveQuerySnapshot,
         });
         await persistThreadNotionPageTargetForQuery({
           paths,
-          snapshot: completeQuerySnapshot,
+          snapshot: effectiveQuerySnapshot,
           now,
         });
       } else {

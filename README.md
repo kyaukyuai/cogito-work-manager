@@ -13,6 +13,7 @@ Cogito is an execution-manager assistant that continuously watches dedicated Sla
 - Auto-assigns work using the owner map
 - Reflects due dates into Linear when the request contains a deadline
 - Lists, creates, and updates Linear projects through typed read/proposal/commit paths
+- Renders explicit project-grouped task-list queries from exact `issue.project` membership, with exact per-project counts and compact `他N件` continuation when needed
 - Detects overdue, stale, blocked, and owner/due-date-missing issues and reports them to the control room
 - Optionally uses Notion as reference material and can create agenda pages under a configured parent page
 - Does not maintain a separate internal todo system
