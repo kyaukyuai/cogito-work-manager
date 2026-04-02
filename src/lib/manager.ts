@@ -69,9 +69,7 @@ import {
   type ManagerProposalRejection,
   type PendingClarificationDecisionReport,
 } from "./manager-command-commit.js";
-import {
-  type LinearIssue,
-} from "./linear.js";
+import type { LinearIssue } from "../gateways/linear/types.js";
 import {
   type ManagerPolicy,
 } from "../state/manager-state-contract.js";
