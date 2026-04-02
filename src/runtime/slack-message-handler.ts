@@ -354,6 +354,7 @@ export function createSlackMessageHandler(args: {
       }
 
       let streamActivationPromise: Promise<boolean> | undefined;
+      let streamingSuppressed = false;
       const streamController = createSlackReplyStreamController(args.webClient, {
         channel: message.channelId,
         threadTs: message.rootThreadTs,
@@ -421,9 +422,17 @@ export function createSlackMessageHandler(args: {
             postSlackMessage: executeSlackMentionPost,
             logger: args.logger,
             managerAgentObserver: {
+              onReplyStreamingPolicy: (policy) => {
+                if (policy.mode !== "disabled") {
+                  return;
+                }
+                streamingSuppressed = true;
+                streamController.disableStreaming();
+                streamActivationPromise = undefined;
+              },
               onIntentReport: (report) => {
                 observedIntent = report.intent;
-                if (!isReadOnlyStreamingIntent(report.intent)) {
+                if (streamingSuppressed || !isReadOnlyStreamingIntent(report.intent)) {
                   streamController.disableStreaming();
                   streamActivationPromise = undefined;
                   return;
@@ -439,6 +448,9 @@ export function createSlackMessageHandler(args: {
                 });
               },
               onTextDelta: (delta) => {
+                if (streamingSuppressed) {
+                  return;
+                }
                 streamController.pushTextDelta(delta);
               },
             },
