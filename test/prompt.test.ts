@@ -333,6 +333,32 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Continue from the stored last query context (what-should-i-do / team)");
   });
 
+  it("treats explicit project-grouped task queries as fresh exact queries in the runtime prompt", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+      currentDate: "2026-04-02",
+      lastQueryContext: {
+        kind: "list-active",
+        scope: "team",
+        userMessage: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+        replySummary: "プロジェクト（ai-clone/operation/未設定）ごとにアクティブタスクを一覧化した。",
+        issueIds: ["AIC-999"],
+        shownIssueIds: ["AIC-999"],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+        recordedAt: "2026-04-02T01:47:58.152Z",
+      },
+    });
+
+    expect(prompt).toContain("Treat an explicit project-grouped task-list query as a fresh exact query, not as a replay of any previous grouped reply.");
+    expect(prompt).toContain("Call linear_list_active_issue_facts again even if a prior list-active query exists in the same thread.");
+  });
+
   it("adds JST-aware greeting guidance to the manager runtime prompt", () => {
     const prompt = buildManagerAgentPrompt({
       kind: "message",

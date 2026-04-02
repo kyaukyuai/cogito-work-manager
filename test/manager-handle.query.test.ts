@@ -8,9 +8,12 @@ import {
   handleManagerMessage,
 } from "../src/lib/manager.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
-import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
+import {
+  loadThreadQueryContinuation,
+  saveThreadQueryContinuation,
+} from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
-import { buildThreadPaths } from "../src/lib/thread-workspace.js";
+import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-workspace.js";
 import { createDefaultTestManagerAgentTurn } from "./helpers/default-manager-agent-mock.js";
 
 const linearMocks = vi.hoisted(() => ({
@@ -1184,6 +1187,178 @@ describe("handleManagerMessage query flows", () => {
     expect(result.reply).toBe("プロジェクトごとの一覧を正確に組み立てられませんでした。もう一度お試しください。");
     await expect(
       loadThreadQueryContinuation(buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-safety")),
+    ).resolves.toBeUndefined();
+  });
+
+  it("forces a fresh exact project-grouped query instead of reusing stale grouped continuation", async () => {
+    const stalePaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-stale");
+    await ensureThreadWorkspace(stalePaths);
+    await saveThreadQueryContinuation(
+      stalePaths,
+      {
+        kind: "list-active",
+        scope: "team",
+        userMessage: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+        replySummary: "プロジェクト（ai-clone/operation/未設定）ごとにアクティブタスクを一覧化した。",
+        issueIds: ["AIC-999"],
+        shownIssueIds: ["AIC-999"],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+        recordedAt: "2026-04-02T01:47:58.152Z",
+      },
+    );
+
+    const exactFacts = [
+      makeIssueFact("AIC-129", "temporal eval task 1", "ai-clone"),
+      makeIssueFact("AIC-128", "temporal eval task 2", "ai-clone"),
+      makeIssueFact("AIC-55", "Contract closing", "operation"),
+      makeIssueFact("AIC-133", "Project-less issue 1"),
+    ];
+
+    piSessionMocks.runManagerAgentTurn.mockReset().mockResolvedValueOnce({
+      reply: "stale grouped reply should be ignored",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "team",
+              confidence: 0.95,
+              summary: "プロジェクトごとの task list query です。",
+            },
+          },
+        },
+        { toolName: "linear_list_active_issue_facts", details: exactFacts },
+        {
+          toolName: "report_query_snapshot",
+          details: {
+            querySnapshot: {
+              issueIds: ["AIC-999"],
+              shownIssueIds: ["AIC-999"],
+              remainingIssueIds: [],
+              totalItemCount: 1,
+              replySummary: "stale grouped summary",
+              scope: "team",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "list-active",
+        queryScope: "team",
+        confidence: 0.95,
+        summary: "プロジェクトごとの task list query です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-stale",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+      },
+      new Date("2026-04-02T02:31:00.000Z"),
+    );
+
+    expect(piSessionMocks.runManagerAgentTurn).toHaveBeenCalledTimes(1);
+    expect(piSessionMocks.runManagerAgentTurn.mock.calls[0]?.[2]).toMatchObject({
+      lastQueryContext: undefined,
+    });
+    expect(result.reply).toContain("プロジェクトごとにまとめます。");
+    expect(result.reply).toContain("ai-clone（2件）");
+    expect(result.reply).toContain("operation（1件）");
+    expect(result.reply).toContain("プロジェクト未設定（1件）");
+
+    const continuation = await loadThreadQueryContinuation(
+      stalePaths,
+    );
+    expect(continuation?.replySummary).toContain("[project-grouped-exact]");
+    expect(continuation?.issueIds).toEqual(["AIC-129", "AIC-128", "AIC-55", "AIC-133"]);
+  });
+
+  it("does not persist a stale grouped query snapshot when explicit project-grouped facts are unavailable", async () => {
+    const staleSafetyPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-stale-safety");
+    await ensureThreadWorkspace(staleSafetyPaths);
+    await saveThreadQueryContinuation(
+      staleSafetyPaths,
+      {
+        kind: "list-active",
+        scope: "team",
+        userMessage: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+        replySummary: "プロジェクト（ai-clone/operation/未設定）ごとにアクティブタスクを一覧化した。",
+        issueIds: ["AIC-999"],
+        shownIssueIds: ["AIC-999"],
+        remainingIssueIds: [],
+        totalItemCount: 1,
+        recordedAt: "2026-04-02T01:47:58.152Z",
+      },
+    );
+
+    piSessionMocks.runManagerAgentTurn.mockReset().mockResolvedValueOnce({
+      reply: "old grouped reply",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "team",
+              confidence: 0.95,
+              summary: "プロジェクトごとの task list query です。",
+            },
+          },
+        },
+        {
+          toolName: "report_query_snapshot",
+          details: {
+            querySnapshot: {
+              issueIds: ["AIC-999"],
+              shownIssueIds: ["AIC-999"],
+              remainingIssueIds: [],
+              totalItemCount: 1,
+              replySummary: "stale grouped summary",
+              scope: "team",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "list-active",
+        queryScope: "team",
+        confidence: 0.95,
+        summary: "プロジェクトごとの task list query です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-stale-safety",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+      },
+      new Date("2026-04-02T02:31:00.000Z"),
+    );
+
+    expect(result.reply).toBe("プロジェクトごとの一覧を正確に組み立てられませんでした。もう一度お試しください。");
+    await expect(
+      loadThreadQueryContinuation(staleSafetyPaths),
     ).resolves.toBeUndefined();
   });
 });
