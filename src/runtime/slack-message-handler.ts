@@ -37,6 +37,11 @@ import { createSlackReplyStreamController } from "../lib/slack-replies.js";
 import type { SystemTaskExecutor } from "./system-task-executor.js";
 import { ingestThreadAttachments } from "../gateways/slack-attachments/index.js";
 import { recoverLegacySystemThreadContextFromSlackHistory } from "../gateways/slack-system-thread-context/index.js";
+import {
+  evaluateHumanToHumanSmalltalkReplyGate,
+  loadHumanToHumanSmalltalkReplyGateContext,
+  persistHumanToHumanSmalltalkReplySuppressionOnLastTurn,
+} from "./human-to-human-smalltalk-suppression.js";
 
 export function createSlackMessageHandler(args: {
   config: AppConfig;
@@ -353,6 +358,24 @@ export function createSlackMessageHandler(args: {
         return;
       }
 
+      let humanToHumanSmalltalkGateContext:
+        | Awaited<ReturnType<typeof loadHumanToHumanSmalltalkReplyGateContext>>
+        | undefined;
+      try {
+        humanToHumanSmalltalkGateContext = await loadHumanToHumanSmalltalkReplyGateContext({
+          paths,
+          botUserId,
+          currentHasBotMention: processability.hasBotMention,
+        });
+      } catch (error) {
+        args.logger.warn("Failed to load human-to-human smalltalk reply gate context", {
+          channelId: message.channelId,
+          threadTs: message.rootThreadTs,
+          messageTs: message.ts,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
       let streamActivationPromise: Promise<boolean> | undefined;
       let streamingSuppressed = false;
       const streamController = createSlackReplyStreamController(args.webClient, {
@@ -432,6 +455,20 @@ export function createSlackMessageHandler(args: {
               },
               onIntentReport: (report) => {
                 observedIntent = report.intent;
+                const smalltalkReplyGateDecision = humanToHumanSmalltalkGateContext
+                  ? evaluateHumanToHumanSmalltalkReplyGate({
+                      context: humanToHumanSmalltalkGateContext,
+                      handled: true,
+                      intent: report.intent,
+                      conversationKind: report.conversationKind,
+                    })
+                  : undefined;
+                if (smalltalkReplyGateDecision?.shouldSuppress) {
+                  streamingSuppressed = true;
+                  streamController.disableStreaming();
+                  streamActivationPromise = undefined;
+                  return;
+                }
                 if (streamingSuppressed || !isReadOnlyStreamingIntent(report.intent)) {
                   streamController.disableStreaming();
                   streamActivationPromise = undefined;
@@ -512,6 +549,41 @@ export function createSlackMessageHandler(args: {
         }
 
         const reply = managerResult.reply ?? "必要なことを少し具体的に教えてください。";
+        const smalltalkReplyGateDecision = humanToHumanSmalltalkGateContext
+          ? evaluateHumanToHumanSmalltalkReplyGate({
+              context: humanToHumanSmalltalkGateContext,
+              handled: managerResult.handled,
+              intent: managerResult.diagnostics?.agent?.intent,
+              conversationKind: managerResult.diagnostics?.agent?.conversationKind,
+            })
+          : undefined;
+        if (smalltalkReplyGateDecision?.shouldSuppress && smalltalkReplyGateDecision.ignoreReason) {
+          try {
+            await persistHumanToHumanSmalltalkReplySuppressionOnLastTurn(
+              paths,
+              smalltalkReplyGateDecision.ignoreReason,
+            );
+          } catch (error) {
+            args.logger.warn("Failed to persist public reply suppression reason", {
+              channelId: message.channelId,
+              threadTs: message.rootThreadTs,
+              messageTs: message.ts,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+          args.logger.info("Suppressed public reply for human-to-human smalltalk thread without Cogito mention", {
+            channelId: message.channelId,
+            threadTs: message.rootThreadTs,
+            messageTs: message.ts,
+            ignoreReason: smalltalkReplyGateDecision.ignoreReason,
+            intent: smalltalkReplyGateDecision.intent,
+            conversationKind: smalltalkReplyGateDecision.conversationKind,
+            currentHasBotMention: smalltalkReplyGateDecision.currentHasBotMention,
+            rootHumanDirectedWithoutBot: smalltalkReplyGateDecision.rootHumanDirectedWithoutBot,
+            activeThreadContextFlags: smalltalkReplyGateDecision.activeThreadContextFlags,
+          });
+          return;
+        }
         if (streamActivationPromise) {
           await streamActivationPromise;
         }
