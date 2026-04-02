@@ -10,6 +10,7 @@ import {
 } from "../orchestrators/query/handle-query.js";
 import {
   buildProjectGroupedTaskReply,
+  isExplicitProjectGroupedTaskListQuery,
   isProjectGroupedTaskListQuery,
   normalizeProjectGroupedTaskIssueFacts,
 } from "../orchestrators/query/project-grouped-task-list.js";
@@ -1707,6 +1708,9 @@ export async function handleManagerMessage(
       ? extractExplicitRunTaskIssueIdentifier(message.text)
       : undefined;
     const lastQueryContext = await loadThreadQueryContinuation(paths).catch(() => undefined);
+    const effectiveLastQueryContext = isExplicitProjectGroupedTaskListQuery(message.text)
+      ? undefined
+      : lastQueryContext;
     const currentThreadNotionPageTarget = await loadThreadNotionPageTarget(paths).catch(() => undefined);
     const externalCoordinationHint = await loadExternalCoordinationHint(paths).catch(() => undefined);
     const systemThreadContext = await loadSystemThreadContext(paths).catch(() => undefined);
@@ -1782,7 +1786,7 @@ export async function handleManagerMessage(
       attachments: message.attachments,
       currentDate: currentDateInJst(now),
       currentDateTimeJst: currentDateTimeInJst(now),
-      lastQueryContext,
+      lastQueryContext: effectiveLastQueryContext,
       currentThreadNotionPageTarget,
       externalCoordinationHint,
       systemThreadContext,
@@ -1836,10 +1840,12 @@ export async function handleManagerMessage(
       intent: agentIntent,
       queryKind: agentTurn.intentReport?.queryKind,
       messageText: message.text,
-      lastQueryContext,
+      lastQueryContext: effectiveLastQueryContext,
       toolCalls: agentTurn.toolCalls,
     });
-    const effectiveQuerySnapshot = projectGroupedTaskListReplyOverride?.snapshot ?? completeQuerySnapshot;
+    const effectiveQuerySnapshot = projectGroupedTaskListReplyOverride
+      ? projectGroupedTaskListReplyOverride.snapshot
+      : completeQuerySnapshot;
     const missingQuerySnapshot = agentIntent === "query"
       && !effectiveQuerySnapshot
       && !projectGroupedTaskListReplyOverride;

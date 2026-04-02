@@ -10,6 +10,7 @@ import {
   detectSlackCapabilityQuery,
   detectSlackOutboundPostRequest,
 } from "../orchestrators/shared/slack-conversation.js";
+import { isExplicitProjectGroupedTaskListQuery } from "../orchestrators/query/project-grouped-task-list.js";
 import {
   WEBHOOK_INITIAL_PROPOSAL_HEADING,
   WEBHOOK_INITIAL_PROPOSAL_MARKER,
@@ -324,6 +325,7 @@ function buildManagerReplyStyleHints(
   const normalized = messageText.trim();
   const capabilityQuery = detectSlackCapabilityQuery(normalized);
   const notionRecheck = shouldTreatAsNotionRecheck(normalized, lastQueryContext);
+  const explicitProjectGroupedTaskListQuery = isExplicitProjectGroupedTaskListQuery(normalized);
   const hints = [
     "Keep the public Slack reply to 1-3 short sentences by default.",
     "Do not use markdown headings, separator lines, warning icons, or emojis.",
@@ -337,6 +339,11 @@ function buildManagerReplyStyleHints(
     if (lastQueryContext) {
       hints.push(`Continue from the stored last query context (${lastQueryContext.kind} / ${lastQueryContext.scope}) unless the latest message clearly changes the topic.`);
     }
+  }
+
+  if (explicitProjectGroupedTaskListQuery) {
+    hints.push("Treat an explicit project-grouped task-list query as a fresh exact query, not as a replay of any previous grouped reply.");
+    hints.push("Call linear_list_active_issue_facts again even if a prior list-active query exists in the same thread.");
   }
 
   if (/(今日やるべき|何から|優先順位)/.test(normalized)) {
