@@ -35,7 +35,8 @@ export type SlackMessageIgnoreReason =
   | "ignored_unsupported_subtype"
   | "ignored_empty_message"
   | "ignored_other_user_mention_without_bot"
-  | "ignored_other_directed_message_without_bot";
+  | "ignored_other_directed_message_without_bot"
+  | "ignored_human_to_human_smalltalk_without_bot";
 
 export interface SlackMessageProcessability {
   shouldProcess: boolean;
