@@ -23,8 +23,8 @@ const linearMocks = vi.hoisted(() => ({
   getLinearIssue: vi.fn(),
 }));
 
-vi.mock("../src/lib/linear.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/lib/linear.js")>("../src/lib/linear.js");
+vi.mock("../src/gateways/linear/issues.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/gateways/linear/issues.js")>("../src/gateways/linear/issues.js");
   return {
     ...actual,
     getLinearIssue: linearMocks.getLinearIssue,

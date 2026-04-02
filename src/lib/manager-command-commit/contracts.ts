@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
-import type { LinearCommandEnv } from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
 import type { Logger } from "../logger.js";
 import type { SchedulerJob } from "../system-workspace.js";
 import type { ManagerPolicy } from "../../state/manager-state-contract.js";

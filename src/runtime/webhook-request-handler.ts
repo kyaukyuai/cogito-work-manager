@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { WebClient } from "@slack/web-api";
+import { getLinearIssue } from "../gateways/linear/issues.js";
 import type { Logger } from "../lib/logger.js";
-import { getLinearIssue } from "../lib/linear.js";
 import { buildSlackVisibleLlmFailureNotice } from "../lib/llm-failure.js";
 import {
   isDuplicateWebhookDelivery,

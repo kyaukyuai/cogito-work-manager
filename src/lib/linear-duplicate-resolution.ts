@@ -6,7 +6,7 @@ import {
   type FindLinearDuplicateCandidatesInput,
   type LinearDuplicateCandidate,
 } from "./linear-duplicate-candidates.js";
-import type { LinearCommandEnv } from "./linear.js";
+import type { LinearCommandEnv } from "../gateways/linear/command-runner.js";
 import type { DuplicateRecallInput, DuplicateRecallResult } from "../planners/duplicate-recall/index.js";
 
 export interface ResolveLinearDuplicateCandidatesInput extends FindLinearDuplicateCandidatesInput {

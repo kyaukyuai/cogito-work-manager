@@ -1,8 +1,6 @@
-import {
-  searchLinearIssues,
-  type LinearCommandEnv,
-  type LinearIssue,
-} from "./linear.js";
+import type { LinearCommandEnv } from "../gateways/linear/command-runner.js";
+import { searchLinearIssues } from "../gateways/linear/issues.js";
+import type { LinearIssue } from "../gateways/linear/types.js";
 
 export interface LinearDuplicateCandidate {
   identifier: string;

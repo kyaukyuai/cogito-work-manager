@@ -15,6 +15,7 @@ const linearMocks = vi.hoisted(() => ({
   getLinearProject: vi.fn(),
   listOpenLinearIssues: vi.fn(),
   listLinearProjects: vi.fn(),
+  listLinearTeamMembers: vi.fn(),
   searchLinearIssues: vi.fn(),
 }));
 
@@ -22,15 +23,23 @@ const notionMocks = vi.hoisted(() => ({
   getNotionPageContent: vi.fn(),
 }));
 
-vi.mock("../src/lib/linear.js", async () => {
-  const actual = await vi.importActual<typeof import("../src/lib/linear.js")>("../src/lib/linear.js");
+vi.mock("../src/gateways/linear/issues.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/gateways/linear/issues.js")>("../src/gateways/linear/issues.js");
   return {
     ...actual,
     getLinearIssue: linearMocks.getLinearIssue,
-    getLinearProject: linearMocks.getLinearProject,
     listOpenLinearIssues: linearMocks.listOpenLinearIssues,
-    listLinearProjects: linearMocks.listLinearProjects,
+    listLinearTeamMembers: linearMocks.listLinearTeamMembers,
     searchLinearIssues: linearMocks.searchLinearIssues,
+  };
+});
+
+vi.mock("../src/gateways/linear/projects.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/gateways/linear/projects.js")>("../src/gateways/linear/projects.js");
+  return {
+    ...actual,
+    getLinearProject: linearMocks.getLinearProject,
+    listLinearProjects: linearMocks.listLinearProjects,
   };
 });
 
@@ -143,6 +152,7 @@ describe("manager agent tools", () => {
     linearMocks.getLinearProject.mockReset();
     linearMocks.listOpenLinearIssues.mockReset();
     linearMocks.listLinearProjects.mockReset();
+    linearMocks.listLinearTeamMembers.mockReset();
     linearMocks.searchLinearIssues.mockReset();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });

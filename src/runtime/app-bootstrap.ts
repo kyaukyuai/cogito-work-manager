@@ -1,9 +1,10 @@
 import { createServer } from "node:http";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
+import { ensureLinearIssueCreatedWebhook } from "../gateways/linear/webhooks.js";
+import { verifyLinearCli } from "../gateways/linear/verification.js";
 import { loadConfig } from "../lib/config.js";
 import { HeartbeatService } from "../lib/heartbeat.js";
-import { ensureLinearIssueCreatedWebhook, verifyLinearCli } from "../lib/linear.js";
 import { LINEAR_ISSUE_CREATED_WEBHOOK_LABEL } from "../lib/linear-webhook.js";
 import { Logger } from "../lib/logger.js";
 import { ensureManagerStateFiles } from "../lib/manager-state.js";
