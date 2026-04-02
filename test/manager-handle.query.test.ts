@@ -8,7 +8,9 @@ import {
   handleManagerMessage,
 } from "../src/lib/manager.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
+import { loadThreadQueryContinuation } from "../src/lib/query-continuation.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { buildThreadPaths } from "../src/lib/thread-workspace.js";
 import { createDefaultTestManagerAgentTurn } from "./helpers/default-manager-agent-mock.js";
 
 const linearMocks = vi.hoisted(() => ({
@@ -333,6 +335,25 @@ function makeActiveIssue(overrides: Record<string, unknown> & { identifier: stri
     relations: [],
     inverseRelations: [],
     ...overrides,
+  };
+}
+
+function makeIssueFact(
+  identifier: string,
+  title: string,
+  projectName?: string,
+): Record<string, unknown> {
+  return {
+    identifier,
+    title,
+    project: projectName
+      ? {
+          id: `project-${projectName}`,
+          name: projectName,
+          slugId: projectName,
+        }
+      : undefined,
+    stateName: "Started",
   };
 }
 
@@ -847,5 +868,322 @@ describe("handleManagerMessage query flows", () => {
     expect(result.reply).toContain("下書きまではできています");
     expect(result.reply).toContain("次は今の進捗を 1 行で返すか");
     expect(piSessionMocks.runTaskPlanningTurn).not.toHaveBeenCalled();
+  });
+
+  it("renders explicit project-grouped task queries from exact issue.project facts and persists exact continuation", async () => {
+    const exactFacts = [
+      makeIssueFact("AIC-129", "temporal eval task 1", "ai-clone"),
+      makeIssueFact("AIC-128", "temporal eval task 2", "ai-clone"),
+      makeIssueFact("AIC-126", "temporal eval task 3", "ai-clone"),
+      makeIssueFact("AIC-118", "clone-provision-regression", "ai-clone"),
+      makeIssueFact("AIC-117", "cold-worker prompt timeout", "ai-clone"),
+      makeIssueFact("AIC-113", "collector follow-up", "ai-clone"),
+      makeIssueFact("AIC-107", "kickoff import", "ai-clone"),
+      makeIssueFact("AIC-101", "dialog summary import", "ai-clone"),
+      makeIssueFact("AIC-99", "Notion import", "ai-clone-collector"),
+      makeIssueFact("AIC-85", "collector planning", "ai-clone-collector"),
+      makeIssueFact("AIC-105", "FFS personalization 3", "operation"),
+      makeIssueFact("AIC-104", "FFS personalization 2", "operation"),
+      makeIssueFact("AIC-103", "FFS personalization 1", "operation"),
+      makeIssueFact("AIC-87", "Collect recurring meeting names", "operation"),
+      makeIssueFact("AIC-86", "Invite Kakui to executives channel", "operation"),
+      makeIssueFact("AIC-61", "Invite Kakui to ChatGPT project", "operation"),
+      makeIssueFact("AIC-59", "Kickoff announcement", "operation"),
+      makeIssueFact("AIC-58", "Onboarding prep", "operation"),
+      makeIssueFact("AIC-57", "Account setup", "operation"),
+      makeIssueFact("AIC-56", "Internal rollout", "operation"),
+      makeIssueFact("AIC-38", "Invite request", "operation"),
+      makeIssueFact("AIC-55", "Contract closing", "operation"),
+      makeIssueFact("AIC-133", "Project-less issue 1"),
+      makeIssueFact("AIC-132", "Project-less issue 2"),
+      makeIssueFact("AIC-130", "Project-less issue 3"),
+      makeIssueFact("AIC-127", "Project-less issue 4"),
+      makeIssueFact("AIC-125", "Project-less issue 5"),
+      makeIssueFact("AIC-123", "Project-less issue 6"),
+      makeIssueFact("AIC-122", "Project-less issue 7"),
+      makeIssueFact("AIC-120", "Project-less issue 8"),
+    ];
+
+    piSessionMocks.runManagerAgentTurn.mockReset().mockResolvedValueOnce({
+      reply: [
+        "プロジェクト別にまとめます。",
+        "ai-clone（9件）",
+        "AIC-103〜105 人事情報（FFS）活用・パーソナライズ — High",
+        "プロジェクト未割り当て（5件）",
+      ].join("\n"),
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "team",
+              confidence: 0.95,
+              summary: "プロジェクトごとの task list query です。",
+            },
+          },
+        },
+        {
+          toolName: "linear_list_active_issue_facts",
+          details: exactFacts,
+        },
+        {
+          toolName: "report_query_snapshot",
+          details: {
+            querySnapshot: {
+              issueIds: ["AIC-103"],
+              shownIssueIds: ["AIC-103"],
+              remainingIssueIds: [],
+              totalItemCount: 1,
+              replySummary: "inaccurate grouped summary",
+              scope: "team",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "list-active",
+        queryScope: "team",
+        confidence: 0.95,
+        summary: "プロジェクトごとの task list query です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "<@U0ALQ3MN4RL> project ごとのタスク一覧をだして",
+      },
+      new Date("2026-04-02T01:47:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("プロジェクトごとにまとめます。");
+    expect(result.reply).toContain("ai-clone（8件）");
+    expect(result.reply).toContain("ai-clone-collector（2件）");
+    expect(result.reply).toContain("operation（12件）");
+    expect(result.reply).toContain("プロジェクト未設定（8件）");
+    expect(result.reply).toContain("- AIC-133 Project-less issue 1（Started）");
+    expect(result.reply).not.toContain("AIC-103〜105");
+    expect(result.reply).not.toContain("AIC-61・AIC-87");
+
+    const continuation = await loadThreadQueryContinuation(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped"),
+    );
+    expect(continuation).toMatchObject({
+      kind: "list-active",
+      scope: "team",
+      totalItemCount: 30,
+      shownIssueIds: [
+        "AIC-129", "AIC-128", "AIC-126",
+        "AIC-99", "AIC-85",
+        "AIC-105", "AIC-104", "AIC-103",
+        "AIC-133", "AIC-132", "AIC-130",
+      ],
+      remainingIssueIds: [
+        "AIC-118", "AIC-117", "AIC-113", "AIC-107", "AIC-101",
+        "AIC-87", "AIC-86", "AIC-61", "AIC-59", "AIC-58", "AIC-57", "AIC-56", "AIC-38", "AIC-55",
+        "AIC-127", "AIC-125", "AIC-123", "AIC-122", "AIC-120",
+      ],
+    });
+    expect(continuation?.replySummary).toContain("[project-grouped-exact]");
+  });
+
+  it("uses exact project-grouped continuation instead of repeating or guessing later items", async () => {
+    const exactFacts = [
+      makeIssueFact("AIC-129", "temporal eval task 1", "ai-clone"),
+      makeIssueFact("AIC-128", "temporal eval task 2", "ai-clone"),
+      makeIssueFact("AIC-126", "temporal eval task 3", "ai-clone"),
+      makeIssueFact("AIC-118", "clone-provision-regression", "ai-clone"),
+      makeIssueFact("AIC-117", "cold-worker prompt timeout", "ai-clone"),
+      makeIssueFact("AIC-113", "collector follow-up", "ai-clone"),
+      makeIssueFact("AIC-107", "kickoff import", "ai-clone"),
+      makeIssueFact("AIC-101", "dialog summary import", "ai-clone"),
+      makeIssueFact("AIC-99", "Notion import", "ai-clone-collector"),
+      makeIssueFact("AIC-85", "collector planning", "ai-clone-collector"),
+      makeIssueFact("AIC-105", "FFS personalization 3", "operation"),
+      makeIssueFact("AIC-104", "FFS personalization 2", "operation"),
+      makeIssueFact("AIC-103", "FFS personalization 1", "operation"),
+      makeIssueFact("AIC-87", "Collect recurring meeting names", "operation"),
+      makeIssueFact("AIC-86", "Invite Kakui to executives channel", "operation"),
+      makeIssueFact("AIC-61", "Invite Kakui to ChatGPT project", "operation"),
+      makeIssueFact("AIC-59", "Kickoff announcement", "operation"),
+      makeIssueFact("AIC-58", "Onboarding prep", "operation"),
+      makeIssueFact("AIC-57", "Account setup", "operation"),
+      makeIssueFact("AIC-56", "Internal rollout", "operation"),
+      makeIssueFact("AIC-38", "Invite request", "operation"),
+      makeIssueFact("AIC-55", "Contract closing", "operation"),
+      makeIssueFact("AIC-133", "Project-less issue 1"),
+      makeIssueFact("AIC-132", "Project-less issue 2"),
+      makeIssueFact("AIC-130", "Project-less issue 3"),
+      makeIssueFact("AIC-127", "Project-less issue 4"),
+      makeIssueFact("AIC-125", "Project-less issue 5"),
+      makeIssueFact("AIC-123", "Project-less issue 6"),
+      makeIssueFact("AIC-122", "Project-less issue 7"),
+      makeIssueFact("AIC-120", "Project-less issue 8"),
+    ];
+
+    piSessionMocks.runManagerAgentTurn
+      .mockReset()
+      .mockResolvedValueOnce({
+        reply: "grouped reply should be overridden",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "query",
+                queryKind: "list-active",
+                queryScope: "team",
+                confidence: 0.95,
+                summary: "プロジェクトごとの task list query です。",
+              },
+            },
+          },
+          { toolName: "linear_list_active_issue_facts", details: exactFacts },
+        ],
+        proposals: [],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "query",
+          queryKind: "list-active",
+          queryScope: "team",
+          confidence: 0.95,
+          summary: "プロジェクトごとの task list query です。",
+        },
+      })
+      .mockResolvedValueOnce({
+        reply: "continued reply should also be overridden",
+        toolCalls: [
+          {
+            toolName: "report_manager_intent",
+            details: {
+              intentReport: {
+                intent: "query",
+                queryKind: "list-active",
+                queryScope: "thread-context",
+                confidence: 0.92,
+                summary: "直前の一覧の続きです。",
+              },
+            },
+          },
+          { toolName: "linear_list_active_issue_facts", details: exactFacts },
+        ],
+        proposals: [],
+        invalidProposalCount: 0,
+        intentReport: {
+          intent: "query",
+          queryKind: "list-active",
+          queryScope: "thread-context",
+          confidence: 0.92,
+          summary: "直前の一覧の続きです。",
+        },
+      });
+
+    await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-continuation",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "project ごとのタスク一覧をだして",
+      },
+      new Date("2026-04-02T01:47:00.000Z"),
+    );
+
+    const followup = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-continuation",
+        messageTs: "msg-2",
+        userId: "U1",
+        text: "他には？",
+      },
+      new Date("2026-04-02T01:48:00.000Z"),
+    );
+
+    expect(followup.reply).toContain("- AIC-118 clone-provision-regression（Started）");
+    expect(followup.reply).toContain("- AIC-87 Collect recurring meeting names（Started）");
+    expect(followup.reply).toContain("- AIC-127 Project-less issue 4（Started）");
+    expect(followup.reply).not.toContain("AIC-129");
+    expect(followup.reply).not.toContain("AIC-133 Project-less issue 1");
+
+    const continuation = await loadThreadQueryContinuation(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-continuation"),
+    );
+    expect(continuation?.shownIssueIds).toEqual([
+      "AIC-129", "AIC-128", "AIC-126",
+      "AIC-99", "AIC-85",
+      "AIC-105", "AIC-104", "AIC-103",
+      "AIC-133", "AIC-132", "AIC-130",
+      "AIC-118", "AIC-117", "AIC-113",
+      "AIC-87", "AIC-86", "AIC-61",
+      "AIC-127", "AIC-125", "AIC-123",
+    ]);
+    expect(continuation?.remainingIssueIds).toEqual([
+      "AIC-107", "AIC-101",
+      "AIC-59", "AIC-58", "AIC-57", "AIC-56", "AIC-38", "AIC-55",
+      "AIC-122", "AIC-120",
+    ]);
+  });
+
+  it("returns a safety reply instead of guessed project grouping when exact issue facts are unavailable", async () => {
+    piSessionMocks.runManagerAgentTurn.mockReset().mockResolvedValueOnce({
+      reply: "operation（12件）\nAIC-103〜105 ...",
+      toolCalls: [
+        {
+          toolName: "report_manager_intent",
+          details: {
+            intentReport: {
+              intent: "query",
+              queryKind: "list-active",
+              queryScope: "team",
+              confidence: 0.95,
+              summary: "プロジェクトごとの task list query です。",
+            },
+          },
+        },
+      ],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "query",
+        queryKind: "list-active",
+        queryScope: "team",
+        confidence: 0.95,
+        summary: "プロジェクトごとの task list query です。",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-query-project-grouped-safety",
+        messageTs: "msg-1",
+        userId: "U1",
+        text: "プロジェクト別のタスク一覧を見せて",
+      },
+      new Date("2026-04-02T01:47:00.000Z"),
+    );
+
+    expect(result.reply).toBe("プロジェクトごとの一覧を正確に組み立てられませんでした。もう一度お試しください。");
+    await expect(
+      loadThreadQueryContinuation(buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-query-project-grouped-safety")),
+    ).resolves.toBeUndefined();
   });
 });
