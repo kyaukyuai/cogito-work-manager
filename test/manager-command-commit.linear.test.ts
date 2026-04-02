@@ -994,6 +994,123 @@ describe("manager command commit linear", () => {
     expect(result.committed[0]?.summary).not.toContain("担当が未定義だった task は、いったん kyaukyuai に寄せています。");
   });
 
+  it("passes explicit project targets into single issue creation and omits generic followup thread guidance", async () => {
+    linearMocks.createManagedLinearIssue.mockResolvedValueOnce({
+      id: "issue-158",
+      identifier: "AIC-158",
+      title: "クローン応答ログを ai-clone に source として戻すパイプラインの設計・実装",
+      url: "https://linear.app/kyaukyuai/issue/AIC-158",
+      relations: [],
+      inverseRelations: [],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "create_issue",
+          planningReason: "single-issue",
+          threadParentHandling: "ignore",
+          duplicateHandling: "create-new",
+          issue: {
+            title: "クローン応答ログを ai-clone に source として戻すパイプラインの設計・実装",
+            description: "クローン応答ログを source として戻す。",
+            project: "ai-clone",
+            assigneeMode: "leave-unassigned",
+          },
+          reasonSummary: "ai-clone project 内の task として新規起票します。",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-project-create",
+        messageTs: "msg-project-create-1",
+        userId: "U1",
+        text: "ai-clone プロジェクト内の task として切っておいて",
+      },
+      now: new Date("2026-04-02T06:30:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(linearMocks.createManagedLinearIssue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project: "ai-clone",
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.summary).not.toContain("この thread で進捗・完了・blocked を続けてください。");
+  });
+
+  it("passes explicit project targets into batch issue creation", async () => {
+    linearMocks.createManagedLinearIssueBatch.mockResolvedValueOnce({
+      parent: {
+        id: "issue-parent-158",
+        identifier: "AIC-158",
+        title: "クローン応答ログを ai-clone に source として戻す",
+        url: "https://linear.app/kyaukyuai/issue/AIC-158",
+        relations: [],
+        inverseRelations: [],
+      },
+      children: [
+        {
+          id: "issue-child-159",
+          identifier: "AIC-159",
+          title: "ログ収集方針の設計",
+          url: "https://linear.app/kyaukyuai/issue/AIC-159",
+          relations: [],
+          inverseRelations: [],
+        },
+      ],
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "create_issue_batch",
+          planningReason: "complex-request",
+          reasonSummary: "ai-clone project 配下で親子 task を作成します。",
+          parent: {
+            title: "クローン応答ログを ai-clone に source として戻す",
+            description: "親 issue です。",
+            project: "ai-clone",
+            assigneeMode: "leave-unassigned",
+          },
+          children: [
+            {
+              title: "ログ収集方針の設計",
+              description: "子 issue です。",
+              assigneeMode: "leave-unassigned",
+            },
+          ],
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-project-batch-create",
+        messageTs: "msg-project-batch-create-1",
+        userId: "U1",
+        text: "ai-clone プロジェクト内で親子 task を切っておいて",
+      },
+      now: new Date("2026-04-02T06:35:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(linearMocks.createManagedLinearIssueBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        parent: expect.objectContaining({
+          project: "ai-clone",
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(result.committed[0]?.summary).not.toContain("この thread で進捗・完了・blocked を続けてください。");
+  });
+
   it("commits multiple create_issue_batch proposals in the same turn without tripping thread dedupe", async () => {
     linearMocks.createManagedLinearIssueBatch
       .mockResolvedValueOnce({

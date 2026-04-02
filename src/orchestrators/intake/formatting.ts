@@ -217,7 +217,11 @@ export function formatAutonomousCreateReply(
   children: LinearIssue[],
   reason: string,
   usedFallback: boolean,
-  options?: { reusedParent?: boolean; attachedToExistingParent?: boolean },
+  options?: {
+    reusedParent?: boolean;
+    attachedToExistingParent?: boolean;
+    includeFollowupThreadInstruction?: boolean;
+  },
 ): string {
   const primary = parent ?? children[0];
   const paragraphs: Array<string | undefined> = [];
@@ -261,7 +265,9 @@ export function formatAutonomousCreateReply(
     );
   }
 
-  paragraphs.push("この thread で進捗・完了・blocked を続けてください。");
+  if (options?.includeFollowupThreadInstruction ?? true) {
+    paragraphs.push("この thread で進捗・完了・blocked を続けてください。");
+  }
   if (usedFallback) {
     paragraphs.push("担当が未定義だった task は、いったん kyaukyuai に寄せています。");
   }

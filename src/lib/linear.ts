@@ -93,6 +93,7 @@ export interface CreateIssueInput {
   description: string;
   state?: string;
   dueDate?: string;
+  project?: string;
 }
 
 export interface LinearIssueResult {

@@ -552,6 +552,7 @@ function buildManagedCreateIssueArgs(
 
   if (input.state?.trim()) args.push("--state", input.state.trim());
   if (input.dueDate?.trim()) args.push("--due-date", input.dueDate.trim());
+  if (input.project?.trim()) args.push("--project", input.project.trim());
   if (input.priority != null) args.push("--priority", String(input.priority));
   if (assignee?.trim()) args.push("--assignee", assignee.trim());
   if (input.parent?.trim()) args.push("--parent", input.parent.trim());
@@ -643,6 +644,10 @@ export function buildCreateIssueArgs(
 
   if (input.dueDate?.trim()) {
     args.push("--due-date", input.dueDate.trim());
+  }
+
+  if (input.project?.trim()) {
+    args.push("--project", input.project.trim());
   }
 
   return args;
@@ -841,9 +846,18 @@ export function buildIssueChildrenArgs(issueId: string, env: LinearCommandEnv = 
   return ["issue", "children", ...workspaceArgs(env), trimmed, "--json"];
 }
 
-export function buildCreateBatchArgs(filePath: string, env: LinearCommandEnv = process.env): string[] {
+export function buildCreateBatchArgs(
+  filePath: string,
+  env: LinearCommandEnv = process.env,
+  options: { project?: string } = {},
+): string[] {
   if (!filePath.trim()) throw new Error("Batch file path is required");
-  return ["issue", "create-batch", ...workspaceArgs(env), "--file", filePath, "--json"];
+  const args = ["issue", "create-batch", ...workspaceArgs(env), "--file", filePath];
+  if (options.project?.trim()) {
+    args.push("--project", options.project.trim());
+  }
+  args.push("--json");
+  return args;
 }
 
 async function loadIssueRelations(
@@ -996,7 +1010,11 @@ export async function createManagedLinearIssueBatch(
 
     let payload: CliBatchCreatePayload;
     try {
-      const result = await execLinear(buildCreateBatchArgs(batchFilePath, env), env, signal);
+      const result = await execLinear(
+        buildCreateBatchArgs(batchFilePath, env, { project: input.parent.project }),
+        env,
+        signal,
+      );
       const raw = result.stdout || result.stderr;
       if (!raw) {
         throw new Error("linear command returned empty JSON output");

@@ -101,6 +101,8 @@ describe("linear write path hardening", () => {
       const flagIndex = args.indexOf("--description-file");
       expect(flagIndex).toBeGreaterThan(-1);
       expect(args).not.toContain("--description");
+      expect(args).toContain("--project");
+      expect(args).toContain("ai-clone");
       descriptionFilePath = args[flagIndex + 1] ?? "";
       expect(await readFile(descriptionFilePath, "utf8")).toBe("# Summary\n- markdown");
       return {
@@ -113,6 +115,7 @@ describe("linear write path hardening", () => {
       {
         title: "Smoke test",
         description: "# Summary\n- markdown",
+        project: "ai-clone",
       },
       {
         LINEAR_API_KEY: "lin_api_test",
@@ -122,6 +125,40 @@ describe("linear write path hardening", () => {
 
     expect(descriptionFilePath).toBeTruthy();
     await assertFileRemoved(descriptionFilePath);
+  });
+
+  it("uses --project override for managed issue batch creation", async () => {
+    mockExecFileSuccess(async (args) => {
+      expect(args).toContain("--project");
+      expect(args).toContain("ai-clone");
+      return {
+        stdout: JSON.stringify({
+          parent: { id: "parent-1", identifier: "AIC-100", title: "Parent" },
+          children: [{ id: "child-1", identifier: "AIC-101", title: "Child" }],
+        }),
+      };
+    });
+    const { createManagedLinearIssueBatch } = await import("../src/lib/linear.js");
+
+    await createManagedLinearIssueBatch(
+      {
+        parent: {
+          title: "Parent",
+          description: "Parent desc",
+          project: "ai-clone",
+        },
+        children: [
+          {
+            title: "Child",
+            description: "Child desc",
+          },
+        ],
+      },
+      {
+        LINEAR_API_KEY: "lin_api_test",
+        LINEAR_TEAM_KEY: "AIC",
+      },
+    );
   });
 
   it("uses --description-file for multiline managed issue updates and cleans the temp file", async () => {

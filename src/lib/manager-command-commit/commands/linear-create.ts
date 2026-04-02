@@ -363,6 +363,7 @@ export async function commitCreateIssueProposal(
       description: proposal.issue.description,
       state: proposal.issue.state,
       dueDate: proposal.issue.dueDate,
+      project: proposal.issue.project,
       assignee: proposal.issue.assignee,
       parent: effectiveParentIssueId,
       priority: proposal.issue.priority,
@@ -410,7 +411,10 @@ export async function commitCreateIssueProposal(
       [issue],
       "single-issue",
       false,
-      threadParentIssue ? { attachedToExistingParent: true } : undefined,
+      {
+        attachedToExistingParent: Boolean(threadParentIssue),
+        includeFollowupThreadInstruction: false,
+      },
     ),
     publicReply: `${buildPlainIssueLabel(issue)} を作成しました。`,
   };
@@ -433,6 +437,7 @@ export async function commitCreateIssueBatchProposal(
         title: proposal.children[0]!.title,
         description: proposal.children[0]!.description,
         dueDate: proposal.children[0]!.dueDate,
+        project: proposal.parent.project,
         assignee: proposal.children[0]!.assignee,
         assigneeMode: proposal.children[0]!.assigneeMode,
         priority: proposal.children[0]!.priority,
@@ -465,6 +470,7 @@ export async function commitCreateIssueBatchProposal(
           description: proposal.parent.description,
           state: proposal.parent.state,
           dueDate: proposal.parent.dueDate,
+          project: proposal.parent.project,
           assignee: proposal.parent.assignee,
           parent: proposal.parent.parent,
           priority: proposal.parent.priority,
@@ -474,6 +480,7 @@ export async function commitCreateIssueBatchProposal(
           description: child.description,
           state: child.state,
           dueDate: child.dueDate,
+          project: proposal.parent.project,
           assignee: child.assignee,
           parent: child.parent,
           priority: child.priority,
@@ -552,6 +559,9 @@ export async function commitCreateIssueBatchProposal(
       children,
       proposal.planningReason,
       false,
+      {
+        includeFollowupThreadInstruction: false,
+      },
     ),
     publicReply: `${buildPlainIssueLabel(parent)} と子 issue ${children.length}件を作成しました。`,
   };

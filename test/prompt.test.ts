@@ -154,6 +154,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("For explicit requests to rename or otherwise update an existing Linear project, use intent=update_progress, inspect the target project first with linear_get_project_facts or linear_list_project_facts, and use propose_update_project instead of issue update tools.");
     expect(prompt).toContain("When creating a Linear project and the user does not specify teams, omit teamKeys so the manager commit can use the fixed default team.");
     expect(prompt).toContain("Do not route Linear project creation or updates through issue proposals.");
+    expect(prompt).toContain("When the user explicitly asks to create an issue inside an existing Linear project, inspect that project first with linear_list_project_facts or linear_get_project_facts and set issue.project to the exact project name or slug ID in propose_create_issue or propose_create_issue_batch.");
     expect(prompt).toContain("propose_create_issue_batch supports at most 8 child issues per proposal.");
     expect(prompt).toContain("If a request contains more than 8 child tasks, split it into multiple create_issue_batch proposals in the same turn");
     expect(prompt).toContain("If the user says 今週中 or 今週を目処 without a specific date, resolve it to the Friday of the current JST work week unless the user says otherwise.");
