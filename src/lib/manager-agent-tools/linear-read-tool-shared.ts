@@ -1,5 +1,5 @@
 import type { AppConfig } from "../config.js";
-import type { LinearCommandEnv } from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
 import type { DuplicateRecallPlannerExecutor } from "../linear-duplicate-resolution.js";
 
 export interface ManagerAgentToolHelpers {

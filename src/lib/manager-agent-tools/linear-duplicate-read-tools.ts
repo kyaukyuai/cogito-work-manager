@@ -8,7 +8,7 @@ import {
   resolveLinearDuplicateCandidates,
   type ResolvedLinearDuplicateCandidates,
 } from "../linear-duplicate-resolution.js";
-import type { LinearCommandEnv } from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
 import type { ManagerAgentToolHelpers } from "./linear-read-tool-shared.js";
 
 function formatIssue(issue: { identifier: string; title: string; url?: string | null }): string {

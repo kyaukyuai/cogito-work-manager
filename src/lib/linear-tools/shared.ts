@@ -1,10 +1,6 @@
 import type { AppConfig } from "../config.js";
-import type {
-  LinearCommandEnv,
-  LinearIssue,
-  LinearIssueResult,
-  LinearListResult,
-} from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
+import type { LinearIssue, LinearIssueResult, LinearListResult } from "../../gateways/linear/types.js";
 
 export function buildLinearEnv(config: AppConfig): LinearCommandEnv {
   return {

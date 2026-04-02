@@ -1,11 +1,8 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import {
-  getLinearProject,
-  listLinearProjects,
-  type LinearCommandEnv,
-  type LinearProject,
-} from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
+import { getLinearProject, listLinearProjects } from "../../gateways/linear/projects.js";
+import type { LinearProject } from "../../gateways/linear/types.js";
 import { formatJsonDetails } from "./linear-read-tool-shared.js";
 
 function buildProjectFacts(project: LinearProject): Record<string, unknown> {

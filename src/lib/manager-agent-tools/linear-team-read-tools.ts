@@ -1,6 +1,7 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { listLinearTeamMembers, type LinearCommandEnv } from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
+import { listLinearTeamMembers } from "../../gateways/linear/issues.js";
 import { formatJsonDetails } from "./linear-read-tool-shared.js";
 
 export function createLinearTeamReadTools(env: LinearCommandEnv): ToolDefinition[] {

@@ -1,11 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppConfig } from "./config.js";
-import {
-  getLinearIssue,
-  type LinearCommandEnv,
-  type LinearIssue,
-} from "./linear.js";
+import type { LinearCommandEnv } from "../gateways/linear/command-runner.js";
+import { getLinearIssue } from "../gateways/linear/issues.js";
+import type { LinearIssue } from "../gateways/linear/types.js";
 import { analyzeOwnerMap, type OwnerMapDiagnostics } from "./owner-map-diagnostics.js";
 import { loadLastManagerAgentTurn, type LastManagerAgentTurn } from "./last-manager-agent-turn.js";
 import { loadPendingManagerClarification, type PendingManagerClarification } from "./pending-manager-clarification.js";

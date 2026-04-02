@@ -1,12 +1,8 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import {
-  getLinearIssue,
-  listOpenLinearIssues,
-  searchLinearIssues,
-  type LinearCommandEnv,
-  type LinearIssue,
-} from "../linear.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
+import { getLinearIssue, listOpenLinearIssues, searchLinearIssues } from "../../gateways/linear/issues.js";
+import type { LinearIssue } from "../../gateways/linear/types.js";
 import { formatJsonDetails } from "./linear-read-tool-shared.js";
 
 function businessDaysSince(leftIso: string | null | undefined, right = new Date()): number | undefined {

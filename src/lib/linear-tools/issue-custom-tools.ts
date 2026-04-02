@@ -1,6 +1,7 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ManagerRepositories } from "../../state/repositories/file-backed-manager-repositories.js";
+import type { LinearCommandEnv } from "../../gateways/linear/command-runner.js";
 import {
   addLinearComment,
   addLinearProgressComment,
@@ -17,8 +18,7 @@ import {
   updateLinearIssue,
   updateLinearIssueState,
   updateManagedLinearIssue,
-  type LinearCommandEnv,
-} from "../linear.js";
+} from "../../gateways/linear/issues.js";
 import {
   formatCreateIssueResult,
   formatListIssuesResult,
