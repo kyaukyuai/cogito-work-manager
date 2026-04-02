@@ -12,7 +12,7 @@ import type {
   LinearProjectUser,
   ListProjectsInput,
   UpdateProjectInput,
-} from "../../lib/linear.js";
+} from "./types.js";
 
 interface CliProjectStatus {
   id?: string | null;

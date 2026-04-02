@@ -27,7 +27,7 @@ import type {
   RiskPolicy,
   SearchIssuesInput,
   UpdateIssueInput,
-} from "../../lib/linear.js";
+} from "./types.js";
 
 interface CliIssueState {
   id?: string;

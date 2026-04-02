@@ -7,7 +7,7 @@ import type {
   EnsureLinearIssueCreatedWebhookResult,
   LinearWebhook,
   LinearWebhookReconcilePlan,
-} from "../../lib/linear.js";
+} from "./types.js";
 
 interface CliWebhookPayload {
   id?: string;
