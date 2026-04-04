@@ -19,7 +19,7 @@ This design does not assume skill-driven production behavior. The primary runtim
 - As of 2026-04-01, pre-AIC-119 system-generated Slack threads can lazily recover `system-thread-context.json` from the actual root Slack post on the first later follow-up, so older review threads can reuse root issue refs without a batch migration
 - As of 2026-04-01, the manager read/write surface also covers Linear projects, including project facts inspection plus typed project create/update proposals committed through the same manager boundary
 - As of 2026-04-02, explicit project-grouped task-list queries are rendered by the manager from exact `linear_list_active_issue_facts` project membership, preserving exact per-project counts and deterministic continuation instead of agent-side grouped prose
-- As of 2026-04-02, the Linear runtime contract assumes `linear-cli v2.12.4`, accepts additive `linear capabilities --json` schema changes, and preserves `timeout_error.appliedState` and `callerGuidance` for repo-side reconciliation
+- As of 2026-04-05, the Linear runtime contract assumes `linear-cli v3.0.0`, accepts additive `linear capabilities --json` schema changes, verifies `LINEAR_TEAM_KEY` through `team list --json`, and preserves `timeout_error.appliedState` and `callerGuidance` for repo-side reconciliation
 - Business judgment on the primary path must be explicit in agent proposals; manager commit is responsible only for validation, dedupe, execution, and state updates
 - Emergency fallback is safety-only and must not replace primary-path business judgment
 - The main focus from this point forward is not another large structural rewrite, but operational resilience, observability, and event-log maintainability

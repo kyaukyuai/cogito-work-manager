@@ -78,6 +78,16 @@ export interface LinearProjectTeam {
   name?: string | null;
 }
 
+export interface LinearTeam {
+  id?: string | null;
+  key?: string | null;
+  name?: string | null;
+  description?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  archivedAt?: string | null;
+}
+
 export interface LinearProjectIssueSummary {
   total?: number;
   completed?: number;

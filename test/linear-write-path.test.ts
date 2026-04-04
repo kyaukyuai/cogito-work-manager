@@ -35,17 +35,17 @@ afterEach(() => {
 });
 
 describe("linear write path hardening", () => {
-  it("rejects linear-cli versions below 2.12.4", async () => {
+  it("rejects linear-cli versions below 3.0.0", async () => {
     mockExecFileSuccess(async () => ({ stdout: "linear-cli v2.8.0" }));
     const { verifyLinearCli } = await import("../src/lib/linear.js");
 
-    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v2.12.4 or newer is required");
+    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v3.0.0 or newer is required");
   });
 
   it("verifies runtime capabilities via linear capabilities --json", async () => {
     mockExecFileSuccess(async (args) => {
       if (args[0] === "--version") {
-        return { stdout: "linear-cli v2.12.4" };
+        return { stdout: "linear-cli v3.0.0" };
       }
       if (args[0] === "auth" && args[1] === "whoami") {
         return { stdout: "diagnostics-user" };
@@ -54,9 +54,9 @@ describe("linear write path hardening", () => {
         return {
           stdout: JSON.stringify({
             schemaVersion: "v2",
-            cli: { version: "2.12.4" },
+            cli: { version: "3.0.0" },
             contractVersions: {
-              automation: { latest: "v5" },
+              automation: { latest: "v6" },
             },
             commands: [
               { path: "linear capabilities", json: { supported: true, contractVersion: null }, dryRun: { supported: false, contractVersion: null } },
@@ -70,6 +70,7 @@ describe("linear write path hardening", () => {
               { path: "linear issue parent", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear issue children", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear issue create-batch", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: true, contractVersion: "v1" } },
+              { path: "linear team list", json: { supported: true, contractVersion: "v4" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear team members", json: { supported: true, contractVersion: "v1" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear project list", json: { supported: true, contractVersion: "v2" }, dryRun: { supported: false, contractVersion: null } },
               { path: "linear project view", json: { supported: true, contractVersion: "v2" }, dryRun: { supported: false, contractVersion: null } },
@@ -86,13 +87,23 @@ describe("linear write path hardening", () => {
         };
       }
       if (args[0] === "team" && args[1] === "list") {
-        return { stdout: "AIC Alpha Team\nOPS Ops Team" };
+        expect(args).toContain("--json");
+        return { stdout: JSON.stringify([{ id: "team-1", key: "AIC", name: "AI Clone" }, { id: "team-2", key: "OPS", name: "Ops" }]) };
       }
       throw new Error(`unexpected args: ${args.join(" ")}`);
     });
     const { verifyLinearCli } = await import("../src/lib/linear.js");
-
-    await expect(verifyLinearCli("AIC")).resolves.toBeUndefined();
+    const originalApiKey = process.env.LINEAR_API_KEY;
+    try {
+      process.env.LINEAR_API_KEY = "lin_api_test";
+      await expect(verifyLinearCli("AIC")).resolves.toBeUndefined();
+    } finally {
+      if (originalApiKey == null) {
+        delete process.env.LINEAR_API_KEY;
+      } else {
+        process.env.LINEAR_API_KEY = originalApiKey;
+      }
+    }
   });
 
   it("uses --description-file for multiline managed issue creation and cleans the temp file", async () => {
