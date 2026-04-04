@@ -18,6 +18,7 @@ import type {
   LinearIssueResult,
   LinearLabel,
   LinearListResult,
+  LinearTeam,
   LinearUser,
   LinearWorkflowState,
   ManagedCreateIssueBatchInput,
@@ -119,6 +120,16 @@ interface CliRelationListPayload {
 interface CliTeamMembersPayload {
   team?: string;
   members?: CliIssueUser[];
+}
+
+interface CliTeamPayload {
+  id?: string | null;
+  key?: string | null;
+  name?: string | null;
+  description?: string | null;
+  color?: string | null;
+  icon?: string | null;
+  archivedAt?: string | null;
 }
 
 interface CliIssueParentPayload {
@@ -434,6 +445,27 @@ export function normalizeRelationListPayload(raw: unknown): Pick<LinearIssue, "r
 export function normalizeTeamMembersPayload(raw: unknown): LinearUser[] {
   if (!isRecord(raw) || !Array.isArray(raw.members)) return [];
   return raw.members.map((member) => normalizeLinearUser(member)).filter(Boolean) as LinearUser[];
+}
+
+export function normalizeTeamListPayload(raw: unknown): LinearTeam[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((team) => {
+      if (!isRecord(team)) return undefined;
+      const key = toNullableString(team.key) ?? undefined;
+      const name = toNullableString(team.name) ?? undefined;
+      if (!key && !name) return undefined;
+      return {
+        id: toNullableString(team.id) ?? undefined,
+        key,
+        name,
+        description: toNullableString(team.description) ?? undefined,
+        color: toNullableString(team.color) ?? undefined,
+        icon: toNullableString(team.icon) ?? undefined,
+        archivedAt: toNullableString(team.archivedAt) ?? undefined,
+      } satisfies LinearTeam;
+    })
+    .filter(Boolean) as LinearTeam[];
 }
 
 export function normalizeLinearIssuePayload(raw: unknown): LinearIssue | undefined {
@@ -834,6 +866,11 @@ export function buildTeamMembersArgs(env: LinearCommandEnv = process.env): strin
   return ["team", "members", ...workspaceArgs(env), teamKey, "--json"];
 }
 
+export function buildTeamListArgs(env: LinearCommandEnv = process.env): string[] {
+  ensureLinearAuthConfigured(env);
+  return ["team", "list", ...workspaceArgs(env), "--json"];
+}
+
 export function buildIssueParentArgs(issueId: string, env: LinearCommandEnv = process.env): string[] {
   const trimmed = issueId.trim();
   if (!trimmed) throw new Error("Issue ID is required");
@@ -1216,6 +1253,14 @@ export async function listLinearTeamMembers(
   ensureLinearAuthConfigured(env);
   const payload = await execLinearJson<CliTeamMembersPayload>(buildTeamMembersArgs(env), env, signal);
   return normalizeTeamMembersPayload(payload);
+}
+
+export async function listLinearTeams(
+  env: LinearCommandEnv = process.env,
+  signal?: AbortSignal,
+): Promise<LinearTeam[]> {
+  const payload = await execLinearJson<CliTeamPayload[]>(buildTeamListArgs(env), env, signal);
+  return normalizeTeamListPayload(payload);
 }
 
 export async function listOpenLinearIssues(

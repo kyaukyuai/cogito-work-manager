@@ -54,6 +54,7 @@ describe("human-to-human smalltalk suppression", () => {
       paths,
       botUserId: "UBOT",
       currentHasBotMention: false,
+      now: new Date("2026-04-02T06:06:00.000Z"),
     });
     expect(context).toMatchObject({
       currentHasBotMention: false,
@@ -139,6 +140,7 @@ describe("human-to-human smalltalk suppression", () => {
       paths,
       botUserId: "UBOT",
       currentHasBotMention: false,
+      now: new Date("2026-04-02T06:06:00.000Z"),
     });
     expect(context.hasActiveThreadContext).toBe(true);
     expect(context.activeThreadContextFlags).toMatchObject({

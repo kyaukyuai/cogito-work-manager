@@ -6,6 +6,7 @@ import {
   validateLinearCliCapabilities,
 } from "./capabilities.js";
 import { execLinear } from "./command-runner.js";
+import { listLinearTeams } from "./issues.js";
 
 export async function verifyLinearCli(teamKey: string): Promise<void> {
   const versionResult = await execLinear(["--version"], process.env);
@@ -31,14 +32,9 @@ export async function verifyLinearCli(teamKey: string): Promise<void> {
     throw new Error(`linear capabilities --json is missing required runtime surface: ${capabilityErrors.join(" | ")}`);
   }
 
-  const teamList = await execLinear(["team", "list"], process.env);
-  const lines = teamList.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const hasTeam = lines.some((line) => line.startsWith(`${teamKey} `) || line === teamKey);
+  const teams = await listLinearTeams(process.env);
+  const hasTeam = teams.some((team) => team.key === teamKey);
   if (!hasTeam) {
-    throw new Error(`LINEAR_TEAM_KEY "${teamKey}" was not found in linear team list output`);
+    throw new Error(`LINEAR_TEAM_KEY "${teamKey}" was not found in linear team list JSON output`);
   }
 }

@@ -357,7 +357,7 @@ describe("manager diagnostics cli", () => {
 set -eu
 case "$*" in
   "--version")
-    echo "linear-cli v2.12.4"
+    echo "linear-cli v3.0.0"
     ;;
   "auth whoami")
     echo "diagnostics-user"
@@ -366,9 +366,9 @@ case "$*" in
     cat <<'JSON'
 {
   "schemaVersion": "v2",
-  "cli": { "version": "2.12.4" },
+  "cli": { "version": "3.0.0" },
   "contractVersions": {
-    "automation": { "latest": "v5" }
+    "automation": { "latest": "v6" }
   },
   "commands": [
     { "path": "linear capabilities", "json": { "supported": true, "contractVersion": null }, "dryRun": { "supported": false, "contractVersion": null } },
@@ -382,6 +382,7 @@ case "$*" in
     { "path": "linear issue parent", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
     { "path": "linear issue children", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
     { "path": "linear issue create-batch", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": true, "contractVersion": "v1" } },
+    { "path": "linear team list", "json": { "supported": true, "contractVersion": "v4" }, "dryRun": { "supported": false, "contractVersion": null } },
     { "path": "linear team members", "json": { "supported": true, "contractVersion": "v1" }, "dryRun": { "supported": false, "contractVersion": null } },
     { "path": "linear project list", "json": { "supported": true, "contractVersion": "v2" }, "dryRun": { "supported": false, "contractVersion": null } },
     { "path": "linear project view", "json": { "supported": true, "contractVersion": "v2" }, "dryRun": { "supported": false, "contractVersion": null } },
@@ -397,8 +398,13 @@ case "$*" in
 }
 JSON
     ;;
-  "team list")
-    printf '%s\\n' "AIC Alpha Team" "OPS Ops Team"
+  "team list --json")
+    cat <<'JSON'
+[
+  { "id": "team-1", "key": "AIC", "name": "AI Clone" },
+  { "id": "team-2", "key": "OPS", "name": "Ops" }
+]
+JSON
     ;;
   *)
     echo "unexpected linear args: $*" >&2
@@ -461,7 +467,7 @@ esac
     expect(diagnostics.overallStatus).toBe("ok");
     expect(diagnostics.linear).toMatchObject({
       status: "ok",
-      version: "2.12.4",
+      version: "3.0.0",
     });
     expect(diagnostics.linear.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "cli-version", status: "ok" }),

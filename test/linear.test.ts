@@ -11,6 +11,7 @@ import {
   buildGetIssueArgs,
   buildIssueUrlArgs,
   buildListActiveIssuesArgs,
+  buildTeamListArgs,
   buildListProjectsArgs,
   buildListLinearWebhooksArgs,
   buildSearchIssuesArgs,
@@ -22,6 +23,7 @@ import {
   normalizeLinearProjectPayload,
   normalizeLinearWebhookPayload,
   normalizeRelationListPayload,
+  normalizeTeamListPayload,
   normalizeTeamMembersPayload,
   parseLinearBatchCreateFailure,
   planLinearIssueCreatedWebhookReconcile,
@@ -645,6 +647,34 @@ describe("linear command builders", () => {
         email: "alice@example.com",
       },
     ]);
+
+    const teams = normalizeTeamListPayload([
+      {
+        id: "team-1",
+        key: "AIC",
+        name: "AI Clone",
+        description: "Execution manager",
+      },
+    ]);
+
+    expect(teams).toEqual([
+      {
+        id: "team-1",
+        key: "AIC",
+        name: "AI Clone",
+        description: "Execution manager",
+        color: undefined,
+        icon: undefined,
+        archivedAt: undefined,
+      },
+    ]);
+  });
+
+  it("builds team-list args with machine-readable output", () => {
+    expect(buildTeamListArgs({
+      LINEAR_API_KEY: "lin_api_test",
+      LINEAR_TEAM_KEY: "AIC",
+    })).toEqual(["team", "list", "--json"]);
   });
 
   it("normalizes webhook payloads and plans reconcile actions", () => {

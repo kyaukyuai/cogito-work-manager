@@ -8,6 +8,7 @@ import {
   REQUIRED_LINEAR_CLI_VERSION,
   validateLinearCliCapabilities,
 } from "../gateways/linear/capabilities.js";
+import { normalizeTeamListPayload } from "../gateways/linear/issues.js";
 import type { AppConfig } from "./config.js";
 import { buildNotionShellCommand, buildSearchNotionArgs } from "./notion.js";
 
@@ -227,19 +228,16 @@ async function buildLinearBoundaryDiagnostics(
   }
 
   try {
-    const teamList = await runner.execFile("linear", ["team", "list"], env);
-    const lines = teamList.stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const teamList = await runner.execFile("linear", ["team", "list", "--json"], env);
+    const teams = normalizeTeamListPayload(JSON.parse(teamList.stdout || teamList.stderr || "[]"));
     const teamKey = config.linearTeamKey || env.LINEAR_TEAM_KEY || "";
-    const hasTeam = lines.some((line) => line.startsWith(`${teamKey} `) || line === teamKey);
+    const hasTeam = teams.some((team) => team.key === teamKey);
     steps.push({
       name: "team-list",
       status: hasTeam ? "ok" : "failed",
       detail: hasTeam
-        ? `LINEAR_TEAM_KEY ${teamKey} を team list で確認できました。`
-        : `LINEAR_TEAM_KEY ${teamKey} が team list 出力に見つかりませんでした。`,
+        ? `LINEAR_TEAM_KEY ${teamKey} を team list --json で確認できました。`
+        : `LINEAR_TEAM_KEY ${teamKey} が team list --json の payload に見つかりませんでした。`,
     });
   } catch (error) {
     steps.push({
