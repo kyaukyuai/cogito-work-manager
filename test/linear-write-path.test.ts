@@ -35,17 +35,17 @@ afterEach(() => {
 });
 
 describe("linear write path hardening", () => {
-  it("rejects linear-cli versions below 3.0.0", async () => {
+  it("rejects linear-cli versions below 3.0.1", async () => {
     mockExecFileSuccess(async () => ({ stdout: "linear-cli v2.8.0" }));
     const { verifyLinearCli } = await import("../src/lib/linear.js");
 
-    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v3.0.0 or newer is required");
+    await expect(verifyLinearCli("AIC")).rejects.toThrow("linear-cli v3.0.1 or newer is required");
   });
 
   it("verifies runtime capabilities via linear capabilities --json", async () => {
     mockExecFileSuccess(async (args) => {
       if (args[0] === "--version") {
-        return { stdout: "linear-cli v3.0.0" };
+        return { stdout: "linear-cli v3.0.1" };
       }
       if (args[0] === "auth" && args[1] === "whoami") {
         return { stdout: "diagnostics-user" };
@@ -54,7 +54,7 @@ describe("linear write path hardening", () => {
         return {
           stdout: JSON.stringify({
             schemaVersion: "v2",
-            cli: { version: "3.0.0" },
+            cli: { version: "3.0.1" },
             contractVersions: {
               automation: { latest: "v6" },
             },
