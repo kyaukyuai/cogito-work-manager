@@ -13,7 +13,7 @@ This bot can run with Slack Socket Mode alone. If you also enable the Linear iss
   - Linear API
   - Optional: Notion API
   - Optional: Linear webhook registration
-- Bundled CLI: `linear-cli v3.0.1`
+- Bundled CLI: `linear-cli v3.1.0`
 
 You do not need the `exe.dev` HTTP proxy when running Slack Socket Mode only. You only need a public route when `LINEAR_WEBHOOK_ENABLED=true` and Linear must reach `LINEAR_WEBHOOK_PORT`.
 
@@ -162,7 +162,7 @@ This is less stable than API-key based auth because it depends on OAuth token fr
 docker compose up -d --build
 ```
 
-This image bundles `linear-cli v3.0.1` and `ntn v0.4.0`.
+This image bundles `linear-cli v3.1.0` and `ntn v0.4.0`.
 
 Linear runtime assumptions:
 
