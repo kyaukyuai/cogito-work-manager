@@ -64,7 +64,11 @@ import {
   type ManagerAgentInput,
   type ManagerSystemInput,
 } from "../runtime/manager-prompts.js";
-import { findAssistantLlmFailure, LlmProviderFailureError } from "./llm-failure.js";
+import {
+  findAssistantLlmFailure,
+  LlmProviderFailureError,
+  LlmTurnTimeoutError,
+} from "./llm-failure.js";
 import { createManagerAgentTools } from "./manager-agent-tools.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
@@ -200,6 +204,7 @@ interface ThreadRuntime {
 }
 
 const DEFAULT_THREAD_IDLE_MS = 15 * 60 * 1000;
+export const DEFAULT_LLM_TURN_TIMEOUT_MS = 90_000;
 let sharedRuntimePromise: Promise<SharedRuntime> | undefined;
 const threadRuntimePromises = new Map<string, Promise<ThreadRuntime>>();
 function sanitizeSessionSuffix(value: string): string {
@@ -256,10 +261,21 @@ async function runIsolatedPromptTurn(
   });
 
   try {
-    await session.prompt(prompt);
-    await session.agent.waitForIdle();
-    const messages = session.messages as unknown[];
-    return resolveAssistantReplyOrThrow(messages, deltas);
+    return await runWithLlmTurnTimeout(
+      async () => {
+        await session.prompt(prompt);
+        await session.agent.waitForIdle();
+        const messages = session.messages as unknown[];
+        return resolveAssistantReplyOrThrow(messages, deltas);
+      },
+      {
+        timeoutMs: config.botTurnTimeoutMs ?? DEFAULT_LLM_TURN_TIMEOUT_MS,
+        label: `isolated planner turn (${sessionSuffix})`,
+        onTimeout: () => {
+          session.dispose();
+        },
+      },
+    );
   } finally {
     unsubscribe();
     session.dispose();
@@ -268,6 +284,51 @@ async function runIsolatedPromptTurn(
 
 function buildThreadRuntimeKey(paths: ThreadPaths): string {
   return paths.sessionFile;
+}
+
+async function runWithLlmTurnTimeout<T>(
+  operation: () => Promise<T>,
+  args: {
+    timeoutMs: number;
+    label: string;
+    onTimeout?: () => void;
+  },
+): Promise<T> {
+  if (args.timeoutMs <= 0) {
+    return operation();
+  }
+
+  let timedOut = false;
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const timeoutError = new LlmTurnTimeoutError(
+    args.timeoutMs,
+    `Timed out waiting for ${args.label} after ${args.timeoutMs}ms`,
+  );
+  const operationPromise = operation().then((result) => {
+    if (timedOut) {
+      throw timeoutError;
+    }
+    return result;
+  });
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      try {
+        args.onTimeout?.();
+      } catch {
+        // Timeout handling must not mask the original timeout.
+      }
+      reject(timeoutError);
+    }, args.timeoutMs);
+  });
+
+  try {
+    return await Promise.race([operationPromise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 async function getSharedRuntime(config: AppConfig): Promise<SharedRuntime> {
@@ -479,14 +540,26 @@ async function executeThreadPromptTurn<TResult>(
   });
 
   try {
-    await runtime.session.prompt(prompt);
-    await runtime.session.agent.waitForIdle();
+    return await runWithLlmTurnTimeout(
+      async () => {
+        await runtime.session.prompt(prompt);
+        await runtime.session.agent.waitForIdle();
 
-    const newMessages = (runtime.session.messages as unknown[]).slice(messageCountBefore);
-    const reply = resolveAssistantReplyOrThrow(newMessages, deltas, options.emptyReplyMessage);
-    runtime.lastUsedAt = Date.now();
-    await writeLastReply(paths, reply);
-    return await options.buildResult({ reply, newMessages, deltas });
+        const newMessages = (runtime.session.messages as unknown[]).slice(messageCountBefore);
+        const reply = resolveAssistantReplyOrThrow(newMessages, deltas, options.emptyReplyMessage);
+        runtime.lastUsedAt = Date.now();
+        await writeLastReply(paths, reply);
+        return await options.buildResult({ reply, newMessages, deltas });
+      },
+      {
+        timeoutMs: config.botTurnTimeoutMs ?? DEFAULT_LLM_TURN_TIMEOUT_MS,
+        label: "manager thread turn",
+        onTimeout: () => {
+          threadRuntimePromises.delete(runtimeKey);
+          runtime.session.dispose();
+        },
+      },
+    );
   } catch (error) {
     await disposeThreadRuntime(runtimeKey);
     throw error;

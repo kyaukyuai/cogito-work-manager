@@ -39,6 +39,7 @@ const envSchema = z.object({
   BOT_MODEL: z.string().default(DEFAULT_BOT_MODEL),
   BOT_THINKING_LEVEL: z.enum(BOT_THINKING_LEVEL_VALUES).default("minimal"),
   BOT_MAX_OUTPUT_TOKENS: optionalPositiveIntSchema,
+  BOT_TURN_TIMEOUT_MS: optionalPositiveIntSchema,
   BOT_RETRY_MAX_RETRIES: z.coerce.number().int().nonnegative().default(1),
   WORKSPACE_DIR: z.string().default("/workspace"),
   LINEAR_WEBHOOK_ENABLED: booleanishSchema.default(false),
@@ -94,6 +95,7 @@ export interface AppConfig {
   botModel: string;
   botThinkingLevel: BotThinkingLevel;
   botMaxOutputTokens?: number;
+  botTurnTimeoutMs?: number;
   botRetryMaxRetries: number;
   workspaceDir: string;
   linearWebhookEnabled: boolean;
@@ -147,6 +149,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     botModel: parsed.data.BOT_MODEL,
     botThinkingLevel: parsed.data.BOT_THINKING_LEVEL,
     botMaxOutputTokens: parsed.data.BOT_MAX_OUTPUT_TOKENS,
+    botTurnTimeoutMs: parsed.data.BOT_TURN_TIMEOUT_MS,
     botRetryMaxRetries: parsed.data.BOT_RETRY_MAX_RETRIES,
     workspaceDir: parsed.data.WORKSPACE_DIR,
     linearWebhookEnabled: parsed.data.LINEAR_WEBHOOK_ENABLED,

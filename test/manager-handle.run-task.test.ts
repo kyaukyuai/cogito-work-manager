@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleManagerMessage } from "../src/lib/manager.js";
-import { LlmProviderFailureError } from "../src/lib/llm-failure.js";
+import { LlmProviderFailureError, LlmTurnTimeoutError } from "../src/lib/llm-failure.js";
 import { loadLastManagerAgentTurn } from "../src/lib/last-manager-agent-turn.js";
 import { loadPendingManagerClarification } from "../src/lib/pending-manager-clarification.js";
 import { ensureManagerStateFiles } from "../src/lib/manager-state.js";
@@ -441,6 +441,31 @@ describe("handleManagerMessage run_task flow", () => {
     expect(result.diagnostics?.agent).toMatchObject({
       source: "fallback",
       technicalFailure: "429 {\"type\":\"error\",\"error\":{\"type\":\"rate_limit_error\",\"message\":\"This request would exceed your account's rate limit. Please try again later.\"},\"request_id\":\"req_test_run_task\"}",
+    });
+  });
+
+  it("prepends an LLM timeout summary before the run_task fallback reply", async () => {
+    piSessionMocks.runManagerAgentTurn.mockRejectedValueOnce(new LlmTurnTimeoutError(90_000));
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-run-task-timeout-fallback",
+        messageTs: "msg-run-task-timeout-fallback-1",
+        userId: "U1",
+        text: "AIC-52 を実行して",
+      },
+      new Date("2026-03-24T08:42:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("LLM 応答待ちがタイムアウトしました。少し置いてから再試行してください。");
+    expect(result.reply).toContain("AIC-52 に対して何を実行したいかを安全に確定できないため");
+    expect(result.diagnostics?.agent).toMatchObject({
+      source: "fallback",
+      technicalFailure: "Timed out waiting for LLM turn after 90000ms",
     });
   });
 

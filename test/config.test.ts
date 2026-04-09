@@ -20,6 +20,7 @@ describe("loadConfig", () => {
     expect(config.botModel).toBe(DEFAULT_BOT_MODEL);
     expect(config.botThinkingLevel).toBe("minimal");
     expect(config.botMaxOutputTokens).toBeUndefined();
+    expect(config.botTurnTimeoutMs).toBeUndefined();
     expect(config.botRetryMaxRetries).toBe(1);
   });
 
@@ -63,12 +64,14 @@ describe("loadConfig", () => {
       OPENAI_API_KEY: "sk-openai-test",
       BOT_THINKING_LEVEL: "high",
       BOT_MAX_OUTPUT_TOKENS: "4096",
+      BOT_TURN_TIMEOUT_MS: "15000",
       BOT_RETRY_MAX_RETRIES: "0",
     });
 
     expect(config.openaiApiKey).toBe("sk-openai-test");
     expect(config.botThinkingLevel).toBe("high");
     expect(config.botMaxOutputTokens).toBe(4096);
+    expect(config.botTurnTimeoutMs).toBe(15000);
     expect(config.botRetryMaxRetries).toBe(0);
   });
 
@@ -81,6 +84,11 @@ describe("loadConfig", () => {
     expect(() => loadConfig({
       ...baseEnv,
       BOT_MAX_OUTPUT_TOKENS: "0",
+    })).toThrow();
+
+    expect(() => loadConfig({
+      ...baseEnv,
+      BOT_TURN_TIMEOUT_MS: "0",
     })).toThrow();
 
     expect(() => loadConfig({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSlackVisibleLlmFailureNotice,
   findAssistantLlmFailure,
+  LlmTurnTimeoutError,
   normalizeLlmFailure,
 } from "../src/lib/llm-failure.js";
 
@@ -41,5 +42,16 @@ describe("llm failure normalization", () => {
 
   it("returns undefined for non-provider failures", () => {
     expect(buildSlackVisibleLlmFailureNotice(new Error("timeout while reading tool output"))).toBeUndefined();
+  });
+
+  it("builds a Slack-visible summary for LLM turn timeouts", () => {
+    const error = new LlmTurnTimeoutError(90_000);
+
+    expect(normalizeLlmFailure(error)).toMatchObject({
+      kind: "timeout",
+      timeoutMs: 90_000,
+      publicSummary: "LLM turn timeout",
+    });
+    expect(buildSlackVisibleLlmFailureNotice(error)).toBe("LLM 応答待ちがタイムアウトしました。少し置いてから再試行してください。");
   });
 });

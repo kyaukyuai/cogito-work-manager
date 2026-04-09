@@ -1,6 +1,6 @@
 type LlmFailureProvider = "anthropic";
 
-export interface LlmFailureInfo {
+export interface LlmProviderFailureInfo {
   kind: "provider";
   provider: LlmFailureProvider;
   statusCode?: number;
@@ -9,6 +9,15 @@ export interface LlmFailureInfo {
   technicalMessage: string;
   requestId?: string;
 }
+
+export interface LlmTurnTimeoutFailureInfo {
+  kind: "timeout";
+  publicSummary: string;
+  technicalMessage: string;
+  timeoutMs: number;
+}
+
+export type LlmFailureInfo = LlmProviderFailureInfo | LlmTurnTimeoutFailureInfo;
 
 interface AssistantErrorCandidate {
   role?: unknown;
@@ -122,6 +131,16 @@ export class LlmProviderFailureError extends Error {
   }
 }
 
+export class LlmTurnTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number, message = `Timed out waiting for LLM turn after ${timeoutMs}ms`) {
+    super(message);
+    this.name = "LlmTurnTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export function findAssistantLlmFailure(messages: unknown[]): LlmFailureInfo | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const candidate = messages[index] as AssistantErrorCandidate;
@@ -151,6 +170,14 @@ export function normalizeLlmFailure(error: unknown): LlmFailureInfo | undefined 
   if (error instanceof LlmProviderFailureError) {
     return error.failure;
   }
+  if (error instanceof LlmTurnTimeoutError) {
+    return {
+      kind: "timeout",
+      publicSummary: "LLM turn timeout",
+      technicalMessage: error.message,
+      timeoutMs: error.timeoutMs,
+    };
+  }
 
   const technicalMessage = error instanceof Error
     ? error.message
@@ -168,6 +195,9 @@ export function buildSlackVisibleLlmFailureNotice(error: unknown): string | unde
   const normalized = normalizeLlmFailure(error);
   if (!normalized) {
     return undefined;
+  }
+  if (normalized.kind === "timeout") {
+    return "LLM 応答待ちがタイムアウトしました。少し置いてから再試行してください。";
   }
   return `LLM 側のエラーです。${normalized.publicSummary} が発生しました。`;
 }

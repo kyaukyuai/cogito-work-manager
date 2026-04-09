@@ -14,6 +14,8 @@ const codingAgentMocks = vi.hoisted(() => ({
     successReply?: string;
     failureMessage?: string;
     textDeltas?: string[];
+    promptNeverResolves?: boolean;
+    waitForIdleNeverResolves?: boolean;
     toolExecutions?: Array<{
       toolName: string;
       details?: unknown;
@@ -147,7 +149,12 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
     const session = {
       messages: [] as Array<Record<string, unknown>>,
       agent: {
-        waitForIdle: vi.fn(async () => undefined),
+        waitForIdle: vi.fn(async () => {
+          if (scenario.waitForIdleNeverResolves) {
+            return new Promise<void>(() => undefined);
+          }
+          return undefined;
+        }),
         streamFn: undefined as unknown,
       },
       subscribe(listener: (event: unknown) => void) {
@@ -158,6 +165,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => {
         };
       },
       prompt: vi.fn(async (_prompt: string) => {
+        if (scenario.promptNeverResolves) {
+          return new Promise<void>(() => undefined);
+        }
         const retrySettings = args.settingsManager.getRetrySettings();
         codingAgentMocks.settingsSnapshots.push({
           retrySettings,
@@ -391,6 +401,39 @@ describe("pi-session fixed retry policy", () => {
       sessionKind: "thread",
     });
   });
+
+  it("times out a manager agent turn that never becomes idle", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "pi-session-thread-timeout-"));
+    tempDirs.push(workspaceDir);
+    await ensureManagerStateFiles(buildSystemPaths(workspaceDir));
+
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-timeout");
+    await ensureThreadWorkspace(threadPaths);
+
+    codingAgentMocks.scenarios.push({
+      requiredRetries: 0,
+      successReply: "partial reply",
+      waitForIdleNeverResolves: true,
+    });
+
+    const piSession = await import("../src/lib/pi-session.js");
+    await expect(piSession.runManagerAgentTurn({
+      ...buildConfig(workspaceDir),
+      botTurnTimeoutMs: 10,
+    }, threadPaths, {
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "thread-timeout",
+      messageTs: "thread-timeout-msg",
+      userId: "U123",
+      text: "manifest を確認して",
+      currentDate: "2026-03-27",
+      currentDateTimeJst: "2026-03-27 10:34 JST",
+    })).rejects.toMatchObject({
+      name: "LlmTurnTimeoutError",
+      timeoutMs: 10,
+    });
+  }, 1000);
 
   it("notifies manager agent observers about intent reports and text deltas", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "pi-session-observer-"));
