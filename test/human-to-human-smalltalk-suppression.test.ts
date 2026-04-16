@@ -103,8 +103,20 @@ describe("human-to-human smalltalk suppression", () => {
     await savePendingManagerConfirmation(paths, {
       kind: "owner-map",
       originalUserMessage: "owner map を更新して",
-      proposals: [],
+      proposals: [
+        {
+          commandType: "update_owner_map",
+          operation: "upsert-entry",
+          entryId: "opt",
+          linearAssignee: "t.tahira",
+          domains: ["sales"],
+          keywords: ["OPT"],
+          primary: false,
+          reasonSummary: "OPT 担当 mapping の追加依頼です。",
+        },
+      ],
       previewSummaryLines: ["preview"],
+      previewReply: "owner-map.json の変更案です。",
       recordedAt: "2026-04-02T06:02:00.000Z",
     });
     await saveSystemThreadContext(paths, {

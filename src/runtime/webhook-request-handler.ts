@@ -12,6 +12,7 @@ import {
   verifyLinearWebhookRequest,
 } from "../lib/linear-webhook.js";
 import { sendSlackReply } from "../lib/slack-replies.js";
+import type { SystemThreadContextReport } from "../lib/system-thread-context.js";
 import { persistSystemRootSlackThread } from "../lib/system-thread-context.js";
 import type { AppConfig } from "../lib/config.js";
 import {
@@ -41,6 +42,25 @@ export function createWebhookRequestHandler(args: {
 }): {
   handleWebhookRequest: (request: IncomingMessage, response: ServerResponse) => Promise<void>;
 } {
+  function buildWebhookRootThreadContextReport(args: {
+    issueIdentifier: string;
+    issueTitle: string;
+    report?: SystemThreadContextReport;
+  }): SystemThreadContextReport {
+    if (args.report && args.report.issueRefs.length > 0) {
+      return args.report;
+    }
+    return {
+      sourceKind: "webhook",
+      issueRefs: [{
+        issueId: args.issueIdentifier,
+        titleHint: args.issueTitle,
+        role: "primary",
+      }],
+      summary: "webhook issue created notification",
+    };
+  }
+
   async function processIssueCreatedWebhookDelivery(event: {
     deliveryId: string;
     webhookId?: string;
@@ -173,7 +193,11 @@ export function createWebhookRequestHandler(args: {
           channelId: currentPolicy.controlRoomChannelId,
           rootPostedTs: posted.ts,
           postedText: posted.text,
-          report: result.agentResult?.systemThreadContextReport,
+          report: buildWebhookRootThreadContextReport({
+            issueIdentifier: issue.identifier,
+            issueTitle: issue.title,
+            report: result.agentResult?.systemThreadContextReport,
+          }),
         });
       },
     });

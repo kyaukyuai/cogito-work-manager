@@ -8,8 +8,12 @@ import { afterEach, describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
 const repoDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const tsxBin = join(repoDir, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+const tsxCli = join(repoDir, "node_modules", "tsx", "dist", "cli.mjs");
 const maintenanceScript = join(repoDir, "scripts", "workgraph-maintenance.ts");
+
+function execTsx(args: string[], options?: Parameters<typeof execFileAsync>[2]) {
+  return execFileAsync(process.execPath, [tsxCli, ...args], options);
+}
 
 describe("workgraph maintenance cli", () => {
   const tempDirs: string[] = [];
@@ -38,7 +42,7 @@ describe("workgraph maintenance cli", () => {
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [maintenanceScript, "health", "./workspace"], {
+    const { stdout } = await execTsx([maintenanceScript, "health", "./workspace"], {
       cwd,
       env: {
         ...process.env,

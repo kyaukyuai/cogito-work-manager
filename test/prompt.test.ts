@@ -176,6 +176,7 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("Use propose_post_slack_message for exactly one target and one post.");
     expect(prompt).toContain("Do not route AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json changes through MEMORY saves or silent personalization.");
     expect(prompt).toContain("owner-map updates use a preview-first path in this scope.");
+    expect(prompt).toContain("If you truly need explicit user confirmation before any mutation, call request_manager_confirmation once");
     expect(prompt).toContain("Never reply that direct file editing tools are unavailable for AGENDA_TEMPLATE.md, HEARTBEAT.md, or owner-map.json.");
     expect(prompt).toContain("For explicit MEMORY saves, it is valid to save a structured project snapshot with several entries such as project-overview, members-and-roles, roadmap-and-milestones, terminology, and context.");
     expect(prompt).toContain("For Notion-based MEMORY save requests, call notion_get_page_content first and extract durable project facts, members, roadmap milestones, terminology, preferences, or context from the page content.");
@@ -564,6 +565,7 @@ describe("prompt helpers", () => {
           },
         ],
         previewSummaryLines: ["entry opt を追加/更新"],
+        previewReply: "owner-map.json の変更案です。",
         recordedAt: "2026-03-23T03:20:00.000Z",
       },
     });
@@ -572,6 +574,39 @@ describe("prompt helpers", () => {
     expect(prompt).toContain("- kind: owner-map");
     expect(prompt).toContain("- originalUserMessage: owner-map に OPT 担当を追加して");
     expect(prompt).toContain("- previewSummaryLines: entry opt を追加/更新");
+    expect(prompt).toContain("- previewReply:");
+  });
+
+  it("includes generic pending manager confirmation context for held mutations", () => {
+    const prompt = buildManagerAgentPrompt({
+      kind: "message",
+      channelId: "C0ALAMDRB9V",
+      rootThreadTs: "12345.678",
+      messageTs: "12345.679",
+      userId: "U123",
+      text: "どういう案ですか？",
+      currentDate: "2026-04-16",
+      pendingConfirmation: {
+        kind: "mutation",
+        originalUserMessage: "こちらでお願いします！",
+        proposals: [
+          {
+            commandType: "add_comment",
+            issueId: "AIC-105",
+            body: "requester-profiles-review.pdf を参照資料として追加",
+            reasonSummary: "requester profile PDF の反映",
+          },
+        ],
+        previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+        previewReply: "AIC-105 に requester profile 資料を関連づける案です。",
+        recordedAt: "2026-04-16T04:54:00.000Z",
+      },
+    });
+
+    expect(prompt).toContain("Pending manager confirmation context:");
+    expect(prompt).toContain("- kind: mutation");
+    expect(prompt).toContain("- previewSummaryLines: AIC-105 に requester profile 資料を関連づけ");
+    expect(prompt).toContain("- previewReply: AIC-105 に requester profile 資料を関連づける案です。");
   });
 
   it("adds workspace config update hints when the latest message targets AGENDA_TEMPLATE.md", () => {

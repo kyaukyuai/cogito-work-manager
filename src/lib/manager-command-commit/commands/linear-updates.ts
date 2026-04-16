@@ -25,6 +25,8 @@ import type {
   AddCommentProposal,
   AddRelationProposal,
   AssignIssueProposal,
+  ManagerAgentIssueEvidence,
+  ManagerIssueTargetValidationSummary,
   ManagerCommandHandlerResult,
   SetIssueParentProposal,
   UpdateIssuePriorityProposal,
@@ -46,15 +48,10 @@ function extractIssueIdentifiers(text: string): string[] {
 }
 
 interface CommitIssueHints {
-  threadKey: string;
-  explicitIssueIds: string[];
-  recentIssueIds: string[];
-  candidateIssueIds: string[];
-  queryShownIssueIds: string[];
-  systemThreadContextIssueIds: string[];
-  latestFocusIssueId?: string;
-  lastResolvedIssueId?: string;
-  externalCoordinationHintIssueId?: string;
+  hardOverrideIssueIds: string[];
+  strongAllowIssueIds: string[];
+  weakHintIssueIds: string[];
+  agentIssueEvidence: ManagerAgentIssueEvidence[];
 }
 
 async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<CommitIssueHints> {
@@ -83,89 +80,138 @@ async function collectCommitIssueHints(args: CommitManagerCommandArgs): Promise<
       ? lastQueryContext.shownIssueIds
       : (lastQueryContext?.issueIds ?? []),
   );
-  const candidateIssueIds = unique([
-    latestFocusIssueId,
-    lastResolvedIssueId,
+  const strongAllowIssueIds = unique([
     planningContext?.parentIssue?.issueId,
     ...(planningContext?.childIssues.map((issue) => issue.issueId) ?? []),
     ...(planningContext?.linkedIssues.map((issue) => issue.issueId) ?? []),
     ...queryShownIssueIds,
     ...(systemThreadContext?.issueRefs.map((entry) => entry.issueId) ?? []),
     externalCoordinationHint?.issueId,
+    ...(args.agentIssueEvidence?.map((entry) => entry.issueId) ?? []),
+  ]);
+  const weakHintIssueIds = unique([
+    latestFocusIssueId,
+    lastResolvedIssueId,
     ...(explicitIssueIds.length === 0 && recentIssueIds.length === 1 ? recentIssueIds : []),
   ]);
 
   return {
-    threadKey,
-    explicitIssueIds,
-    recentIssueIds,
-    candidateIssueIds,
-    queryShownIssueIds,
-    systemThreadContextIssueIds: unique(systemThreadContext?.issueRefs.map((entry) => entry.issueId) ?? []),
-    latestFocusIssueId,
-    lastResolvedIssueId,
-    externalCoordinationHintIssueId: externalCoordinationHint?.issueId,
+    hardOverrideIssueIds: explicitIssueIds,
+    strongAllowIssueIds,
+    weakHintIssueIds,
+    agentIssueEvidence: args.agentIssueEvidence ?? [],
   };
 }
 
-function validateIssueTargetHints(
+function buildIssueTargetValidationSummary(
   hints: CommitIssueHints,
   proposalIssueId: string,
-): string | undefined {
-  if (hints.explicitIssueIds.length > 0 && !hints.explicitIssueIds.includes(proposalIssueId)) {
-    return `このメッセージでは ${hints.explicitIssueIds.join(", ")} が明示されていますが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
+): ManagerIssueTargetValidationSummary {
+  if (hints.hardOverrideIssueIds.length > 0 && !hints.hardOverrideIssueIds.includes(proposalIssueId)) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+      rejectionGate: "hard-override",
+      reason: `このメッセージでは ${hints.hardOverrideIssueIds.join(", ")} が明示されていますが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`,
+    };
   }
 
-  if (hints.explicitIssueIds.length === 0 && hints.recentIssueIds.length === 1) {
-    const recentIssueId = hints.recentIssueIds[0];
-    if (
-      recentIssueId
-      && recentIssueId !== proposalIssueId
-      && proposalIssueId !== hints.externalCoordinationHintIssueId
-    ) {
-      return `直近の会話では ${recentIssueId} を見ていましたが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
-    }
+  if (hints.hardOverrideIssueIds.includes(proposalIssueId)) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+    };
   }
 
-  if (hints.candidateIssueIds.length === 0 && hints.explicitIssueIds.length === 0) {
-    return "更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。";
+  if (hints.strongAllowIssueIds.includes(proposalIssueId)) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+    };
   }
 
-  if (
-    hints.candidateIssueIds.length === 1
-    && hints.candidateIssueIds[0] !== proposalIssueId
-    && !hints.explicitIssueIds.includes(proposalIssueId)
-  ) {
-    return `この thread で確認できる更新対象は ${hints.candidateIssueIds[0]} ですが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記してください。`;
+  if (hints.strongAllowIssueIds.length > 0) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+      rejectionGate: "strong-allow-mismatch",
+      reason: `この thread で今回強く確認できた更新候補は ${hints.strongAllowIssueIds.join(", ")} ですが、更新提案は ${proposalIssueId} でした。更新する issue ID を明記するか、その issue を確認したうえで再試行してください。`,
+    };
   }
 
-  if (
-    hints.candidateIssueIds.length > 1
-    && !hints.explicitIssueIds.includes(proposalIssueId)
-    && proposalIssueId !== hints.latestFocusIssueId
-    && proposalIssueId !== hints.lastResolvedIssueId
-    && !hints.queryShownIssueIds.includes(proposalIssueId)
-    && !hints.systemThreadContextIssueIds.includes(proposalIssueId)
-    && proposalIssueId !== hints.externalCoordinationHintIssueId
-  ) {
-    return "この thread には複数の issue が紐づいているため、どの issue を更新するか判断できませんでした。`AIC-123` のように issue ID を添えてください。";
+  if (hints.weakHintIssueIds.length === 0 && hints.hardOverrideIssueIds.length === 0) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+      rejectionGate: "no-hints",
+      reason: "更新対象の issue をこの thread から特定できませんでした。`AIC-123` のように issue ID を添えてください。",
+    };
   }
 
-  return undefined;
+  if (hints.weakHintIssueIds.includes(proposalIssueId)) {
+    return {
+      proposalIssueId,
+      hardOverrideIssueIds: hints.hardOverrideIssueIds,
+      strongAllowSet: hints.strongAllowIssueIds,
+      weakHintSet: hints.weakHintIssueIds,
+      agentIssueEvidence: hints.agentIssueEvidence,
+    };
+  }
+
+  const weakHintLabel = hints.weakHintIssueIds.join(", ");
+  return {
+    proposalIssueId,
+    hardOverrideIssueIds: hints.hardOverrideIssueIds,
+    strongAllowSet: hints.strongAllowIssueIds,
+    weakHintSet: hints.weakHintIssueIds,
+    agentIssueEvidence: hints.agentIssueEvidence,
+    rejectionGate: "weak-hint-mismatch",
+    reason: hints.weakHintIssueIds.length === 1
+      ? `この thread で直近に確認できる候補は ${weakHintLabel} ですが、更新提案は ${proposalIssueId} でした。今回の turn では ${proposalIssueId} を特定できる強い根拠がありません。更新する issue ID を明記してください。`
+      : `この thread には複数の弱い候補 (${weakHintLabel}) がありますが、更新提案は ${proposalIssueId} でした。今回の turn では ${proposalIssueId} を特定できる強い根拠がありません。更新する issue ID を明記してください。`,
+  };
+}
+
+async function validateIssueTargetHints(
+  args: CommitManagerCommandArgs,
+  proposalIssueId: string,
+): Promise<string | undefined> {
+  if ((args.pendingConfirmationMode ?? args.ownerMapConfirmationMode) === "confirm") {
+    return undefined;
+  }
+
+  const summary = buildIssueTargetValidationSummary(await collectCommitIssueHints(args), proposalIssueId);
+  args.recordIssueTargetValidation?.(summary);
+  return summary.reason;
 }
 
 async function validateUpdateIssueStatusProposal(
   args: CommitManagerCommandArgs,
   proposal: UpdateIssueStatusProposal,
 ): Promise<string | undefined> {
-  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
+  return validateIssueTargetHints(args, proposal.issueId);
 }
 
 async function validateUpdateIssuePriorityProposal(
   args: CommitManagerCommandArgs,
   proposal: UpdateIssuePriorityProposal,
 ): Promise<string | undefined> {
-  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
+  return validateIssueTargetHints(args, proposal.issueId);
 }
 
 async function validateAddCommentProposal(
@@ -175,7 +221,28 @@ async function validateAddCommentProposal(
   if (!isMessageContext(args.message)) {
     return undefined;
   }
-  return validateIssueTargetHints(await collectCommitIssueHints(args), proposal.issueId);
+  return validateIssueTargetHints(args, proposal.issueId);
+}
+
+async function validateAssignIssueProposal(
+  args: CommitManagerCommandArgs,
+  proposal: AssignIssueProposal,
+): Promise<string | undefined> {
+  return validateIssueTargetHints(args, proposal.issueId);
+}
+
+async function validateAddRelationProposal(
+  args: CommitManagerCommandArgs,
+  proposal: AddRelationProposal,
+): Promise<string | undefined> {
+  return validateIssueTargetHints(args, proposal.issueId);
+}
+
+async function validateSetIssueParentProposal(
+  args: CommitManagerCommandArgs,
+  proposal: SetIssueParentProposal,
+): Promise<string | undefined> {
+  return validateIssueTargetHints(args, proposal.issueId);
 }
 
 function normalizeCompletedStateAlias(state: string | undefined): string | undefined {
@@ -779,6 +846,13 @@ export async function commitAssignIssueProposal(
   args: CommitManagerCommandArgs,
   proposal: AssignIssueProposal,
 ): Promise<ManagerCommandHandlerResult> {
+  const rejectionReason = await validateAssignIssueProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
   const issue = await (async () => {
     try {
       return await assignLinearIssue(proposal.issueId, proposal.assignee, args.env);
@@ -831,6 +905,13 @@ export async function commitAddRelationProposal(
   args: CommitManagerCommandArgs,
   proposal: AddRelationProposal,
 ): Promise<ManagerCommandHandlerResult> {
+  const rejectionReason = await validateAddRelationProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
   await addLinearRelation(proposal.issueId, proposal.relationType, proposal.relatedIssueId, args.env);
   return {
     commandType: proposal.commandType,
@@ -843,6 +924,13 @@ export async function commitSetIssueParentProposal(
   args: CommitManagerCommandArgs,
   proposal: SetIssueParentProposal,
 ): Promise<ManagerCommandHandlerResult> {
+  const rejectionReason = await validateSetIssueParentProposal(args, proposal);
+  if (rejectionReason) {
+    return {
+      proposal,
+      reason: rejectionReason,
+    };
+  }
   if (proposal.issueId === proposal.parentIssueId) {
     return {
       proposal,

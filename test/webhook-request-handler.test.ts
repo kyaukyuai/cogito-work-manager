@@ -29,6 +29,9 @@ const webhookOrchestratorMocks = vi.hoisted(() => ({
 
 vi.mock("../src/lib/linear-webhook.js", () => linearWebhookMocks);
 vi.mock("../src/lib/linear.js", () => linearMocks);
+vi.mock("../src/gateways/linear/issues.js", () => ({
+  getLinearIssue: linearMocks.getLinearIssue,
+}));
 vi.mock("../src/lib/slack-replies.js", () => slackReplyMocks);
 vi.mock("../src/orchestrators/webhooks/handle-issue-created.js", () => webhookOrchestratorMocks);
 
@@ -255,6 +258,7 @@ describe("webhook request handler", () => {
   it("persists actual Slack thread context for top-level webhook notifications", async () => {
     workspaceDir = await mkdtemp(join(tmpdir(), "cogito-webhook-thread-context-"));
     const { createWebhookRequestHandler } = await import("../src/runtime/webhook-request-handler.js");
+    const logger = createLogger();
     const save = vi.fn();
     const load = vi.fn()
       .mockResolvedValueOnce([])
@@ -301,17 +305,11 @@ describe("webhook request handler", () => {
       relations: [],
       inverseRelations: [],
     });
-    slackReplyMocks.sendSlackReply.mockImplementation(async (_webClient, args) => {
-      await args.onPosted?.({
-        ts: "1774949999.111111",
-        text: "posted webhook summary",
-      });
-      return "posted webhook summary";
-    });
+    slackReplyMocks.sendSlackReply.mockResolvedValue("posted webhook summary");
 
     const handler = createWebhookRequestHandler({
       config: buildConfig(workspaceDir),
-      logger: createLogger() as never,
+      logger: logger as never,
       webClient: {} as never,
       managerRepositories: {
         policy: { load: vi.fn().mockResolvedValue({ controlRoomChannelId: "CROOM" }) },
@@ -337,6 +335,15 @@ describe("webhook request handler", () => {
     const response = createResponse();
     await handler.handleWebhookRequest(request as never, response as never);
     await queuedJob;
+
+    expect(slackReplyMocks.sendSlackReply).toHaveBeenCalledTimes(1);
+    const postedArgs = slackReplyMocks.sendSlackReply.mock.calls[0]?.[1];
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(postedArgs?.onPosted).toBeTypeOf("function");
+    await postedArgs?.onPosted?.({
+      ts: "1774949999.111111",
+      text: "posted webhook summary",
+    });
 
     const actualThreadPaths = buildThreadPaths(workspaceDir, "CROOM", "1774949999.111111");
     await expect(loadSystemThreadContext(actualThreadPaths)).resolves.toMatchObject({

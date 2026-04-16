@@ -70,6 +70,7 @@ import {
   commitManagerCommandProposals,
   type CommitManagerCommandArgs,
   type ManagerIntentReport,
+  type ManagerIssueTargetValidationSummary,
   type PendingClarificationDecisionReport,
 } from "./manager-command-commit.js";
 import type { LinearIssue } from "../gateways/linear/types.js";
@@ -135,6 +136,7 @@ import {
   loadPendingManagerConfirmation,
   parsePendingManagerConfirmationDecision,
   savePendingManagerConfirmation,
+  type PendingManagerConfirmation,
 } from "./pending-manager-confirmation.js";
 import { handlePersonalizationUpdate } from "../orchestrators/personalization/handle-personalization.js";
 
@@ -197,6 +199,14 @@ export interface ManagerHandleResult {
       taskExecutionTargetIssueId?: string;
       taskExecutionTargetIssueIdentifier?: string;
       taskExecutionSummary?: string;
+      agentIssueEvidence?: Array<{
+        issueId: string;
+        source: "linear_get_issue_facts" | "duplicate_exact_reuse";
+        summary?: string;
+      }>;
+      strongAllowSet?: string[];
+      weakHintSet?: string[];
+      rejectionGate?: "hard-override" | "strong-allow-mismatch" | "weak-hint-mismatch" | "no-hints";
       duplicateResolutions?: LinearDuplicateResolutionSummary[];
       missingQuerySnapshot?: boolean;
       technicalFailure?: string;
@@ -382,12 +392,23 @@ function formatCommitLogs(commitSummaries: string[]): string {
     .map((summary) => `> system log: ${summary}`)
     .join("\n");
 }
-function formatPendingOwnerMapConfirmationReply(summaryLines: string[]): string {
-  return [
-    "owner-map.json の変更案を保持しています。",
-    formatSlackBullets(summaryLines),
-    "適用するなら「はい」か「適用して」、取り消すなら「キャンセル」と返信してください。",
-  ].filter(Boolean).join("\n");
+
+function describePendingManagerConfirmationTarget(
+  confirmation: PendingManagerConfirmation,
+): {
+  confirmableLabel: string;
+  cancelLabel: string;
+} {
+  if (confirmation.kind === "owner-map") {
+    return {
+      confirmableLabel: "owner-map.json の変更",
+      cancelLabel: "owner-map.json の変更案",
+    };
+  }
+  return {
+    confirmableLabel: "確認待ちの変更",
+    cancelLabel: "確認待ちの変更案",
+  };
 }
 
 function buildSafetyOnlyManagerFallbackReply(
@@ -909,9 +930,10 @@ export async function handleManagerMessage(
 
     if (pendingManagerConfirmation && pendingConfirmationDecision === "cancel") {
       await clearPendingManagerConfirmation(paths);
+      const labels = describePendingManagerConfirmationTarget(pendingManagerConfirmation);
       return {
         handled: true,
-        reply: "owner-map.json の変更案を取り消しました。",
+        reply: `${labels.cancelLabel}を取り消しました。`,
         diagnostics: {
           agent: {
             source: "fallback",
@@ -927,6 +949,7 @@ export async function handleManagerMessage(
     }
 
     if (pendingManagerConfirmation && pendingConfirmationDecision === "confirm") {
+      const labels = describePendingManagerConfirmationTarget(pendingManagerConfirmation);
       const confirmCommitResult = await commitManagerCommandProposals({
         config,
         repositories,
@@ -935,7 +958,7 @@ export async function handleManagerMessage(
         now,
         policy,
         env,
-        ownerMapConfirmationMode: "confirm",
+        pendingConfirmationMode: "confirm",
         runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
         postSlackMessage: runtimeActions?.postSlackMessage,
         logger: runtimeActions?.logger,
@@ -947,7 +970,7 @@ export async function handleManagerMessage(
         handled: true,
         reply: confirmCommitResult.replySummaries.join(" ")
           || buildCommitRejectionReply(confirmCommitResult.rejected)
-          || "owner-map.json の変更を確定できませんでした。",
+          || `${labels.confirmableLabel}を確定できませんでした。`,
         diagnostics: {
           agent: {
             source: "fallback",
@@ -1010,18 +1033,35 @@ export async function handleManagerMessage(
       throw new Error("manager agent conversation missing conversationKind");
     }
 
-    const commitResult = await commitManagerCommandProposals({
-      config,
-      repositories,
-      proposals: agentTurn.proposals,
-      message,
-      now,
-      policy,
-      env,
-      runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
-      postSlackMessage: runtimeActions?.postSlackMessage,
-      logger: runtimeActions?.logger,
-    });
+    const issueTargetValidations: ManagerIssueTargetValidationSummary[] = [];
+    const commitResult = agentTurn.pendingConfirmationRequest
+      ? {
+          committed: [],
+          rejected: [],
+          replySummaries: [],
+          pendingConfirmation: {
+            kind: agentTurn.pendingConfirmationRequest.kind,
+            proposals: agentTurn.pendingConfirmationRequest.proposals,
+            previewSummaryLines: agentTurn.pendingConfirmationRequest.previewSummaryLines,
+            previewReply: agentTurn.pendingConfirmationRequest.previewReply,
+          },
+        }
+      : await commitManagerCommandProposals({
+          config,
+          repositories,
+          proposals: agentTurn.proposals,
+          message,
+          now,
+          policy,
+          env,
+          agentIssueEvidence: agentTurn.agentIssueEvidence,
+          recordIssueTargetValidation: (summary) => {
+            issueTargetValidations.push(summary);
+          },
+          runSchedulerJobNow: runtimeActions?.runSchedulerJobNow,
+          postSlackMessage: runtimeActions?.postSlackMessage,
+          logger: runtimeActions?.logger,
+        });
     const agentIntent = agentTurn.intentReport?.intent;
     const extractedQuerySnapshot = agentIntent === "query"
       ? extractQuerySnapshot(agentTurn.toolCalls)
@@ -1074,6 +1114,13 @@ export async function handleManagerMessage(
     });
     const commitWarnings = collectCommittedPostCommitWarnings(commitResult.committed);
     const postCommitStatus = deriveCommittedPostCommitStatus(commitResult.committed);
+    const agentIssueEvidence = agentTurn.agentIssueEvidence ?? [];
+    const effectiveProposalSet = agentTurn.pendingConfirmationRequest?.proposals ?? agentTurn.proposals;
+    const strongAllowSet = unique(issueTargetValidations.flatMap((entry) => entry.strongAllowSet));
+    const weakHintSet = unique(issueTargetValidations.flatMap((entry) => entry.weakHintSet));
+    const rejectionGate = [...issueTargetValidations]
+      .reverse()
+      .find((entry) => entry.rejectionGate)?.rejectionGate;
     const partialFollowupSuccessReply = buildPartialFollowupSuccessReply({
       intent: agentIntent,
       committed: commitResult.committed,
@@ -1102,7 +1149,7 @@ export async function handleManagerMessage(
       committed: commitResult.committed,
       commitRejections: commitResult.rejected,
     });
-    const mergedReply = commitResult.pendingConfirmation?.kind === "owner-map"
+    const mergedReply = commitResult.pendingConfirmation
       ? commitResult.pendingConfirmation.previewReply
       : warningAwareReply;
 
@@ -1242,12 +1289,16 @@ export async function handleManagerMessage(
       });
     }
 
-    if (commitResult.pendingConfirmation?.kind === "owner-map") {
+    if (
+      commitResult.pendingConfirmation
+      && (!agentTurn.pendingConfirmationRequest || agentTurn.pendingConfirmationRequest.persistence === "replace")
+    ) {
       await savePendingManagerConfirmation(paths, {
-        kind: "owner-map",
+        kind: commitResult.pendingConfirmation.kind,
         originalUserMessage: message.text,
         proposals: commitResult.pendingConfirmation.proposals,
         previewSummaryLines: commitResult.pendingConfirmation.previewSummaryLines,
+        previewReply: commitResult.pendingConfirmation.previewReply,
         recordedAt: now.toISOString(),
       });
     }
@@ -1297,10 +1348,14 @@ export async function handleManagerMessage(
       taskExecutionTargetIssueId: agentTurn.taskExecutionDecision?.targetIssueId,
       taskExecutionTargetIssueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
       taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
+      agentIssueEvidence,
+      strongAllowSet,
+      weakHintSet,
+      rejectionGate,
       toolCalls: agentTurn.toolCalls.map((call) => call.toolName),
-      proposalCount: agentTurn.proposals.length,
+      proposalCount: effectiveProposalSet.length,
       invalidProposalCount: agentTurn.invalidProposalCount,
-      proposals: agentTurn.proposals.map(summarizeManagerProposal),
+      proposals: effectiveProposalSet.map(summarizeManagerProposal),
       committedCommands: commitResult.committed.map(summarizeManagerCommittedCommand),
       commitWarnings,
       postCommitStatus,
@@ -1329,7 +1384,6 @@ export async function handleManagerMessage(
           confidence: agentTurn.intentReport?.confidence,
           reasoningSummary: agentTurn.intentReport?.summary,
           toolCalls: agentTurn.toolCalls.map((call) => call.toolName),
-          proposalCount: agentTurn.proposals.length,
           invalidProposalCount: agentTurn.invalidProposalCount,
           committedCommands: commitResult.committed.map((entry) => entry.commandType),
           commitRejections: commitResult.rejected.map((entry) => entry.reason),
@@ -1342,8 +1396,13 @@ export async function handleManagerMessage(
           taskExecutionTargetIssueId: agentTurn.taskExecutionDecision?.targetIssueId,
           taskExecutionTargetIssueIdentifier: agentTurn.taskExecutionDecision?.targetIssueIdentifier,
           taskExecutionSummary: agentTurn.taskExecutionDecision?.summary,
+          agentIssueEvidence,
+          strongAllowSet,
+          weakHintSet,
+          rejectionGate,
           duplicateResolutions: agentTurn.duplicateResolutions,
           missingQuerySnapshot,
+          proposalCount: effectiveProposalSet.length,
         },
       },
     };

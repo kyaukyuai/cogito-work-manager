@@ -100,7 +100,7 @@ describe("manager command commit linear", () => {
     await cleanupManagerCommandCommitTestContext(testContext.workspaceDir);
   });
 
-  it("rejects ambiguous status updates before issuing external writes", async () => {
+  it("accepts status updates when the proposal matches a strong child-issue hint", async () => {
     await recordPlanningOutcome(testContext.repositories.workgraph, {
       occurredAt: "2026-03-19T02:00:00.000Z",
       source: {
@@ -116,6 +116,15 @@ describe("manager command commit linear", () => {
       planningReason: "complex-request",
       lastResolvedIssueId: "AIC-951",
       originalText: "複数 task の起票",
+    });
+    linearMocks.addLinearProgressComment.mockResolvedValueOnce(undefined);
+    linearMocks.getLinearIssue.mockResolvedValueOnce({
+      id: "issue-952",
+      identifier: "AIC-952",
+      title: "文面の反映",
+      state: { id: "state-started", name: "Started", type: "started" },
+      relations: [],
+      inverseRelations: [],
     });
 
     const result = await commitManagerCommandProposals({
@@ -141,10 +150,13 @@ describe("manager command commit linear", () => {
       env: buildLinearTestEnv(),
     });
 
-    expect(result.committed).toEqual([]);
-    expect(result.rejected).toHaveLength(1);
-    expect(result.rejected[0]?.reason).toContain("issue ID");
-    expect(linearMocks.addLinearProgressComment).not.toHaveBeenCalled();
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.addLinearProgressComment).toHaveBeenCalledWith(
+      "AIC-952",
+      "## Progress source\n- channelId: C0ALAMDRB9V\n- rootThreadTs: thread-ambiguous-update\n- sourceMessageTs: msg-ambiguous-1\n\n進捗です。確認依頼は出しました",
+      expect.any(Object),
+    );
   });
 
   it("keeps cross-issue destructive updates strict when only another explicit issue is named", async () => {
@@ -177,6 +189,166 @@ describe("manager command commit linear", () => {
     expect(result.rejected[0]?.reason).toContain("AIC-85");
     expect(result.rejected[0]?.reason).toContain("AIC-86");
     expect(linearMocks.updateManagedLinearIssue).not.toHaveBeenCalled();
+    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
+  });
+
+  it("allows add_comment when exact issue-read evidence overrides thread lastResolved", async () => {
+    await recordPlanningOutcome(testContext.repositories.workgraph, {
+      occurredAt: "2026-04-16T04:30:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-ffs-personalize",
+        messageTs: "seed-msg-ffs-1",
+      },
+      messageFingerprint: "ffs seed",
+      childIssues: [
+        { issueId: "AIC-192", title: "昨日の mtg サマリ反映", kind: "execution" },
+      ],
+      planningReason: "single-issue",
+      lastResolvedIssueId: "AIC-192",
+      originalText: "昨日のmtgサマリ",
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-103",
+          body: "FFS に応じて返答の刺さり方を変える方針を追記",
+          reasonSummary: "FFS 活用パーソナライズ方針の反映",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-ffs-personalize",
+        messageTs: "msg-ffs-1",
+        userId: "U1",
+        text: "FFS呼んで、メンバーごとに返答を若干変えて、心に刺さるようにしたい",
+      },
+      now: new Date("2026-04-16T04:37:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+      agentIssueEvidence: [
+        {
+          issueId: "AIC-103",
+          source: "linear_get_issue_facts",
+          summary: "FFS 活用の返答最適化",
+        },
+      ],
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-103",
+      "FFS に応じて返答の刺さり方を変える方針を追記",
+      expect.any(Object),
+    );
+  });
+
+  it("allows add_comment when exact issue-read evidence targets a child issue not in weak thread hints", async () => {
+    await recordPlanningOutcome(testContext.repositories.workgraph, {
+      occurredAt: "2026-04-16T04:30:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-ffs-personalize-child",
+        messageTs: "seed-msg-ffs-child-1",
+      },
+      messageFingerprint: "ffs child seed",
+      childIssues: [
+        { issueId: "AIC-192", title: "昨日の mtg サマリ反映", kind: "execution" },
+      ],
+      planningReason: "single-issue",
+      lastResolvedIssueId: "AIC-192",
+      originalText: "昨日のmtgサマリ",
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-105",
+          body: "requester-profiles-review.pdf を参照資料として追加",
+          reasonSummary: "requester profile PDF の反映",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-ffs-personalize-child",
+        messageTs: "msg-ffs-child-1",
+        userId: "U1",
+        text: "こちらでお願いします！",
+      },
+      now: new Date("2026-04-16T04:54:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+      agentIssueEvidence: [
+        {
+          issueId: "AIC-105",
+          source: "linear_get_issue_facts",
+          summary: "requester profile 反映",
+        },
+      ],
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.committed).toHaveLength(1);
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-105",
+      "requester-profiles-review.pdf を参照資料として追加",
+      expect.any(Object),
+    );
+  });
+
+  it("still rejects off-thread add_comment when only broad search exists and no exact evidence is present", async () => {
+    await recordPlanningOutcome(testContext.repositories.workgraph, {
+      occurredAt: "2026-04-16T04:30:00.000Z",
+      source: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-offthread-without-evidence",
+        messageTs: "seed-msg-offthread-1",
+      },
+      messageFingerprint: "offthread seed",
+      childIssues: [
+        { issueId: "AIC-192", title: "昨日の mtg サマリ反映", kind: "execution" },
+      ],
+      planningReason: "single-issue",
+      lastResolvedIssueId: "AIC-192",
+      originalText: "昨日のmtgサマリ",
+    });
+
+    const result = await commitManagerCommandProposals({
+      config: testContext.config,
+      repositories: testContext.repositories,
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-105",
+          body: "requester-profiles-review.pdf を参照資料として追加",
+          reasonSummary: "requester profile PDF の反映",
+        },
+      ],
+      message: {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-offthread-without-evidence",
+        messageTs: "msg-offthread-1",
+        userId: "U1",
+        text: "こちらでお願いします！",
+      },
+      now: new Date("2026-04-16T04:54:00.000Z"),
+      policy: await testContext.repositories.policy.load(),
+      env: buildLinearTestEnv(),
+    });
+
+    expect(result.committed).toEqual([]);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.rejected[0]?.reason).toContain("強く確認できた更新候補");
     expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
   });
 
@@ -842,7 +1014,7 @@ describe("manager command commit linear", () => {
         rootThreadTs: "thread-assign-timeout-recovery",
         messageTs: "msg-assign-timeout-recovery-1",
         userId: "U1",
-        text: "AIC86, 87 を田平さんアサインにして",
+        text: "AIC-86, AIC-87 を田平さんアサインにして",
       },
       now: new Date("2026-03-30T04:20:00.000Z"),
       policy: await testContext.repositories.policy.load(),

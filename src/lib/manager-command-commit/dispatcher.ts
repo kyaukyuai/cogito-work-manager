@@ -237,7 +237,8 @@ export async function commitManagerCommandProposals(args: CommitManagerCommandAr
   }
 
   const executableProposals = remainingProposals.filter((proposal) => !rejectedKeys.has(dedupeProposalKey(proposal)));
-  if (validPendingOwnerMapProposals.length > 0 && (args.ownerMapConfirmationMode ?? "preview") !== "confirm") {
+  const pendingConfirmationMode = args.pendingConfirmationMode ?? args.ownerMapConfirmationMode ?? "preview";
+  if (validPendingOwnerMapProposals.length > 0 && pendingConfirmationMode !== "confirm") {
     return {
       committed,
       rejected,

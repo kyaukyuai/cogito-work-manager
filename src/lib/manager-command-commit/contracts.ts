@@ -486,6 +486,19 @@ export const taskExecutionDecisionSchema = z.object({
 
 export type TaskExecutionDecisionReport = z.infer<typeof taskExecutionDecisionSchema>;
 
+export const managerAgentIssueEvidenceSourceSchema = z.enum([
+  "linear_get_issue_facts",
+  "duplicate_exact_reuse",
+]);
+
+export type ManagerAgentIssueEvidenceSource = z.infer<typeof managerAgentIssueEvidenceSourceSchema>;
+
+export interface ManagerAgentIssueEvidence {
+  issueId: string;
+  source: ManagerAgentIssueEvidenceSource;
+  summary?: string;
+}
+
 export interface ManagerAgentToolCall {
   toolName: string;
   input?: unknown;
@@ -528,11 +541,35 @@ export interface ManagerCommittedCommand {
   };
 }
 
+export const managerPendingConfirmationKindSchema = z.enum(["owner-map", "mutation"]);
+export type ManagerPendingConfirmationKind = z.infer<typeof managerPendingConfirmationKindSchema>;
+
 export interface ManagerPendingConfirmationDraft {
-  kind: "owner-map";
-  proposals: UpdateOwnerMapProposal[];
+  kind: ManagerPendingConfirmationKind;
+  proposals: ManagerCommandProposal[];
   previewSummaryLines: string[];
   previewReply: string;
+}
+
+export const managerPendingConfirmationRequestPersistenceSchema = z.enum(["replace", "none"]);
+export type ManagerPendingConfirmationRequestPersistence = z.infer<typeof managerPendingConfirmationRequestPersistenceSchema>;
+
+export interface ManagerPendingConfirmationRequest {
+  kind: Exclude<ManagerPendingConfirmationKind, "owner-map">;
+  proposals: ManagerCommandProposal[];
+  previewSummaryLines: string[];
+  previewReply: string;
+  persistence: ManagerPendingConfirmationRequestPersistence;
+}
+
+export interface ManagerIssueTargetValidationSummary {
+  proposalIssueId: string;
+  hardOverrideIssueIds: string[];
+  strongAllowSet: string[];
+  weakHintSet: string[];
+  agentIssueEvidence: ManagerAgentIssueEvidence[];
+  rejectionGate?: "hard-override" | "strong-allow-mismatch" | "weak-hint-mismatch" | "no-hints";
+  reason?: string;
 }
 
 export interface ManagerCommitResult {
@@ -551,7 +588,10 @@ export interface CommitManagerCommandArgs {
   policy: ManagerPolicy;
   env: LinearCommandEnv;
   existingThreadIntakeAtTurnStart?: ExistingThreadIntakeContext | null;
+  pendingConfirmationMode?: "preview" | "confirm";
   ownerMapConfirmationMode?: "preview" | "confirm";
+  agentIssueEvidence?: ManagerAgentIssueEvidence[];
+  recordIssueTargetValidation?: (summary: ManagerIssueTargetValidationSummary) => void;
   runSchedulerJobNow?: (job: SchedulerJob) => Promise<{
     status: "ok" | "error";
     persistedSummary: string;

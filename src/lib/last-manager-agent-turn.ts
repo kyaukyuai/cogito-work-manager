@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ThreadPaths } from "./thread-workspace.js";
 import type {
+  ManagerAgentIssueEvidence,
   ManagerCommandProposal,
   ManagerCommittedCommand,
   ManagerIntentReport,
@@ -36,6 +37,8 @@ export interface LastManagerRejectedProposalSummary extends LastManagerProposalS
   reason: string;
 }
 
+export interface LastManagerAgentIssueEvidence extends ManagerAgentIssueEvidence {}
+
 export interface LastManagerAgentTurn {
   recordedAt: string;
   replyPath?: LastManagerReplyPath;
@@ -53,6 +56,10 @@ export interface LastManagerAgentTurn {
   taskExecutionTargetIssueId?: string;
   taskExecutionTargetIssueIdentifier?: string;
   taskExecutionSummary?: string;
+  agentIssueEvidence?: LastManagerAgentIssueEvidence[];
+  strongAllowSet?: string[];
+  weakHintSet?: string[];
+  rejectionGate?: "hard-override" | "strong-allow-mismatch" | "weak-hint-mismatch" | "no-hints";
   toolCalls?: string[];
   proposalCount?: number;
   invalidProposalCount?: number;
@@ -109,6 +116,10 @@ function parseStringArray(value: unknown): string[] | undefined {
     .map((entry) => entry.trim())
     .filter(Boolean);
   return entries.length > 0 ? entries : undefined;
+}
+
+function isAgentIssueEvidenceSource(value: unknown): value is ManagerAgentIssueEvidence["source"] {
+  return value === "linear_get_issue_facts" || value === "duplicate_exact_reuse";
 }
 
 function truncateSingleLine(value: string, maxLength = 140): string {
@@ -228,6 +239,27 @@ function parseProposalSummaries(value: unknown): LastManagerProposalSummary[] | 
     } satisfies LastManagerProposalSummary];
   });
   return proposals.length > 0 ? proposals : undefined;
+}
+
+function parseAgentIssueEvidence(value: unknown): LastManagerAgentIssueEvidence[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const evidence = value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.issueId !== "string" || !isAgentIssueEvidenceSource(record.source)) {
+      return [];
+    }
+    return [{
+      issueId: record.issueId,
+      source: record.source,
+      summary: typeof record.summary === "string" ? record.summary : undefined,
+    } satisfies LastManagerAgentIssueEvidence];
+  });
+  return evidence.length > 0 ? evidence : undefined;
 }
 
 function parseCommittedCommandSummaries(value: unknown): LastManagerCommittedCommandSummary[] | undefined {
@@ -370,6 +402,15 @@ export async function loadLastManagerAgentTurn(
         : undefined,
       taskExecutionSummary: typeof parsed.taskExecutionSummary === "string"
         ? parsed.taskExecutionSummary
+        : undefined,
+      agentIssueEvidence: parseAgentIssueEvidence(parsed.agentIssueEvidence),
+      strongAllowSet: parseStringArray(parsed.strongAllowSet),
+      weakHintSet: parseStringArray(parsed.weakHintSet),
+      rejectionGate: parsed.rejectionGate === "hard-override"
+        || parsed.rejectionGate === "strong-allow-mismatch"
+        || parsed.rejectionGate === "weak-hint-mismatch"
+        || parsed.rejectionGate === "no-hints"
+        ? parsed.rejectionGate
         : undefined,
       toolCalls: parseStringArray(parsed.toolCalls),
       proposalCount: typeof parsed.proposalCount === "number" ? parsed.proposalCount : undefined,

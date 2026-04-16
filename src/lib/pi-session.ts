@@ -75,16 +75,20 @@ import type { ManagerRepositories } from "../state/repositories/file-backed-mana
 import type { AppConfig } from "./config.js";
 import { createLinearCustomTools } from "./linear-tools.js";
 import {
+  extractAgentIssueEvidence,
   extractDuplicateResolutionSummaries,
   extractIntentReport,
   extractManagerCommandProposals,
+  extractPendingConfirmationRequest,
   extractPartialFollowupResolutionReport,
   extractPendingClarificationDecision,
   extractSystemThreadContextReport,
   extractTaskExecutionDecision,
+  type ManagerAgentIssueEvidence,
   type ManagerAgentToolCall,
   type ManagerCommandProposal,
   type ManagerIntentReport,
+  type ManagerPendingConfirmationRequest,
   type PendingClarificationDecisionReport,
   type TaskExecutionDecisionReport,
 } from "./manager-command-commit.js";
@@ -106,8 +110,10 @@ export interface ManagerAgentTurnResult {
   toolCalls: ManagerAgentToolCall[];
   proposals: ManagerCommandProposal[];
   invalidProposalCount: number;
+  agentIssueEvidence?: ManagerAgentIssueEvidence[];
   intentReport?: ManagerIntentReport;
   pendingClarificationDecision?: PendingClarificationDecisionReport;
+  pendingConfirmationRequest?: ManagerPendingConfirmationRequest;
   taskExecutionDecision?: TaskExecutionDecisionReport;
   duplicateResolutions?: LinearDuplicateResolutionSummary[];
   systemThreadContextReport?: SystemThreadContextReport;
@@ -733,8 +739,10 @@ async function runStructuredPromptTurn(
         toolCalls,
         proposals,
         invalidProposalCount,
+        agentIssueEvidence: extractAgentIssueEvidence(toolCalls),
         intentReport: extractIntentReport(toolCalls),
         pendingClarificationDecision: extractPendingClarificationDecision(toolCalls),
+        pendingConfirmationRequest: extractPendingConfirmationRequest(toolCalls),
         taskExecutionDecision: extractTaskExecutionDecision(toolCalls),
         duplicateResolutions: extractDuplicateResolutionSummaries(toolCalls),
         systemThreadContextReport: extractSystemThreadContextReport(toolCalls),

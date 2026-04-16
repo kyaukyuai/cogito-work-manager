@@ -25,11 +25,10 @@
       "expect": {
         "handled": true,
         "replyIncludes": [
-          "どの issue を更新するか判断できませんでした。",
-          "issue ID を添えてください。"
+          "AIC-952 の進捗を反映しました。"
         ],
         "replyExcludes": [
-          "進捗を反映します。"
+          "issue ID を添えてください。"
         ]
       }
     }

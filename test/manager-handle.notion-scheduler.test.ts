@@ -669,6 +669,58 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     await expect(readFile(systemPaths.ownerMapFile, "utf8")).resolves.not.toContain("\"id\": \"opt\"");
   });
 
+  it("stores a generic manager-requested confirmation without committing immediately", async () => {
+    piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
+      reply: "AIC-105 に requester profile 資料を関連づける案です。",
+      toolCalls: [],
+      proposals: [],
+      invalidProposalCount: 0,
+      intentReport: {
+        intent: "update_progress",
+        confidence: 0.94,
+        summary: "requester profile PDF の反映提案です。",
+      },
+      pendingConfirmationRequest: {
+        kind: "mutation",
+        proposals: [
+          {
+            commandType: "add_comment",
+            issueId: "AIC-105",
+            body: "requester-profiles-review.pdf を参照資料として追加",
+            reasonSummary: "requester profile PDF の反映",
+          },
+        ],
+        previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+        previewReply: "AIC-105 に requester profile 資料を関連づける案です。進めるなら「こちらでお願いします」と返信してください。",
+        persistence: "replace",
+      },
+    });
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-generic-confirm-preview",
+        messageTs: "msg-generic-confirm-preview-1",
+        userId: "U1",
+        text: "requester-profiles-review.pdf を AIC-105 に反映して",
+      },
+      new Date("2026-04-16T04:54:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-105 に requester profile 資料を関連づける案です。");
+    expect(linearMocks.addLinearComment).not.toHaveBeenCalled();
+    await expect(loadPendingManagerConfirmation(
+      buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-generic-confirm-preview"),
+      new Date("2026-04-16T04:54:30.000Z"),
+    )).resolves.toMatchObject({
+      kind: "mutation",
+      previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+    });
+  });
+
   it("commits an explicit Slack mention post into the current thread", async () => {
     const postSlackMessage = vi.fn().mockResolvedValue({
       text: "@U01L86BCA9X こんにちは",
@@ -834,6 +886,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
         },
       ],
       previewSummaryLines: ["entry opt を追加/更新"],
+      previewReply: "owner-map.json の変更案です。\n- entry opt を追加/更新",
       recordedAt: "2026-03-26T02:12:00.000Z",
     });
 
@@ -875,6 +928,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
         },
       ],
       previewSummaryLines: ["entry opt を追加/更新"],
+      previewReply: "owner-map.json の変更案です。\n- entry opt を追加/更新",
       recordedAt: "2026-03-26T02:14:00.000Z",
     });
 
@@ -916,6 +970,7 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
         },
       ],
       previewSummaryLines: ["entry opt を追加/更新"],
+      previewReply: "owner-map.json の変更案です。\n- entry opt を追加/更新",
       recordedAt: "2026-03-26T02:16:00.000Z",
     });
     piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
@@ -963,5 +1018,48 @@ describe("handleManagerMessage Notion and scheduler flows", () => {
     )).resolves.toMatchObject({
       kind: "owner-map",
     });
+  });
+
+  it("commits a generic pending mutation confirmation from a natural Japanese approval", async () => {
+    const threadPaths = buildThreadPaths(workspaceDir, "C0ALAMDRB9V", "thread-generic-confirm-apply");
+    await savePendingManagerConfirmation(threadPaths, {
+      kind: "mutation",
+      originalUserMessage: "requester-profiles-review.pdf を AIC-105 に反映して",
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-105",
+          body: "requester-profiles-review.pdf を参照資料として追加",
+          reasonSummary: "requester profile PDF の反映",
+        },
+      ],
+      previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+      previewReply: "AIC-105 に requester profile 資料を関連づける案です。進めるなら「こちらでお願いします」と返信してください。",
+      recordedAt: "2026-04-16T04:54:00.000Z",
+    });
+    linearMocks.addLinearComment.mockResolvedValueOnce(undefined);
+
+    const result = await handleManagerMessage(
+      { ...config, workspaceDir },
+      systemPaths,
+      {
+        channelId: "C0ALAMDRB9V",
+        rootThreadTs: "thread-generic-confirm-apply",
+        messageTs: "msg-generic-confirm-apply-1",
+        userId: "U1",
+        text: "こちらでお願いします！",
+      },
+      new Date("2026-04-16T04:55:00.000Z"),
+    );
+
+    expect(result.handled).toBe(true);
+    expect(result.reply).toContain("AIC-105 にコメントを追加しました。");
+    await expect(loadPendingManagerConfirmation(threadPaths)).resolves.toBeUndefined();
+    expect(linearMocks.addLinearComment).toHaveBeenCalledWith(
+      "AIC-105",
+      "requester-profiles-review.pdf を参照資料として追加",
+      expect.any(Object),
+    );
+    expect(piSessionMocks.runManagerAgentTurn).not.toHaveBeenCalled();
   });
 });

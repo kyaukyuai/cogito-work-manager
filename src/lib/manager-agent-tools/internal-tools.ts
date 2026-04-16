@@ -1,8 +1,10 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import {
+  managerCommandProposalSchema,
   managerIntentReportSchema,
   type ManagerIntentReport,
+  type ManagerPendingConfirmationRequest,
   type PendingClarificationDecisionReport,
   type TaskExecutionDecisionReport,
 } from "../manager-command-commit.js";
@@ -157,6 +159,44 @@ function createPartialFollowupResolutionTool(): ToolDefinition {
   };
 }
 
+function createManagerConfirmationRequestTool(): ToolDefinition {
+  return {
+    name: "request_manager_confirmation",
+    label: "Request Manager Confirmation",
+    description: "Ask the manager to hold one or more mutation proposals for explicit user confirmation instead of committing them now.",
+    promptSnippet: "Use this only when explicit user confirmation is truly required. Include the exact proposals to hold, the preview reply to show now, and persistence=replace.",
+    parameters: Type.Object({
+      previewReply: Type.String({ description: "The exact public preview reply to show in this turn." }),
+      previewSummaryLines: Type.Array(Type.String({ description: "Short bullet-style summary lines for the pending confirmation context." })),
+      proposalsJson: Type.String({ description: "JSON array of exact ManagerCommandProposal objects to hold for confirmation." }),
+      persistence: Type.String({ description: "replace | none" }),
+    }),
+    async execute(_toolCallId, params) {
+      const raw = params as {
+        previewReply: string;
+        previewSummaryLines: string[];
+        proposalsJson: string;
+        persistence: ManagerPendingConfirmationRequest["persistence"];
+      };
+      const parsedJson = JSON.parse(raw.proposalsJson) as unknown;
+      const proposals = Array.isArray(parsedJson)
+        ? parsedJson.map((proposal) => managerCommandProposalSchema.parse(proposal))
+        : managerCommandProposalSchema.array().parse(parsedJson);
+      const typed: ManagerPendingConfirmationRequest = {
+        kind: "mutation",
+        previewReply: raw.previewReply.trim(),
+        previewSummaryLines: raw.previewSummaryLines.map((line) => line.trim()).filter(Boolean),
+        proposals,
+        persistence: raw.persistence === "replace" ? "replace" : "none",
+      };
+      return {
+        content: [{ type: "text", text: "Manager confirmation requested." }],
+        details: { pendingConfirmationRequest: typed },
+      };
+    },
+  };
+}
+
 export function createManagerInternalTools(): ToolDefinition[] {
   return [
     createIntentReportTool(),
@@ -165,5 +205,6 @@ export function createManagerInternalTools(): ToolDefinition[] {
     createQuerySnapshotTool(),
     createSystemThreadContextTool(),
     createPartialFollowupResolutionTool(),
+    createManagerConfirmationRequestTool(),
   ];
 }

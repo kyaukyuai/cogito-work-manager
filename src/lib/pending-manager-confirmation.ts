@@ -2,39 +2,29 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
+  managerPendingConfirmationKindSchema,
   managerCommandProposalSchema,
   type ManagerCommandProposal,
 } from "./manager-command-commit.js";
 import type { ThreadPaths } from "./thread-workspace.js";
 
 export interface PendingManagerConfirmation {
-  kind: "owner-map";
+  kind: "owner-map" | "mutation";
   originalUserMessage: string;
-  proposals: Array<Extract<ManagerCommandProposal, { commandType: "update_owner_map" }>>;
+  proposals: ManagerCommandProposal[];
   previewSummaryLines: string[];
+  previewReply: string;
   recordedAt: string;
 }
 
 const CONFIRMATION_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 const pendingManagerConfirmationSchema = z.object({
-  kind: z.literal("owner-map"),
+  kind: managerPendingConfirmationKindSchema,
   originalUserMessage: z.string(),
-  proposals: z.array(managerCommandProposalSchema).transform((proposals, ctx) => {
-    const ownerMapProposals = proposals.filter((proposal): proposal is Extract<ManagerCommandProposal, { commandType: "update_owner_map" }> => (
-      proposal.commandType === "update_owner_map"
-    ));
-    if (ownerMapProposals.length !== proposals.length) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["proposals"],
-        message: "pending manager confirmation only supports update_owner_map proposals",
-      });
-      return z.NEVER;
-    }
-    return ownerMapProposals;
-  }),
+  proposals: z.array(managerCommandProposalSchema).min(1),
   previewSummaryLines: z.array(z.string()),
+  previewReply: z.string(),
   recordedAt: z.string(),
 });
 
@@ -50,6 +40,16 @@ export function parsePendingManagerConfirmationDecision(text: string): "confirm"
   if (!normalized) return undefined;
   if (normalized === "はい"
     || normalized === "お願いします"
+    || normalized === "こちらでお願いします"
+    || normalized === "それでお願いします"
+    || normalized === "この方針で"
+    || normalized === "この方針でお願いします"
+    || normalized === "その方針で"
+    || normalized === "これでお願いします"
+    || normalized === "これで進めて"
+    || normalized === "これで進めてください"
+    || normalized === "そのまま進めて"
+    || normalized === "そのままお願いします"
     || normalized === "実行して"
     || normalized === "適用して"
     || normalized === "confirm"
@@ -83,7 +83,7 @@ export async function loadPendingManagerConfirmation(
       return undefined;
     }
 
-    return parsed.data;
+    return parsed.data as PendingManagerConfirmation;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;

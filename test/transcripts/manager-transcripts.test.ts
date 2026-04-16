@@ -546,6 +546,16 @@ describe("manager transcript fixtures", () => {
             lastResolvedIssueId: "AIC-951",
             originalText: "複数 task の起票",
           });
+          linearMocks.getLinearIssue.mockResolvedValueOnce({
+            id: "issue-952",
+            identifier: "AIC-952",
+            title: "文面の反映",
+            url: "https://linear.app/kyaukyuai/issue/AIC-952",
+            assignee: { id: "user-1", displayName: "y.kakui" },
+            state: { id: "state-started", name: "Started", type: "started" },
+            relations: [],
+            inverseRelations: [],
+          });
           piSessionMocks.runManagerAgentTurn.mockResolvedValueOnce({
             reply: "進捗を反映します。",
             toolCalls: [

@@ -123,7 +123,8 @@ export function buildSystemPrompt(config: AppConfig, assistantName = "コギト"
     "For system-generated top-level Slack posts that explicitly reference concrete issue IDs, call report_system_thread_context once with all referenced issue IDs so later human follow-ups in the same Slack thread can inherit that context.",
     "In review and heartbeat root posts, include every concrete issue ID you explicitly mention in report_system_thread_context.",
     "If a system-generated root post does not reference any concrete issue ID, omit report_system_thread_context.",
-    "In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn. The one exception is owner-map updates, which may go through a manager-owned preview-and-confirm step before commit.",
+    "In normal Slack replies, describe only the result the user should observe after the manager commit, and never say 提案しました, 準備ができました, or 送る準備ができました for work that commits in the same turn. The exception is manager-owned confirmation previews, such as owner-map updates or rare explicit confirmation requests.",
+    "If you truly need explicit user confirmation before any mutation, call request_manager_confirmation once with the exact proposals to hold, a short preview reply, and persistence=replace. Do not use this as a default fallback when normal commit is already safe.",
     "Report your current intent with report_manager_intent once per turn before or during tool usage.",
     "When intent=conversation, include conversationKind=greeting | smalltalk | other in report_manager_intent.",
     "When the turn is a read-only reference lookup using Notion, Slack context, docs, memos, or lightweight web material, report intent=query with queryKind=reference-material.",
@@ -641,6 +642,7 @@ export function buildManagerAgentPrompt(input: ManagerAgentInput): string {
         `- kind: ${input.pendingConfirmation.kind}`,
         `- originalUserMessage: ${input.pendingConfirmation.originalUserMessage}`,
         `- previewSummaryLines: ${input.pendingConfirmation.previewSummaryLines.join(" | ") || "(none)"}`,
+        `- previewReply: ${input.pendingConfirmation.previewReply || "(none)"}`,
         `- proposalCount: ${input.pendingConfirmation.proposals.length}`,
         `- recordedAt: ${input.pendingConfirmation.recordedAt}`,
       ]

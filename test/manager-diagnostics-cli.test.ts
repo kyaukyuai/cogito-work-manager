@@ -10,8 +10,12 @@ import { buildThreadPaths, ensureThreadWorkspace } from "../src/lib/thread-works
 
 const execFileAsync = promisify(execFile);
 const repoDir = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const tsxBin = join(repoDir, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
+const tsxCli = join(repoDir, "node_modules", "tsx", "dist", "cli.mjs");
 const diagnosticsScript = join(repoDir, "scripts", "manager-diagnostics.ts");
+
+function execTsx(args: string[], options?: Parameters<typeof execFileAsync>[2]) {
+  return execFileAsync(process.execPath, [tsxCli, ...args], options);
+}
 
 async function writeExecutable(path: string, content: string): Promise<void> {
   await writeFile(path, content, "utf8");
@@ -42,7 +46,7 @@ describe("manager diagnostics cli", () => {
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "llm", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "llm", "./workspace"], {
       cwd,
       env: process.env,
     });
@@ -60,7 +64,7 @@ describe("manager diagnostics cli", () => {
     const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-state-"));
     tempDirs.push(cwd);
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "state-files", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "state-files", "./workspace"], {
       cwd,
       env: process.env,
     });
@@ -110,7 +114,7 @@ describe("manager diagnostics cli", () => {
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "memory", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "memory", "./workspace"], {
       cwd,
       env: process.env,
     });
@@ -153,7 +157,7 @@ describe("manager diagnostics cli", () => {
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "workgraph", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "workgraph", "./workspace"], {
       cwd,
       env: {
         ...process.env,
@@ -221,7 +225,7 @@ describe("manager diagnostics cli", () => {
       missingQuerySnapshot: false,
     });
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "thread", "C0ALAMDRB9V", "thread-summary", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "thread", "C0ALAMDRB9V", "thread-summary", "./workspace"], {
       cwd,
       env: process.env,
     });
@@ -308,7 +312,7 @@ describe("manager diagnostics cli", () => {
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "incident", "C0ALAMDRB9V", "thread-incident", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "incident", "C0ALAMDRB9V", "thread-incident", "./workspace"], {
       cwd,
       env: process.env,
     });
@@ -436,7 +440,7 @@ esac
       "",
     ].join("\n"), "utf8");
 
-    const { stdout } = await execFileAsync(tsxBin, [diagnosticsScript, "boundaries", "./workspace"], {
+    const { stdout } = await execTsx([diagnosticsScript, "boundaries", "./workspace"], {
       cwd,
       env: {
         ...process.env,
@@ -494,7 +498,7 @@ esac
     ].join("\n"), "utf8");
 
     try {
-      await execFileAsync(tsxBin, [diagnosticsScript, "state-files", "./workspace"], {
+      await execTsx([diagnosticsScript, "state-files", "./workspace"], {
         cwd,
         env: process.env,
       });

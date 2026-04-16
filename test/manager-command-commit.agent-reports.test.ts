@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractAgentIssueEvidence,
   extractDuplicateResolutionSummaries,
+  extractPendingConfirmationRequest,
   extractPartialFollowupResolutionReport,
 } from "../src/lib/manager-command-commit.js";
 
@@ -99,5 +101,87 @@ describe("manager agent reports", () => {
     ]);
 
     expect(report).toBeUndefined();
+  });
+
+  it("extracts exact issue-read evidence for commit validation", () => {
+    const evidence = extractAgentIssueEvidence([
+      {
+        toolName: "linear_search_issues",
+        details: [{ identifier: "AIC-9" }],
+      },
+      {
+        toolName: "linear_get_issue_facts",
+        details: {
+          identifier: "AIC-103",
+          title: "FFS 活用の返答最適化",
+        },
+      },
+      {
+        toolName: "linear_resolve_duplicate_candidates",
+        details: {
+          extraQueries: [],
+          finalCandidates: [{ identifier: "AIC-105", title: "requester profile 反映" }],
+          assessment: {
+            assessmentStatus: "exact",
+            recommendedAction: "link_existing",
+            selectedIssueId: "AIC-105",
+            reasonSummary: "deterministic duplicate recall で安全な既存 issue が 1 件に絞れました。",
+            missingSlots: [],
+          },
+        },
+      },
+    ]);
+
+    expect(evidence).toEqual([
+      {
+        issueId: "AIC-103",
+        source: "linear_get_issue_facts",
+        summary: "FFS 活用の返答最適化",
+      },
+      {
+        issueId: "AIC-105",
+        source: "duplicate_exact_reuse",
+        summary: "deterministic duplicate recall で安全な既存 issue が 1 件に絞れました。",
+      },
+    ]);
+  });
+
+  it("extracts generic pending confirmation requests", () => {
+    const request = extractPendingConfirmationRequest([
+      {
+        toolName: "request_manager_confirmation",
+        details: {
+          pendingConfirmationRequest: {
+            kind: "mutation",
+            previewReply: "AIC-105 に requester profile 資料を紐づける案です。進めるなら「こちらでお願いします」と返信してください。",
+            previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+            proposals: [
+              {
+                commandType: "add_comment",
+                issueId: "AIC-105",
+                body: "requester-profiles-review.pdf を参照資料として追加",
+                reasonSummary: "requester profile PDF の反映",
+              },
+            ],
+            persistence: "replace",
+          },
+        },
+      },
+    ]);
+
+    expect(request).toEqual({
+      kind: "mutation",
+      previewReply: "AIC-105 に requester profile 資料を紐づける案です。進めるなら「こちらでお願いします」と返信してください。",
+      previewSummaryLines: ["AIC-105 に requester profile 資料を関連づけ"],
+      proposals: [
+        {
+          commandType: "add_comment",
+          issueId: "AIC-105",
+          body: "requester-profiles-review.pdf を参照資料として追加",
+          reasonSummary: "requester profile PDF の反映",
+        },
+      ],
+      persistence: "replace",
+    });
   });
 });
