@@ -178,6 +178,10 @@ function dedupeReviewIntroSentences(text: string): string {
     .trim();
 }
 
+function dedupeRepeatedRelativeDayWords(text: string): string {
+  return text.replace(/(昨日|今日|本日|明日)(?:\s*\1)+/g, "$1");
+}
+
 function normalizeSystemSectionBreaks(text: string): string {
   return text
     .replace(/([。！？])\s*(\*[^*\n]{1,80}\*)\s*/g, "$1\n\n$2\n")
@@ -188,7 +192,9 @@ function normalizeSystemSectionBreaks(text: string): string {
 }
 
 export function normalizeSystemReplyForSlack(text: string): string {
-  return normalizeSystemSectionBreaks(dedupeReviewIntroSentences(convertPipeTablesToBullets(text)))
+  return normalizeSystemSectionBreaks(
+    dedupeRepeatedRelativeDayWords(dedupeReviewIntroSentences(convertPipeTablesToBullets(text))),
+  )
     .replace(/^\s*---+\s*$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

@@ -60,6 +60,20 @@ describe("system Slack reply helpers", () => {
     expect(result).not.toContain("昨日から状況が前進しています。");
   });
 
+  it("dedupes repeated relative-day words in system replies", () => {
+    const result = normalizeSystemReplyForSlack([
+      "🌆 **夕方レビュー (2026-04-16)**",
+      "",
+      "**🔴 未解決の懸念**",
+      "- AIC-55（契約締結）: 昨日昨日マイルストーン当日フォローアップ済み・未返答",
+      "- AIC-59（キックオフ）: 明日期限 → 今夜中に実施・延期の意思決定をお願いします",
+    ].join("\n"));
+
+    expect(result).toContain("昨日マイルストーン当日フォローアップ済み・未返答");
+    expect(result).not.toContain("昨日昨日");
+    expect(result).toContain("明日期限");
+  });
+
   it("inserts paragraph breaks around inline section headings", () => {
     const result = normalizeSystemReplyForSlack([
       "AIC-39 は Done になっています。お疲れ様でした。*本日追加の新タスク群 (AIC-44〜51)* 今日の議事録から8タスクが作成され、全て Backlog・期限未設定。",
