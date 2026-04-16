@@ -159,6 +159,42 @@ describe("scheduler heartbeat handler", () => {
     });
   });
 
+  it("returns an undelivered result when a built-in review falls back", async () => {
+    const { createSchedulerHeartbeatHandler } = await import("../src/runtime/scheduler-heartbeat-handler.js");
+    const executeManagerSystemTask = vi.fn().mockResolvedValue({
+      reply: "Manager review is temporarily unavailable. Please retry this review from the control room if needed.",
+    });
+
+    const handler = createSchedulerHeartbeatHandler({
+      config: buildConfig(workspaceDir),
+      webClient: {} as never,
+      clock: {
+        currentDateInJst: () => "2026-04-16",
+        currentDateTimeInJst: () => "2026-04-16 17:02 JST",
+      },
+      systemTaskExecutor: {
+        executeManagerSystemTask,
+        executeCustomSchedulerJob: vi.fn(),
+      },
+    });
+
+    const result = await handler.executeScheduledJob({
+      job: {
+        id: "manager-review-evening",
+        channelId: "C123",
+        kind: "builtin",
+        action: "evening-review",
+        prompt: "夕方レビュー",
+      },
+    });
+
+    expect(result).toEqual({
+      delivered: false,
+      summary: "Manager review is temporarily unavailable. Please retry this review from the control room if needed.",
+    });
+    expect(slackReplyMocks.sendSlackReply).not.toHaveBeenCalled();
+  });
+
   it("persists actual Slack thread context for top-level review posts", async () => {
     workspaceDir = await mkdtemp(join(tmpdir(), "cogito-scheduler-heartbeat-"));
     const { createSchedulerHeartbeatHandler } = await import("../src/runtime/scheduler-heartbeat-handler.js");

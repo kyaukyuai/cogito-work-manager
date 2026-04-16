@@ -233,6 +233,11 @@ describe("manager agent tools", () => {
       const result = await tool!.execute("tool-call-relative-due", { limit: 10 });
       const details = result.details as Array<Record<string, unknown>>;
 
+      expect(linearMocks.listOpenLinearIssues).toHaveBeenCalledWith(
+        expect.objectContaining({ LINEAR_TEAM_KEY: "AIC" }),
+        undefined,
+        { limit: 10 },
+      );
       expect(details).toHaveLength(1);
       expect(details[0]).toMatchObject({
         identifier: "AIC-39",
@@ -406,6 +411,11 @@ describe("manager agent tools", () => {
     const result = await tool!.execute("tool-call-issue-list", { limit: 5 });
     const details = result.details as Array<Record<string, unknown>>;
 
+    expect(linearMocks.listOpenLinearIssues).toHaveBeenCalledWith(
+      expect.objectContaining({ LINEAR_TEAM_KEY: "AIC" }),
+      undefined,
+      { limit: 5 },
+    );
     expect(details).toHaveLength(1);
     expect(details[0]).toMatchObject({
       identifier: "AIC-101",

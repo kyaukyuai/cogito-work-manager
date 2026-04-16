@@ -189,8 +189,9 @@ export function createLinearIssueReadTools(env: LinearCommandEnv): ToolDefinitio
         limit: Type.Optional(Type.Number({ description: "Maximum number of issues to fetch." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const issues = await listOpenLinearIssues(env, signal);
-        const limited = issues.slice(0, (params as { limit?: number }).limit ?? 20).map((issue) => buildIssueFacts(issue));
+        const limit = (params as { limit?: number }).limit ?? 20;
+        const issues = await listOpenLinearIssues(env, signal, { limit });
+        const limited = issues.map((issue) => buildIssueFacts(issue));
         return {
           content: [{ type: "text", text: limited.length > 0 ? formatJsonDetails(limited) : "No active issue facts found." }],
           details: limited,
@@ -206,10 +207,11 @@ export function createLinearIssueReadTools(env: LinearCommandEnv): ToolDefinitio
         limit: Type.Optional(Type.Number({ description: "Maximum number of issues to fetch." })),
       }),
       async execute(_toolCallId, params, signal) {
-        const issues = await listOpenLinearIssues(env, signal);
-        const limit = (params as { limit?: number } | undefined)?.limit ?? 50;
+        // Keep review and scheduler turns responsive by default.
+        const limit = (params as { limit?: number } | undefined)?.limit ?? 20;
+        const issues = await listOpenLinearIssues(env, signal, { limit });
         const facts = await Promise.all(
-          issues.slice(0, limit).map((issue) => buildReviewIssueFacts(issue, env, signal)),
+          issues.map((issue) => buildReviewIssueFacts(issue, env, signal)),
         );
         return {
           content: [{ type: "text", text: facts.length > 0 ? formatJsonDetails(facts) : "No review facts found." }],

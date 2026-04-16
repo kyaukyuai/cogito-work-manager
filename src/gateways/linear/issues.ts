@@ -1266,6 +1266,7 @@ export async function listLinearTeams(
 export async function listOpenLinearIssues(
   env: LinearCommandEnv = process.env,
   signal?: AbortSignal,
+  options?: { limit?: number },
 ): Promise<LinearIssue[]> {
   ensureLinearAuthConfigured(env);
   const teamKey = requireEnv(env, "LINEAR_TEAM_KEY");
@@ -1297,8 +1298,15 @@ export async function listOpenLinearIssues(
       return stateName !== "done" && stateName !== "completed" && stateName !== "canceled";
     }) as LinearIssue[];
 
+  const requestedLimit = typeof options?.limit === "number" && Number.isFinite(options.limit)
+    ? Math.max(0, Math.floor(options.limit))
+    : undefined;
+  const selected = requestedLimit == null
+    ? candidates
+    : candidates.slice(0, requestedLimit);
+
   const enriched = await Promise.all(
-    candidates.map(async (issue) => {
+    selected.map(async (issue) => {
       const relationData = await loadIssueRelations(issue.identifier, env, signal).catch(() => ({
         relations: issue.relations ?? [],
         inverseRelations: issue.inverseRelations ?? [],

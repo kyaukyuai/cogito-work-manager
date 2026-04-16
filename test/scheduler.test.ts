@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { advanceJobAfterRun, isJobDue, normalizeSchedulerJobs } from "../src/lib/scheduler.js";
+import { describe, expect, it, vi } from "vitest";
+import { Logger } from "../src/lib/logger.js";
+import { advanceJobAfterRun, isJobDue, normalizeSchedulerJobs, SchedulerService } from "../src/lib/scheduler.js";
 
 describe("scheduler helpers", () => {
   it("normalizes missing timestamps and nextRunAt", () => {
@@ -126,5 +127,44 @@ describe("scheduler helpers", () => {
     );
 
     expect(updated.nextRunAt).toBe("2026-03-23T00:30:00.000Z");
+  });
+
+  it("records undelivered scheduled jobs as error", async () => {
+    const persistJobs = vi.fn().mockResolvedValue(undefined);
+    const service = new SchedulerService({
+      logger: new Logger("error"),
+      pollSec: 3600,
+      loadJobs: async () => [
+        {
+          id: "job-1",
+          enabled: true,
+          channelId: "C123",
+          prompt: "evening review",
+          kind: "at",
+          at: "2026-03-18T00:00:00.000Z",
+          nextRunAt: "2026-03-18T00:00:00.000Z",
+          createdAt: "2026-03-17T00:00:00.000Z",
+          updatedAt: "2026-03-17T00:00:00.000Z",
+        },
+      ],
+      persistJobs,
+      executeJob: async () => ({
+        delivered: false,
+        summary: "Manager review is temporarily unavailable. Please retry this review from the control room if needed.",
+      }),
+    });
+
+    await service.start();
+    service.stop();
+
+    const persisted = persistJobs.mock.calls.at(-1)?.[0];
+    expect(persisted).toEqual([
+      expect.objectContaining({
+        id: "job-1",
+        lastStatus: "error",
+        lastError: "Manager review is temporarily unavailable. Please retry this review from the control room if needed.",
+        lastResult: undefined,
+      }),
+    ]);
   });
 });

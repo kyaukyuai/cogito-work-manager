@@ -229,8 +229,9 @@ export class SchedulerService {
       for (const dueJob of dueJobs) {
         try {
           const result = await this.options.executeJob({ job: dueJob });
+          const status = result.delivered ? "ok" : "error";
           mutatedJobs = mutatedJobs.map((job) =>
-            job.id === dueJob.id ? advanceJobAfterRun(job, "ok", result.summary) : job,
+            job.id === dueJob.id ? advanceJobAfterRun(job, status, result.summary) : job,
           );
         } catch (error) {
           const summary = error instanceof Error ? error.message : String(error);
