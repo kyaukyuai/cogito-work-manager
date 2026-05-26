@@ -18,7 +18,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function summarizeValue(value: unknown): string {
   if (value === undefined) {
-    return "<missing>";
+    return "missing";
   }
   const text = typeof value === "string"
     ? JSON.stringify(value)
@@ -41,7 +41,7 @@ function collectPolicyResetDiffEntries(
   if (previousValue === undefined) {
     return [{
       path: pathPrefix || "(root)",
-      previous: "<missing>",
+      previous: "missing",
       restored: summarizeValue(restoredValue),
     }];
   }
@@ -54,7 +54,7 @@ function collectPolicyResetDiffEntries(
       if (!(key in previousValue)) {
         diffEntries.push({
           path: nextPath,
-          previous: "<missing>",
+          previous: "missing",
           restored: summarizeValue(restoredValue[key]),
         });
         continue;
@@ -69,7 +69,7 @@ function collectPolicyResetDiffEntries(
       diffEntries.push({
         path: nextPath,
         previous: summarizeValue(previousValue[key]),
-        restored: "<removed>",
+        restored: "removed",
       });
     }
     return diffEntries;
@@ -90,7 +90,7 @@ function buildPolicyResetDiff(event: ManagerStateRecoveryEvent): PolicyResetDiff
   if (event.repositoryKey !== "policy") {
     return undefined;
   }
-  return collectPolicyResetDiffEntries(event.parsedValue, DEFAULT_POLICY)
+  return collectPolicyResetDiffEntries(event.parsedValue, event.restoredValue ?? DEFAULT_POLICY)
     .filter((entry) => entry.path !== "(root)");
 }
 
@@ -99,17 +99,32 @@ function buildPolicyResetDiffLines(diffEntries: PolicyResetDiffEntry[] | undefin
     return [];
   }
   if (diffEntries.length === 0) {
-    return ["default へ戻した差分: none"];
+    return ["復旧差分: none"];
   }
   const visibleEntries = diffEntries.slice(0, 8);
   const lines = [
-    "default へ戻した差分:",
+    "復旧差分:",
     ...visibleEntries.map((entry) => `- ${entry.path}: ${entry.previous} -> ${entry.restored}`),
   ];
   if (diffEntries.length > visibleEntries.length) {
     lines.push(`- ... ${diffEntries.length - visibleEntries.length} more`);
   }
   return lines;
+}
+
+function buildRecoverySourceLines(event: ManagerStateRecoveryEvent): string[] {
+  if (!event.restoredFrom) {
+    return [];
+  }
+  const lines = [`復旧元: ${event.restoredFrom}`];
+  if (event.restoredPath) {
+    lines.push(`restoredPath: ${event.restoredPath}`);
+  }
+  return lines;
+}
+
+function isProductionStatePath(path: string): boolean {
+  return path.startsWith("/workspace/system/");
 }
 
 export function createStateRecoveryNotifier(args: {
@@ -140,10 +155,12 @@ export function createStateRecoveryNotifier(args: {
 
     const reply = [
       "system state を自動復旧しました。",
+      ...(isProductionStatePath(event.path) ? [] : ["検証: test notification"]),
       `対象: ${event.repositoryKey} (${basename(event.path)})`,
       `原因: ${event.errorType === "syntax" ? "JSON parse error" : "schema validation error"}`,
       `path: ${event.path}`,
       `backup: ${event.backupPath ?? "unavailable"}`,
+      ...buildRecoverySourceLines(event),
       `error: ${event.errorMessage}`,
       ...buildPolicyResetDiffLines(policyResetDiff),
     ].join("\n");

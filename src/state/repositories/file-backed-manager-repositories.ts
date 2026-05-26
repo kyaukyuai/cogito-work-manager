@@ -1,3 +1,5 @@
+import { readdir, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { z } from "zod";
 import type { SystemPaths } from "../../lib/system-workspace.js";
 import {
@@ -19,9 +21,12 @@ import {
   type WebhookDeliveryEntry,
 } from "../manager-state-contract.js";
 import {
+  buildLastKnownGoodJsonPath,
   emitJsonStateRecoveryWarning,
   type JsonFileRecoveryDetails,
   loadJsonFile,
+  readValidatedJsonFile,
+  type RecoveredJsonValue,
   writeJsonFileAtomic,
 } from "../json-file-store.js";
 import { createFileBackedWorkgraphRepository, type WorkgraphRepository } from "../workgraph/file-backed-workgraph-repository.js";
@@ -67,6 +72,71 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeJsonFileAtomic(path, value);
 }
 
+async function persistLastKnownGoodJson(path: string, value: unknown): Promise<void> {
+  await writeJsonFileAtomic(buildLastKnownGoodJsonPath(path), value);
+}
+
+async function findLatestValidBackup<S extends z.ZodTypeAny>(
+  path: string,
+  schema: S,
+): Promise<{ path: string; value: z.output<S> } | undefined> {
+  const prefix = `${basename(path)}.bak-`;
+  let entries: string[];
+  try {
+    entries = await readdir(dirname(path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+
+  const candidates: Array<{ path: string; value: z.output<S>; mtimeMs: number }> = [];
+  for (const entry of entries.filter((candidate) => candidate.startsWith(prefix))) {
+    const fullPath = join(dirname(path), entry);
+    const value = await readValidatedJsonFile(fullPath, schema);
+    if (!value) {
+      continue;
+    }
+    const metadata = await stat(fullPath);
+    candidates.push({
+      path: fullPath,
+      value,
+      mtimeMs: metadata.mtimeMs,
+    });
+  }
+
+  return candidates.sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
+}
+
+async function recoverPolicyValue(
+  path: string,
+): Promise<RecoveredJsonValue<ManagerPolicy> | undefined> {
+  const lastKnownGoodPath = buildLastKnownGoodJsonPath(path);
+  const lastKnownGood = await readValidatedJsonFile(lastKnownGoodPath, managerPolicySchema);
+  if (lastKnownGood) {
+    return {
+      value: lastKnownGood,
+      restoredFrom: "last-known-good",
+      restoredPath: lastKnownGoodPath,
+    };
+  }
+
+  const backup = await findLatestValidBackup(path, managerPolicySchema);
+  if (backup) {
+    return {
+      value: backup.value,
+      restoredFrom: "backup",
+      restoredPath: backup.path,
+    };
+  }
+
+  return {
+    value: DEFAULT_POLICY,
+    restoredFrom: "default",
+  };
+}
+
 function createRecoveryHandler(
   repositoryKey: RecoverableManagerStateRepositoryKey,
   options?: CreateFileBackedManagerRepositoriesOptions,
@@ -87,6 +157,15 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
   options?: {
     recoverOnInvalid?: boolean;
     onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
+    onValidValue?: (value: z.output<S>) => void | Promise<void>;
+    recoverValue?: (args: {
+      path: string;
+      schema: S;
+      defaultValue: z.output<S>;
+      raw: string;
+      parseError: SyntaxError | z.ZodError;
+      parsedValue?: unknown;
+    }) => Promise<RecoveredJsonValue<z.output<S>> | undefined>;
   },
 ): ReadonlyRepository<z.output<S>> {
   return {
@@ -97,6 +176,8 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
         defaultValue,
         recoverOnInvalid: options?.recoverOnInvalid ?? false,
         onRecoverInvalid: options?.onRecoverInvalid,
+        onValidValue: options?.onValidValue,
+        recoverValue: options?.recoverValue,
       });
     },
   };
@@ -109,6 +190,15 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   options?: {
     recoverOnInvalid?: boolean;
     onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
+    onValidValue?: (value: z.output<S>) => void | Promise<void>;
+    recoverValue?: (args: {
+      path: string;
+      schema: S;
+      defaultValue: z.output<S>;
+      raw: string;
+      parseError: SyntaxError | z.ZodError;
+      parsedValue?: unknown;
+    }) => Promise<RecoveredJsonValue<z.output<S>> | undefined>;
   },
 ): MutableRepository<z.output<S>> {
   const readonlyRepository = createReadonlyJsonRepository(path, schema, defaultValue, options);
@@ -116,6 +206,7 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
     load: readonlyRepository.load,
     async save(value: z.output<S>): Promise<void> {
       await writeJsonFile(path, value);
+      await options?.onValidValue?.(value);
     },
   };
 }
@@ -128,6 +219,8 @@ export function createFileBackedManagerRepositories(
     policy: createMutableJsonRepository(paths.policyFile, managerPolicySchema, DEFAULT_POLICY, {
       recoverOnInvalid: true,
       onRecoverInvalid: createRecoveryHandler("policy", options),
+      onValidValue: async (value) => persistLastKnownGoodJson(paths.policyFile, value),
+      recoverValue: async () => recoverPolicyValue(paths.policyFile),
     }),
     ownerMap: createMutableJsonRepository(paths.ownerMapFile, ownerMapSchema, DEFAULT_OWNER_MAP),
     followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, [], {

@@ -8,6 +8,7 @@ import {
   loadPlanningLedger,
 } from "../src/lib/manager-state.js";
 import { buildSystemPaths } from "../src/lib/system-workspace.js";
+import { DEFAULT_POLICY } from "../src/state/manager-state-contract.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
 describe("file-backed manager repositories", () => {
@@ -165,6 +166,84 @@ describe("file-backed manager repositories", () => {
       path: systemPaths.policyFile,
       backupPath: join(dirname(systemPaths.policyFile), backupName!),
       errorType: "schema",
+      restoredFrom: "default",
+    }));
+  });
+
+  it("recovers an invalid policy file from last-known-good instead of defaults", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-policy-last-known-good-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await repositories.policy.save({
+      ...(await repositories.policy.load()),
+      heartbeatEnabled: false,
+      heartbeatIntervalMin: 120,
+      reviewCadence: {
+        morning: "09:15",
+        morningEnabled: true,
+        evening: "17:00",
+        eveningEnabled: false,
+        weeklyDay: "thu",
+        weeklyTime: "10:30",
+        weeklyEnabled: true,
+      },
+    });
+
+    await writeFile(systemPaths.policyFile, "{\"controlRoomChannelId\":1}\n", "utf8");
+
+    await expect(repositories.policy.load()).resolves.toMatchObject({
+      controlRoomChannelId: "C0ALAMDRB9V",
+      heartbeatEnabled: false,
+      heartbeatIntervalMin: 120,
+      reviewCadence: expect.objectContaining({
+        morning: "09:15",
+        eveningEnabled: false,
+        weeklyDay: "thu",
+      }),
+    });
+
+    const lastKnownGoodPath = `${systemPaths.policyFile}.last-known-good`;
+    await expect(readFile(lastKnownGoodPath, "utf8")).resolves.toContain("\"heartbeatIntervalMin\": 120");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "policy",
+      restoredFrom: "last-known-good",
+      restoredPath: lastKnownGoodPath,
+    }));
+  });
+
+  it("recovers an invalid policy file from the latest valid backup when last-known-good is unavailable", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-policy-backup-recovery-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await mkdir(dirname(systemPaths.policyFile), { recursive: true });
+    await writeFile(
+      `${systemPaths.policyFile}.bak-20260526T063259Z`,
+      `${JSON.stringify({
+        ...DEFAULT_POLICY,
+        heartbeatEnabled: false,
+        heartbeatIntervalMin: 240,
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(systemPaths.policyFile, "{\"controlRoomChannelId\":1}\n", "utf8");
+
+    await expect(repositories.policy.load()).resolves.toMatchObject({
+      heartbeatEnabled: false,
+      heartbeatIntervalMin: 240,
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "policy",
+      restoredFrom: "backup",
+      restoredPath: `${systemPaths.policyFile}.bak-20260526T063259Z`,
     }));
   });
 

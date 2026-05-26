@@ -41,6 +41,11 @@ describe("state recovery notifier", () => {
       parsedValue: {
         controlRoomChannelId: 1,
       },
+      restoredFrom: "last-known-good",
+      restoredPath: "/workspace/system/policy.json.last-known-good",
+      restoredValue: {
+        controlRoomChannelId: "C0ALAMDRB9V",
+      },
     });
 
     expect(logger.error).toHaveBeenCalledWith("Recovered invalid manager state file", expect.objectContaining({
@@ -60,7 +65,13 @@ describe("state recovery notifier", () => {
       text: expect.stringContaining("system state を自動復旧しました。"),
     }));
     expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: expect.stringContaining("default へ戻した差分:"),
+      text: expect.stringContaining("復旧元: last-known-good"),
+    }));
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("restoredPath: /workspace/system/policy.json.last-known-good"),
+    }));
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("復旧差分:"),
     }));
     expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
       text: expect.stringContaining("controlRoomChannelId: 1 -> \"C0ALAMDRB9V\""),
@@ -86,7 +97,7 @@ describe("state recovery notifier", () => {
 
     await notify({
       repositoryKey: "followups",
-      path: "/workspace/system/followups.json",
+      path: "/tmp/followups.json",
       backupPath: "/workspace/system/followups.json.corrupt-1",
       errorType: "syntax",
       errorMessage: "Unexpected token",

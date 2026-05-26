@@ -30,12 +30,40 @@ export async function writeJsonFileAtomic(path: string, value: unknown): Promise
   }
 }
 
+export function buildLastKnownGoodJsonPath(path: string): string {
+  return `${path}.last-known-good`;
+}
+
+export async function readValidatedJsonFile<S extends z.ZodTypeAny>(
+  path: string,
+  schema: S,
+): Promise<z.output<S> | undefined> {
+  try {
+    const raw = await readFile(path, "utf8");
+    return schema.parse(JSON.parse(raw) as unknown);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    return undefined;
+  }
+}
+
 export interface LoadJsonFileOptions<S extends z.ZodTypeAny> {
   path: string;
   schema: S;
   defaultValue: z.output<S>;
   recoverOnInvalid?: boolean;
   onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
+  onValidValue?: (value: z.output<S>) => void | Promise<void>;
+  recoverValue?: (args: {
+    path: string;
+    schema: S;
+    defaultValue: z.output<S>;
+    raw: string;
+    parseError: SyntaxError | ZodError;
+    parsedValue?: unknown;
+  }) => Promise<RecoveredJsonValue<z.output<S>> | undefined>;
 }
 
 export interface JsonFileRecoveryDetails {
@@ -44,6 +72,15 @@ export interface JsonFileRecoveryDetails {
   errorType: "syntax" | "schema";
   errorMessage: string;
   parsedValue?: unknown;
+  restoredValue?: unknown;
+  restoredFrom?: "last-known-good" | "backup" | "default";
+  restoredPath?: string;
+}
+
+export interface RecoveredJsonValue<T> {
+  value: T;
+  restoredFrom: "last-known-good" | "backup" | "default";
+  restoredPath?: string;
 }
 
 async function backupInvalidJsonFile(path: string, raw: string): Promise<string> {
@@ -87,6 +124,8 @@ export async function loadJsonFile<S extends z.ZodTypeAny>({
   defaultValue,
   recoverOnInvalid = false,
   onRecoverInvalid,
+  onValidValue,
+  recoverValue,
 }: LoadJsonFileOptions<S>): Promise<z.output<S>> {
   let raw: string;
   try {
@@ -100,22 +139,40 @@ export async function loadJsonFile<S extends z.ZodTypeAny>({
 
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return schema.parse(parsed);
+    const value = schema.parse(parsed);
+    await onValidValue?.(value);
+    return value;
   } catch (error) {
     if (!shouldRecoverInvalidJsonFile(error, recoverOnInvalid)) {
       throw error;
     }
     const backupPath = await backupInvalidJsonFile(path, raw).catch(() => undefined);
-    await writeJsonFileAtomic(path, defaultValue);
+    const parsedValue = error instanceof ZodError
+      ? (() => {
+        try {
+          return JSON.parse(raw) as unknown;
+        } catch {
+          return undefined;
+        }
+      })()
+      : undefined;
+    const recoveredValue = await recoverValue?.({
+      path,
+      schema,
+      defaultValue,
+      raw,
+      parseError: error as SyntaxError | ZodError,
+      parsedValue,
+    });
+    const nextValue = recoveredValue?.value ?? defaultValue;
+    await writeJsonFileAtomic(path, nextValue);
+    await onValidValue?.(nextValue);
     const recoveryDetails = buildRecoveryDetails(path, error, backupPath);
-    if (error instanceof ZodError) {
-      try {
-        recoveryDetails.parsedValue = JSON.parse(raw) as unknown;
-      } catch {
-        recoveryDetails.parsedValue = undefined;
-      }
-    }
+    recoveryDetails.parsedValue = parsedValue;
+    recoveryDetails.restoredValue = nextValue;
+    recoveryDetails.restoredFrom = recoveredValue?.restoredFrom ?? "default";
+    recoveryDetails.restoredPath = recoveredValue?.restoredPath;
     await onRecoverInvalid?.(recoveryDetails);
-    return defaultValue;
+    return nextValue;
   }
 }
