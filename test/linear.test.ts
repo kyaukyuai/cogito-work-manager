@@ -347,10 +347,9 @@ describe("linear command builders", () => {
       "Issue",
       "--label",
       "cogito-work-manager-issue-created",
-      "--team",
-      "AIC",
       "--secret",
       "secret-1",
+      "--enabled",
       "--json",
     ]);
 
@@ -742,6 +741,18 @@ describe("linear command builders", () => {
     })).toEqual({
       action: "update",
       webhook: { ...webhook!, url: "https://example.com/old" },
+    });
+
+    expect(planLinearIssueCreatedWebhookReconcile([
+      { ...webhook!, enabled: false },
+    ], {
+      label: "cogito-work-manager-issue-created",
+      url: "https://example.com/hooks/linear",
+      teamKey: "AIC",
+      secret: "secret-1",
+    })).toEqual({
+      action: "update",
+      webhook: { ...webhook!, enabled: false },
     });
   });
 });

@@ -130,10 +130,9 @@ export function buildUpdateLinearWebhookArgs(
     "Issue",
     "--label",
     input.label,
-    "--team",
-    input.teamKey,
     "--secret",
     input.secret,
+    "--enabled",
     "--json",
   ];
 }
