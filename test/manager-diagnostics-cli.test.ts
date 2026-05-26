@@ -63,6 +63,10 @@ describe("manager diagnostics cli", () => {
   it("prints state file classifications for a workspace", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "manager-diagnostics-state-"));
     tempDirs.push(cwd);
+    await mkdir(join(cwd, "workspace", "system"), { recursive: true });
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-1"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-2"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-3"), "broken\n", "utf8");
 
     const { stdout } = await execTsx([diagnosticsScript, "state-files", "./workspace"], {
       cwd,
@@ -77,6 +81,14 @@ describe("manager diagnostics cli", () => {
         "explicit-slack-update": string[];
         "manager-commit-only": string[];
       };
+      stateArtifacts: {
+        warningCount: number;
+        files: Array<{
+          relativePath: string;
+          corruptArtifacts: { count: number };
+          warnings: Array<{ code: string }>;
+        }>;
+      };
     };
 
     expect(diagnostics.classificationSummary.editable).toContain("policy.json");
@@ -86,6 +98,18 @@ describe("manager diagnostics cli", () => {
     expect(diagnostics.writePolicySummary["silent-auto-update"]).toContain("MEMORY.md");
     expect(diagnostics.writePolicySummary["explicit-slack-update"]).toContain("owner-map.json");
     expect(diagnostics.writePolicySummary["manager-commit-only"]).toContain("policy.json");
+    expect(diagnostics.stateArtifacts.warningCount).toBeGreaterThan(0);
+    expect(diagnostics.stateArtifacts.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        relativePath: "followups.json",
+        corruptArtifacts: expect.objectContaining({
+          count: 3,
+        }),
+        warnings: expect.arrayContaining([
+          expect.objectContaining({ code: "corrupt-artifact-count-warning" }),
+        ]),
+      }),
+    ]));
   });
 
   it("prints workspace memory coverage diagnostics", async () => {
@@ -142,6 +166,9 @@ describe("manager diagnostics cli", () => {
     tempDirs.push(cwd);
 
     await mkdir(join(cwd, "workspace", "system"), { recursive: true });
+    await writeFile(join(cwd, "workspace", "system", "webhook-deliveries.json.corrupt-1"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "webhook-deliveries.json.corrupt-2"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "webhook-deliveries.json.corrupt-3"), "broken\n", "utf8");
     await writeFile(join(cwd, "workspace", "system", "workgraph-events.jsonl"), [
       JSON.stringify({
         id: "00000000-0000-4000-8000-000000000001",
@@ -175,6 +202,13 @@ describe("manager diagnostics cli", () => {
       operatorActionSummary: {
         commands?: { compact?: string; recover?: string };
       };
+      stateArtifacts: {
+        warningCount: number;
+        files: Array<{
+          relativePath: string;
+          corruptArtifacts: { count: number };
+        }>;
+      };
       files: {
         activeLog?: { relativePath?: string; sizeBytes?: number | null };
       };
@@ -193,6 +227,15 @@ describe("manager diagnostics cli", () => {
       compact: expect.stringContaining("npm run workgraph:compact"),
       recover: expect.stringContaining("npm run workgraph:recover"),
     });
+    expect(diagnostics.stateArtifacts.warningCount).toBeGreaterThan(0);
+    expect(diagnostics.stateArtifacts.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        relativePath: "webhook-deliveries.json",
+        corruptArtifacts: expect.objectContaining({
+          count: 3,
+        }),
+      }),
+    ]));
     expect(diagnostics.files.activeLog).toMatchObject({
       relativePath: "workgraph-events.jsonl",
     });

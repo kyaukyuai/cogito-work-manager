@@ -388,6 +388,11 @@ describe("manager diagnostics", () => {
   });
 
   it("builds state file diagnostics with classification summaries", async () => {
+    const systemPaths = buildSystemPaths(workspaceDir);
+    await writeFile(`${systemPaths.followupsFile}.corrupt-1`, "broken\n", "utf8");
+    await writeFile(`${systemPaths.followupsFile}.corrupt-2`, "broken\n", "utf8");
+    await writeFile(`${systemPaths.followupsFile}.corrupt-3`, "broken\n", "utf8");
+
     const diagnostics = await buildManagerStateFileDiagnostics({ workspaceDir });
 
     expect(diagnostics.systemRoot).toBe(join(workspaceDir, "system"));
@@ -427,6 +432,22 @@ describe("manager diagnostics", () => {
       expect.objectContaining({
         relativePath: "sessions/",
         entryType: "directory",
+      }),
+    ]));
+    expect(diagnostics.stateArtifacts.warningCount).toBeGreaterThan(0);
+    expect(diagnostics.stateArtifacts.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        relativePath: "followups.json",
+        corruptArtifacts: expect.objectContaining({
+          count: 3,
+        }),
+        lastKnownGood: expect.objectContaining({
+          exists: false,
+        }),
+        warnings: expect.arrayContaining([
+          expect.objectContaining({ code: "corrupt-artifact-count-warning" }),
+          expect.objectContaining({ code: "missing-last-known-good" }),
+        ]),
       }),
     ]));
     expect(diagnostics.writePolicyNotes.silentAutoUpdate).toContain("automatically");
@@ -478,6 +499,13 @@ describe("manager diagnostics", () => {
     });
     expect(diagnostics.files.activeLog.relativePath).toBe("workgraph-events.jsonl");
     expect(diagnostics.files.activeLog.sizeBytes).toBeGreaterThan(0);
+    expect(diagnostics.stateArtifacts.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        relativePath: "policy.json",
+        corruptArtifacts: expect.objectContaining({ count: 0 }),
+        backupArtifacts: expect.objectContaining({ count: 0 }),
+      }),
+    ]));
     expect(diagnostics.operatorActionSummary).toMatchObject({
       recommendedAction: "observe",
       commands: {

@@ -4,6 +4,10 @@ import {
   type SystemPaths,
   type SystemStateFileStatus,
 } from "../../lib/system-workspace.js";
+import {
+  inspectJsonStateArtifacts,
+  type JsonStateArtifactSummary,
+} from "../json-state-artifacts.js";
 import type { WorkgraphRepository } from "./file-backed-workgraph-repository.js";
 import type { WorkgraphHealth, WorkgraphHealthPolicy } from "./health.js";
 
@@ -21,6 +25,7 @@ export interface WorkgraphDiagnostics {
     activeLog: WorkgraphFileStatus;
     snapshot: WorkgraphFileStatus;
   };
+  stateArtifacts: JsonStateArtifactSummary;
   operatorActionSummary: {
     recommendedAction: WorkgraphHealth["recommendedAction"];
     summary: string;
@@ -61,9 +66,10 @@ export async function buildWorkgraphDiagnostics(args: {
   systemPaths?: SystemPaths;
 }): Promise<WorkgraphDiagnostics> {
   const systemPaths = args.systemPaths ?? buildSystemPaths(args.workspaceDir);
-  const [health, files] = await Promise.all([
+  const [health, files, stateArtifacts] = await Promise.all([
     args.repository.health(args.policy),
     inspectSystemStateFiles(systemPaths),
+    inspectJsonStateArtifacts(systemPaths),
   ]);
 
   return {
@@ -75,6 +81,7 @@ export async function buildWorkgraphDiagnostics(args: {
       activeLog: selectWorkgraphFile(files, "workgraph-events.jsonl"),
       snapshot: selectWorkgraphFile(files, "workgraph-snapshot.json"),
     },
+    stateArtifacts,
     operatorActionSummary: {
       recommendedAction: health.recommendedAction,
       summary: health.operatorSummary,

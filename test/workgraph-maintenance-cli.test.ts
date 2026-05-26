@@ -27,6 +27,9 @@ describe("workgraph maintenance cli", () => {
     tempDirs.push(cwd);
 
     await mkdir(join(cwd, "workspace", "system"), { recursive: true });
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-1"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-2"), "broken\n", "utf8");
+    await writeFile(join(cwd, "workspace", "system", "followups.json.corrupt-3"), "broken\n", "utf8");
     await writeFile(join(cwd, "workspace", "system", "workgraph-events.jsonl"), [
       JSON.stringify({
         id: "00000000-0000-4000-8000-000000000002",
@@ -56,6 +59,13 @@ describe("workgraph maintenance cli", () => {
         recommendedAction?: string;
         reasons?: Array<{ code?: string }>;
       };
+      stateArtifacts: {
+        warningCount: number;
+        files: Array<{
+          relativePath: string;
+          corruptArtifacts: { count: number };
+        }>;
+      };
       operatorActionSummary: {
         commands?: { compact?: string };
       };
@@ -69,6 +79,15 @@ describe("workgraph maintenance cli", () => {
         }),
       ],
     });
+    expect(diagnostics.stateArtifacts.warningCount).toBeGreaterThan(0);
+    expect(diagnostics.stateArtifacts.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        relativePath: "followups.json",
+        corruptArtifacts: expect.objectContaining({
+          count: 3,
+        }),
+      }),
+    ]));
     expect(diagnostics.operatorActionSummary.commands?.compact).toContain("npm run workgraph:compact");
   });
 });

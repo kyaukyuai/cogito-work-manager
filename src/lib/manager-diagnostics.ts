@@ -23,6 +23,7 @@ import {
   type WorkspaceMemoryCoverageDiagnostics,
 } from "./workspace-memory-diagnostics.js";
 import type { FollowupLedgerEntry } from "../state/manager-state-contract.js";
+import { inspectJsonStateArtifacts, type JsonStateArtifactSummary } from "../state/json-state-artifacts.js";
 import type { ManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { buildWorkgraphDiagnostics, type WorkgraphDiagnostics } from "../state/workgraph/diagnostics.js";
 import { buildWorkgraphThreadKey } from "../state/workgraph/events.js";
@@ -64,6 +65,7 @@ export interface ManagerStateFilesDiagnostics {
   workspaceDir: string;
   systemRoot: string;
   files: SystemStateFileStatus[];
+  stateArtifacts: JsonStateArtifactSummary;
   classificationSummary: Record<SystemStateFileClassification, string[]>;
   operatorActionSummary: {
     editOk: string[];
@@ -244,12 +246,16 @@ export async function buildManagerStateFileDiagnostics(args: {
   workspaceDir: string;
 }): Promise<ManagerStateFilesDiagnostics> {
   const systemPaths = buildSystemPaths(args.workspaceDir);
-  const files = await inspectSystemStateFiles(systemPaths);
+  const [files, stateArtifacts] = await Promise.all([
+    inspectSystemStateFiles(systemPaths),
+    inspectJsonStateArtifacts(systemPaths),
+  ]);
 
   return {
     workspaceDir: args.workspaceDir,
     systemRoot: systemPaths.rootDir,
     files,
+    stateArtifacts,
     classificationSummary: {
       editable: summarizeByClassification(files, "editable"),
       internal: summarizeByClassification(files, "internal"),
