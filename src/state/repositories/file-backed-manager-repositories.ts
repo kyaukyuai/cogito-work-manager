@@ -42,6 +42,12 @@ export type WebhookDeliveryRepository = MutableRepository<WebhookDeliveryEntry[]
 export type PersonalizationRepository = MutableRepository<PersonalizationLedgerEntry[]>;
 export type NotionManagedPagesRepository = MutableRepository<NotionManagedPageEntry[]>;
 
+export type RecoverableManagerStateRepositoryKey = "policy" | "followups" | "webhookDeliveries";
+
+export interface ManagerStateRecoveryEvent extends JsonFileRecoveryDetails {
+  repositoryKey: RecoverableManagerStateRepositoryKey;
+}
+
 export interface ManagerRepositories {
   policy: PolicyRepository;
   ownerMap: OwnerMapRepository;
@@ -53,8 +59,25 @@ export interface ManagerRepositories {
   workgraph: WorkgraphRepository;
 }
 
+export interface CreateFileBackedManagerRepositoriesOptions {
+  onStateRecovery?: (event: ManagerStateRecoveryEvent) => void | Promise<void>;
+}
+
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeJsonFileAtomic(path, value);
+}
+
+function createRecoveryHandler(
+  repositoryKey: RecoverableManagerStateRepositoryKey,
+  options?: CreateFileBackedManagerRepositoriesOptions,
+): (details: JsonFileRecoveryDetails) => void | Promise<void> {
+  return async (details) => {
+    emitJsonStateRecoveryWarning(details);
+    await options?.onStateRecovery?.({
+      repositoryKey,
+      ...details,
+    });
+  };
 }
 
 function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
@@ -63,7 +86,7 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
   defaultValue: z.output<S>,
   options?: {
     recoverOnInvalid?: boolean;
-    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
+    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
   },
 ): ReadonlyRepository<z.output<S>> {
   return {
@@ -85,7 +108,7 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   defaultValue: z.output<S>,
   options?: {
     recoverOnInvalid?: boolean;
-    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
+    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
   },
 ): MutableRepository<z.output<S>> {
   const readonlyRepository = createReadonlyJsonRepository(path, schema, defaultValue, options);
@@ -97,17 +120,26 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   };
 }
 
-export function createFileBackedManagerRepositories(paths: SystemPaths): ManagerRepositories {
+export function createFileBackedManagerRepositories(
+  paths: SystemPaths,
+  options?: CreateFileBackedManagerRepositoriesOptions,
+): ManagerRepositories {
   return {
-    policy: createMutableJsonRepository(paths.policyFile, managerPolicySchema, DEFAULT_POLICY),
+    policy: createMutableJsonRepository(paths.policyFile, managerPolicySchema, DEFAULT_POLICY, {
+      recoverOnInvalid: true,
+      onRecoverInvalid: createRecoveryHandler("policy", options),
+    }),
     ownerMap: createMutableJsonRepository(paths.ownerMapFile, ownerMapSchema, DEFAULT_OWNER_MAP),
-    followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, []),
+    followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, [], {
+      recoverOnInvalid: true,
+      onRecoverInvalid: createRecoveryHandler("followups", options),
+    }),
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
     personalization: createMutableJsonRepository(paths.personalizationLedgerFile, personalizationLedgerSchema, []),
     notionPages: createMutableJsonRepository(paths.notionPagesFile, notionManagedPagesSchema, []),
     webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, [], {
       recoverOnInvalid: true,
-      onRecoverInvalid: emitJsonStateRecoveryWarning,
+      onRecoverInvalid: createRecoveryHandler("webhookDeliveries", options),
     }),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };

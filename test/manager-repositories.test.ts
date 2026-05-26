@@ -128,15 +128,44 @@ describe("file-backed manager repositories", () => {
     ]);
   });
 
-  it("validates stored JSON against the repository schema", async () => {
+  it("still rejects schema-invalid planning data because that repository does not auto-recover", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-invalid-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const repositories = createFileBackedManagerRepositories(systemPaths);
 
-    await mkdir(dirname(systemPaths.policyFile), { recursive: true });
-    await writeFile(systemPaths.policyFile, "{\"controlRoomChannelId\":1}\n", "utf8");
+    await mkdir(dirname(systemPaths.planningLedgerFile), { recursive: true });
+    await writeFile(systemPaths.planningLedgerFile, "{\"sourceThread\":1}\n", "utf8");
 
-    await expect(repositories.policy.load()).rejects.toThrow();
+    await expect(repositories.planning.load()).rejects.toThrow();
+  });
+
+  it("recovers a schema-invalid policy file by restoring defaults and emitting state recovery hooks", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-policy-invalid-schema-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const invalidSchema = "{\"controlRoomChannelId\":1}\n";
+
+    await mkdir(dirname(systemPaths.policyFile), { recursive: true });
+    await writeFile(systemPaths.policyFile, invalidSchema, "utf8");
+
+    await expect(repositories.policy.load()).resolves.toMatchObject({
+      controlRoomChannelId: "C0ALAMDRB9V",
+      heartbeatEnabled: true,
+    });
+    await expect(readFile(systemPaths.policyFile, "utf8")).resolves.toContain("\"controlRoomChannelId\": \"C0ALAMDRB9V\"");
+
+    const backups = await readdir(dirname(systemPaths.policyFile));
+    const backupName = backups.find((entry) => entry.startsWith("policy.json.corrupt-"));
+    expect(backupName).toBeDefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "policy",
+      path: systemPaths.policyFile,
+      backupPath: join(dirname(systemPaths.policyFile), backupName!),
+      errorType: "schema",
+    }));
   });
 
   it("recovers a corrupted webhook delivery ledger by backing it up and resetting the file", async () => {
@@ -169,6 +198,37 @@ trailing-fragment`;
       backupPath: join(dirname(systemPaths.webhookDeliveriesFile), backupName!),
       errorType: "syntax",
     });
+  });
+
+  it("recovers a corrupted followups ledger by backing it up and resetting the file", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-followups-corrupt-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const corrupted = `[
+  {
+    "issueId": "AIC-1"
+  }
+]
+trailing-fragment`;
+
+    await mkdir(dirname(systemPaths.followupsFile), { recursive: true });
+    await writeFile(systemPaths.followupsFile, corrupted, "utf8");
+
+    await expect(repositories.followups.load()).resolves.toEqual([]);
+    await expect(readFile(systemPaths.followupsFile, "utf8")).resolves.toBe("[]\n");
+
+    const backups = await readdir(dirname(systemPaths.followupsFile));
+    const backupName = backups.find((entry) => entry.startsWith("followups.json.corrupt-"));
+    expect(backupName).toBeDefined();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "followups",
+      path: systemPaths.followupsFile,
+      backupPath: join(dirname(systemPaths.followupsFile), backupName!),
+      errorType: "syntax",
+    }));
   });
 
   it("recovers a schema-invalid webhook delivery ledger by backing it up and resetting the file", async () => {

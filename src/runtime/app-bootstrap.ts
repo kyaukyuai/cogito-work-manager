@@ -13,10 +13,12 @@ import { disposeAllThreadRuntimes, disposeIdleThreadRuntimes } from "../lib/pi-s
 import { SchedulerService } from "../lib/scheduler.js";
 import { loadExecutableSchedulerJobs } from "../lib/scheduler-management.js";
 import { buildSystemPaths, ensureSystemWorkspace, saveSchedulerJobStatusesFromJobs } from "../lib/system-workspace.js";
+import { DEFAULT_POLICY, type ManagerPolicy } from "../state/manager-state-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { runWorkgraphMaintenance } from "../state/workgraph/maintenance.js";
 import { createAppRuntimeHandlers } from "./app-runtime.js";
 import { buildLlmDiagnosticsFromConfig } from "./llm-runtime-config.js";
+import { createStateRecoveryNotifier } from "./state-recovery-notifier.js";
 
 export async function runApp(): Promise<void> {
   const config = loadConfig();
@@ -39,8 +41,16 @@ export async function runApp(): Promise<void> {
   await ensureManagerStateFiles(systemPaths);
   await verifyLinearCli(config.linearTeamKey);
 
-  const managerRepositories = createFileBackedManagerRepositories(systemPaths);
-  let managerPolicy = await managerRepositories.policy.load();
+  let managerPolicy: ManagerPolicy = DEFAULT_POLICY;
+  const managerRepositories = createFileBackedManagerRepositories(systemPaths, {
+    onStateRecovery: createStateRecoveryNotifier({
+      logger,
+      webClient,
+      config,
+      getControlRoomChannel: () => managerPolicy.controlRoomChannelId,
+    }),
+  });
+  managerPolicy = await managerRepositories.policy.load();
   const ownerMap = await managerRepositories.ownerMap.load();
   const llmDiagnostics = await buildLlmDiagnosticsFromConfig(config);
   const workgraphPolicy = {

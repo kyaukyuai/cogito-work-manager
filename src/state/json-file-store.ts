@@ -35,7 +35,7 @@ export interface LoadJsonFileOptions<S extends z.ZodTypeAny> {
   schema: S;
   defaultValue: z.output<S>;
   recoverOnInvalid?: boolean;
-  onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
+  onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
 }
 
 export interface JsonFileRecoveryDetails {
@@ -106,7 +106,7 @@ export async function loadJsonFile<S extends z.ZodTypeAny>({
     }
     const backupPath = await backupInvalidJsonFile(path, raw).catch(() => undefined);
     await writeJsonFileAtomic(path, defaultValue);
-    onRecoverInvalid?.(buildRecoveryDetails(path, error, backupPath));
+    await onRecoverInvalid?.(buildRecoveryDetails(path, error, backupPath));
     return defaultValue;
   }
 }
