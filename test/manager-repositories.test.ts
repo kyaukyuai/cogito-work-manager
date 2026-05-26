@@ -310,6 +310,65 @@ trailing-fragment`;
     }));
   });
 
+  it("recovers an invalid followups ledger from last-known-good instead of dropping pending entries", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-followups-last-known-good-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const followups = [{
+      issueId: "AIC-42",
+      status: "awaiting-response" as const,
+      requestKind: "status" as const,
+      sourceChannelId: "C123",
+      sourceThreadTs: "1779781504.200029",
+    }];
+
+    await repositories.followups.save(followups);
+    await writeFile(systemPaths.followupsFile, "{\"issueId\":1}\n", "utf8");
+
+    await expect(repositories.followups.load()).resolves.toEqual(followups);
+
+    const lastKnownGoodPath = `${systemPaths.followupsFile}.last-known-good`;
+    await expect(readFile(lastKnownGoodPath, "utf8")).resolves.toContain("\"issueId\": \"AIC-42\"");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "followups",
+      restoredFrom: "last-known-good",
+      restoredPath: lastKnownGoodPath,
+      restoredValue: followups,
+    }));
+  });
+
+  it("recovers an invalid followups ledger from the latest valid backup when last-known-good is unavailable", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-followups-backup-recovery-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const backupPath = `${systemPaths.followupsFile}.bak-20260526T063259Z`;
+    const followups = [{
+      issueId: "AIC-55",
+      status: "resolved" as const,
+      resolvedAt: "2026-05-25T00:00:00.000Z",
+      resolvedReason: "answered" as const,
+    }];
+
+    await mkdir(dirname(systemPaths.followupsFile), { recursive: true });
+    await writeFile(backupPath, `${JSON.stringify(followups, null, 2)}\n`, "utf8");
+    await writeFile(systemPaths.followupsFile, "{\"issueId\":1}\n", "utf8");
+
+    await expect(repositories.followups.load()).resolves.toEqual(followups);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "followups",
+      restoredFrom: "backup",
+      restoredPath: backupPath,
+      restoredValue: followups,
+    }));
+  });
+
   it("recovers a schema-invalid webhook delivery ledger by backing it up and resetting the file", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-webhook-invalid-schema-"));
     const systemPaths = buildSystemPaths(workspaceDir);
@@ -340,5 +399,106 @@ trailing-fragment`;
       backupPath: join(dirname(systemPaths.webhookDeliveriesFile), backupName!),
       errorType: "schema",
     });
+  });
+
+  it("recovers an invalid webhook delivery ledger from last-known-good instead of clearing dedupe history", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-webhook-last-known-good-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const deliveries = [{
+      deliveryId: "delivery-42",
+      webhookId: "webhook-42",
+      issueId: "issue-42",
+      issueIdentifier: "AIC-42",
+      receivedAt: "2099-05-25T00:00:00.000Z",
+      status: "committed" as const,
+      createdIssueIds: ["AIC-420"],
+    }];
+
+    await repositories.webhookDeliveries.save(deliveries);
+    await writeFile(systemPaths.webhookDeliveriesFile, "{\"deliveryId\":1}\n", "utf8");
+
+    await expect(repositories.webhookDeliveries.load()).resolves.toEqual(deliveries);
+
+    const lastKnownGoodPath = `${systemPaths.webhookDeliveriesFile}.last-known-good`;
+    await expect(readFile(lastKnownGoodPath, "utf8")).resolves.toContain("\"deliveryId\": \"delivery-42\"");
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "webhookDeliveries",
+      restoredFrom: "last-known-good",
+      restoredPath: lastKnownGoodPath,
+      restoredValue: deliveries,
+    }));
+  });
+
+  it("recovers an invalid webhook delivery ledger from the latest valid backup when last-known-good is unavailable", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-webhook-backup-recovery-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const onStateRecovery = vi.fn();
+    const repositories = createFileBackedManagerRepositories(systemPaths, { onStateRecovery });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const backupPath = `${systemPaths.webhookDeliveriesFile}.bak-20260526T063259Z`;
+    const deliveries = [{
+      deliveryId: "delivery-99",
+      webhookId: "webhook-99",
+      issueId: "issue-99",
+      issueIdentifier: "AIC-99",
+      receivedAt: "2099-05-26T00:00:00.000Z",
+      status: "ignored-duplicate" as const,
+      createdIssueIds: [],
+    }];
+
+    await mkdir(dirname(systemPaths.webhookDeliveriesFile), { recursive: true });
+    await writeFile(backupPath, `${JSON.stringify(deliveries, null, 2)}\n`, "utf8");
+    await writeFile(systemPaths.webhookDeliveriesFile, "{\"deliveryId\":1}\n", "utf8");
+
+    await expect(repositories.webhookDeliveries.load()).resolves.toEqual(deliveries);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(onStateRecovery).toHaveBeenCalledWith(expect.objectContaining({
+      repositoryKey: "webhookDeliveries",
+      restoredFrom: "backup",
+      restoredPath: backupPath,
+      restoredValue: deliveries,
+    }));
+  });
+
+  it("trims webhook delivery retention on save and persists the trimmed last-known-good ledger", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-webhook-trim-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+    const staleDelivery = {
+      deliveryId: "delivery-stale",
+      webhookId: "webhook-stale",
+      issueId: "issue-stale",
+      issueIdentifier: "AIC-0",
+      receivedAt: "2000-01-01T00:00:00.000Z",
+      status: "received" as const,
+      createdIssueIds: [],
+    };
+    const recentDeliveries = Array.from({ length: 1002 }, (_, index) => ({
+      deliveryId: `delivery-${index}`,
+      webhookId: `webhook-${index}`,
+      issueId: `issue-${index}`,
+      issueIdentifier: `AIC-${index}`,
+      receivedAt: `2099-05-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+      status: "committed" as const,
+      createdIssueIds: index % 2 === 0 ? [`AIC-CREATED-${index}`] : [],
+    }));
+
+    await repositories.webhookDeliveries.save([staleDelivery, ...recentDeliveries]);
+
+    const persisted = await repositories.webhookDeliveries.load();
+    expect(persisted).toHaveLength(1000);
+    expect(persisted[0]?.deliveryId).toBe("delivery-2");
+    expect(persisted.at(-1)?.deliveryId).toBe("delivery-1001");
+
+    const lastKnownGoodPath = `${systemPaths.webhookDeliveriesFile}.last-known-good`;
+    const lastKnownGood = JSON.parse(await readFile(lastKnownGoodPath, "utf8")) as Array<{ deliveryId: string }>;
+    expect(lastKnownGood).toHaveLength(1000);
+    expect(lastKnownGood[0]?.deliveryId).toBe("delivery-2");
+    expect(lastKnownGood.some((entry) => entry.deliveryId === "delivery-stale")).toBe(false);
   });
 });

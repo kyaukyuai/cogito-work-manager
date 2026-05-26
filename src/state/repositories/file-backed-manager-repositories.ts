@@ -68,6 +68,9 @@ export interface CreateFileBackedManagerRepositoriesOptions {
   onStateRecovery?: (event: ManagerStateRecoveryEvent) => void | Promise<void>;
 }
 
+const WEBHOOK_DELIVERY_RETENTION_DAYS = 30;
+const WEBHOOK_DELIVERY_MAX_ENTRIES = 1000;
+
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
   await writeJsonFileAtomic(path, value);
 }
@@ -109,32 +112,49 @@ async function findLatestValidBackup<S extends z.ZodTypeAny>(
   return candidates.sort((left, right) => right.mtimeMs - left.mtimeMs)[0];
 }
 
-async function recoverPolicyValue(
+function trimWebhookDeliveries(deliveries: WebhookDeliveryEntry[]): WebhookDeliveryEntry[] {
+  const cutoffTimestamp = Date.now() - (WEBHOOK_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const recentDeliveries = deliveries.filter((entry) => Date.parse(entry.receivedAt) >= cutoffTimestamp);
+  return recentDeliveries.slice(-WEBHOOK_DELIVERY_MAX_ENTRIES);
+}
+
+async function recoverJsonValueFromLastKnownGoodOrBackup<S extends z.ZodTypeAny>(
   path: string,
-): Promise<RecoveredJsonValue<ManagerPolicy> | undefined> {
+  schema: S,
+  defaultValue: z.output<S>,
+  options?: {
+    normalizeValue?: (value: z.output<S>) => z.output<S>;
+  },
+): Promise<RecoveredJsonValue<z.output<S>> | undefined> {
   const lastKnownGoodPath = buildLastKnownGoodJsonPath(path);
-  const lastKnownGood = await readValidatedJsonFile(lastKnownGoodPath, managerPolicySchema);
+  const lastKnownGood = await readValidatedJsonFile(lastKnownGoodPath, schema);
   if (lastKnownGood) {
     return {
-      value: lastKnownGood,
+      value: options?.normalizeValue?.(lastKnownGood) ?? lastKnownGood,
       restoredFrom: "last-known-good",
       restoredPath: lastKnownGoodPath,
     };
   }
 
-  const backup = await findLatestValidBackup(path, managerPolicySchema);
+  const backup = await findLatestValidBackup(path, schema);
   if (backup) {
     return {
-      value: backup.value,
+      value: options?.normalizeValue?.(backup.value) ?? backup.value,
       restoredFrom: "backup",
       restoredPath: backup.path,
     };
   }
 
   return {
-    value: DEFAULT_POLICY,
+    value: options?.normalizeValue?.(defaultValue) ?? defaultValue,
     restoredFrom: "default",
   };
+}
+
+async function recoverPolicyValue(
+  path: string,
+): Promise<RecoveredJsonValue<ManagerPolicy> | undefined> {
+  return recoverJsonValueFromLastKnownGoodOrBackup(path, managerPolicySchema, DEFAULT_POLICY);
 }
 
 function createRecoveryHandler(
@@ -158,6 +178,7 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
     recoverOnInvalid?: boolean;
     onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
     onValidValue?: (value: z.output<S>) => void | Promise<void>;
+    normalizeValue?: (value: z.output<S>) => z.output<S>;
     recoverValue?: (args: {
       path: string;
       schema: S;
@@ -191,6 +212,7 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
     recoverOnInvalid?: boolean;
     onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void | Promise<void>;
     onValidValue?: (value: z.output<S>) => void | Promise<void>;
+    normalizeValue?: (value: z.output<S>) => z.output<S>;
     recoverValue?: (args: {
       path: string;
       schema: S;
@@ -205,8 +227,9 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   return {
     load: readonlyRepository.load,
     async save(value: z.output<S>): Promise<void> {
-      await writeJsonFile(path, value);
-      await options?.onValidValue?.(value);
+      const normalizedValue = options?.normalizeValue?.(value) ?? value;
+      await writeJsonFile(path, normalizedValue);
+      await options?.onValidValue?.(normalizedValue);
     },
   };
 }
@@ -226,6 +249,12 @@ export function createFileBackedManagerRepositories(
     followups: createMutableJsonRepository(paths.followupsFile, followupsLedgerSchema, [], {
       recoverOnInvalid: true,
       onRecoverInvalid: createRecoveryHandler("followups", options),
+      onValidValue: async (value) => persistLastKnownGoodJson(paths.followupsFile, value),
+      recoverValue: async () => recoverJsonValueFromLastKnownGoodOrBackup(
+        paths.followupsFile,
+        followupsLedgerSchema,
+        [],
+      ),
     }),
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
     personalization: createMutableJsonRepository(paths.personalizationLedgerFile, personalizationLedgerSchema, []),
@@ -233,6 +262,14 @@ export function createFileBackedManagerRepositories(
     webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, [], {
       recoverOnInvalid: true,
       onRecoverInvalid: createRecoveryHandler("webhookDeliveries", options),
+      onValidValue: async (value) => persistLastKnownGoodJson(paths.webhookDeliveriesFile, trimWebhookDeliveries(value)),
+      normalizeValue: trimWebhookDeliveries,
+      recoverValue: async () => recoverJsonValueFromLastKnownGoodOrBackup(
+        paths.webhookDeliveriesFile,
+        webhookDeliveriesSchema,
+        [],
+        { normalizeValue: trimWebhookDeliveries },
+      ),
     }),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };
