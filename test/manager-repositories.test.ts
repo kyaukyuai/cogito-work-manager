@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureManagerStateFiles,
   loadFollowupsLedger,
@@ -11,6 +11,10 @@ import { buildSystemPaths } from "../src/lib/system-workspace.js";
 import { createFileBackedManagerRepositories } from "../src/state/repositories/file-backed-manager-repositories.js";
 
 describe("file-backed manager repositories", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("loads default values from missing files", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-defaults-"));
     const systemPaths = buildSystemPaths(workspaceDir);
@@ -139,6 +143,7 @@ describe("file-backed manager repositories", () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-webhook-corrupt-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const repositories = createFileBackedManagerRepositories(systemPaths);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const corrupted = `[
   {
     "deliveryId": "broken-delivery"
@@ -156,12 +161,21 @@ trailing-fragment`;
     const backupName = backups.find((entry) => entry.startsWith("webhook-deliveries.json.corrupt-"));
     expect(backupName).toBeDefined();
     await expect(readFile(join(dirname(systemPaths.webhookDeliveriesFile), backupName!), "utf8")).resolves.toBe(corrupted);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warnSpy.mock.calls[0]?.[0]))).toMatchObject({
+      level: "warn",
+      message: "Recovered invalid JSON state file",
+      path: systemPaths.webhookDeliveriesFile,
+      backupPath: join(dirname(systemPaths.webhookDeliveriesFile), backupName!),
+      errorType: "syntax",
+    });
   });
 
   it("recovers a schema-invalid webhook delivery ledger by backing it up and resetting the file", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-webhook-invalid-schema-"));
     const systemPaths = buildSystemPaths(workspaceDir);
     const repositories = createFileBackedManagerRepositories(systemPaths);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const invalidSchema = `[
   {
     "deliveryId": 1
@@ -179,5 +193,13 @@ trailing-fragment`;
     const backupName = backups.find((entry) => entry.startsWith("webhook-deliveries.json.corrupt-"));
     expect(backupName).toBeDefined();
     await expect(readFile(join(dirname(systemPaths.webhookDeliveriesFile), backupName!), "utf8")).resolves.toBe(invalidSchema);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(warnSpy.mock.calls[0]?.[0]))).toMatchObject({
+      level: "warn",
+      message: "Recovered invalid JSON state file",
+      path: systemPaths.webhookDeliveriesFile,
+      backupPath: join(dirname(systemPaths.webhookDeliveriesFile), backupName!),
+      errorType: "schema",
+    });
   });
 });

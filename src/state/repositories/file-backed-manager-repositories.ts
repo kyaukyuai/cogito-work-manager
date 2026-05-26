@@ -18,7 +18,12 @@ import {
   type PlanningLedgerEntry,
   type WebhookDeliveryEntry,
 } from "../manager-state-contract.js";
-import { loadJsonFile, writeJsonFileAtomic } from "../json-file-store.js";
+import {
+  emitJsonStateRecoveryWarning,
+  type JsonFileRecoveryDetails,
+  loadJsonFile,
+  writeJsonFileAtomic,
+} from "../json-file-store.js";
 import { createFileBackedWorkgraphRepository, type WorkgraphRepository } from "../workgraph/file-backed-workgraph-repository.js";
 
 export interface ReadonlyRepository<T> {
@@ -58,6 +63,7 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
   defaultValue: z.output<S>,
   options?: {
     recoverOnInvalid?: boolean;
+    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
   },
 ): ReadonlyRepository<z.output<S>> {
   return {
@@ -67,6 +73,7 @@ function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
         schema,
         defaultValue,
         recoverOnInvalid: options?.recoverOnInvalid ?? false,
+        onRecoverInvalid: options?.onRecoverInvalid,
       });
     },
   };
@@ -78,6 +85,7 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   defaultValue: z.output<S>,
   options?: {
     recoverOnInvalid?: boolean;
+    onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
   },
 ): MutableRepository<z.output<S>> {
   const readonlyRepository = createReadonlyJsonRepository(path, schema, defaultValue, options);
@@ -99,6 +107,7 @@ export function createFileBackedManagerRepositories(paths: SystemPaths): Manager
     notionPages: createMutableJsonRepository(paths.notionPagesFile, notionManagedPagesSchema, []),
     webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, [], {
       recoverOnInvalid: true,
+      onRecoverInvalid: emitJsonStateRecoveryWarning,
     }),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };

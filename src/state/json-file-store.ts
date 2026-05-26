@@ -35,11 +35,21 @@ export interface LoadJsonFileOptions<S extends z.ZodTypeAny> {
   schema: S;
   defaultValue: z.output<S>;
   recoverOnInvalid?: boolean;
+  onRecoverInvalid?: (details: JsonFileRecoveryDetails) => void;
 }
 
-async function backupInvalidJsonFile(path: string, raw: string): Promise<void> {
+export interface JsonFileRecoveryDetails {
+  path: string;
+  backupPath?: string;
+  errorType: "syntax" | "schema";
+  errorMessage: string;
+}
+
+async function backupInvalidJsonFile(path: string, raw: string): Promise<string> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(buildCorruptBackupPath(path), raw, "utf8");
+  const backupPath = buildCorruptBackupPath(path);
+  await writeFile(backupPath, raw, "utf8");
+  return backupPath;
 }
 
 function shouldRecoverInvalidJsonFile(error: unknown, recoverOnInvalid: boolean): boolean {
@@ -49,11 +59,33 @@ function shouldRecoverInvalidJsonFile(error: unknown, recoverOnInvalid: boolean)
   return error instanceof SyntaxError || error instanceof ZodError;
 }
 
+function buildRecoveryDetails(path: string, error: unknown, backupPath?: string): JsonFileRecoveryDetails {
+  return {
+    path,
+    backupPath,
+    errorType: error instanceof SyntaxError ? "syntax" : "schema",
+    errorMessage: error instanceof Error ? error.message : String(error),
+  };
+}
+
+export function emitJsonStateRecoveryWarning(details: JsonFileRecoveryDetails): void {
+  console.warn(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "warn",
+    message: "Recovered invalid JSON state file",
+    path: details.path,
+    backupPath: details.backupPath ?? null,
+    errorType: details.errorType,
+    error: details.errorMessage,
+  }));
+}
+
 export async function loadJsonFile<S extends z.ZodTypeAny>({
   path,
   schema,
   defaultValue,
   recoverOnInvalid = false,
+  onRecoverInvalid,
 }: LoadJsonFileOptions<S>): Promise<z.output<S>> {
   let raw: string;
   try {
@@ -72,8 +104,9 @@ export async function loadJsonFile<S extends z.ZodTypeAny>({
     if (!shouldRecoverInvalidJsonFile(error, recoverOnInvalid)) {
       throw error;
     }
-    await backupInvalidJsonFile(path, raw).catch(() => undefined);
+    const backupPath = await backupInvalidJsonFile(path, raw).catch(() => undefined);
     await writeJsonFileAtomic(path, defaultValue);
+    onRecoverInvalid?.(buildRecoveryDetails(path, error, backupPath));
     return defaultValue;
   }
 }
