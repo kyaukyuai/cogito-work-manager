@@ -1,5 +1,3 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { z } from "zod";
 import type { SystemPaths } from "../../lib/system-workspace.js";
 import {
@@ -20,6 +18,7 @@ import {
   type PlanningLedgerEntry,
   type WebhookDeliveryEntry,
 } from "../manager-state-contract.js";
+import { loadJsonFile, writeJsonFileAtomic } from "../json-file-store.js";
 import { createFileBackedWorkgraphRepository, type WorkgraphRepository } from "../workgraph/file-backed-workgraph-repository.js";
 
 export interface ReadonlyRepository<T> {
@@ -49,31 +48,26 @@ export interface ManagerRepositories {
   workgraph: WorkgraphRepository;
 }
 
-async function readJsonFile(path: string): Promise<unknown | undefined> {
-  try {
-    const raw = await readFile(path, "utf8");
-    return JSON.parse(raw);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  }
-}
-
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(path, value);
 }
 
 function createReadonlyJsonRepository<S extends z.ZodTypeAny>(
   path: string,
   schema: S,
   defaultValue: z.output<S>,
+  options?: {
+    recoverOnInvalid?: boolean;
+  },
 ): ReadonlyRepository<z.output<S>> {
   return {
     async load(): Promise<z.output<S>> {
-      return schema.parse((await readJsonFile(path)) ?? defaultValue);
+      return loadJsonFile({
+        path,
+        schema,
+        defaultValue,
+        recoverOnInvalid: options?.recoverOnInvalid ?? false,
+      });
     },
   };
 }
@@ -82,8 +76,11 @@ function createMutableJsonRepository<S extends z.ZodTypeAny>(
   path: string,
   schema: S,
   defaultValue: z.output<S>,
+  options?: {
+    recoverOnInvalid?: boolean;
+  },
 ): MutableRepository<z.output<S>> {
-  const readonlyRepository = createReadonlyJsonRepository(path, schema, defaultValue);
+  const readonlyRepository = createReadonlyJsonRepository(path, schema, defaultValue, options);
   return {
     load: readonlyRepository.load,
     async save(value: z.output<S>): Promise<void> {
@@ -100,7 +97,9 @@ export function createFileBackedManagerRepositories(paths: SystemPaths): Manager
     planning: createMutableJsonRepository(paths.planningLedgerFile, planningLedgerSchema, []),
     personalization: createMutableJsonRepository(paths.personalizationLedgerFile, personalizationLedgerSchema, []),
     notionPages: createMutableJsonRepository(paths.notionPagesFile, notionManagedPagesSchema, []),
-    webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, []),
+    webhookDeliveries: createMutableJsonRepository(paths.webhookDeliveriesFile, webhookDeliveriesSchema, [], {
+      recoverOnInvalid: true,
+    }),
     workgraph: createFileBackedWorkgraphRepository(paths),
   };
 }

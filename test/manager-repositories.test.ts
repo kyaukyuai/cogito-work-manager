@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -133,5 +133,51 @@ describe("file-backed manager repositories", () => {
     await writeFile(systemPaths.policyFile, "{\"controlRoomChannelId\":1}\n", "utf8");
 
     await expect(repositories.policy.load()).rejects.toThrow();
+  });
+
+  it("recovers a corrupted webhook delivery ledger by backing it up and resetting the file", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-webhook-corrupt-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+    const corrupted = `[
+  {
+    "deliveryId": "broken-delivery"
+  }
+]
+trailing-fragment`;
+
+    await mkdir(dirname(systemPaths.webhookDeliveriesFile), { recursive: true });
+    await writeFile(systemPaths.webhookDeliveriesFile, corrupted, "utf8");
+
+    await expect(repositories.webhookDeliveries.load()).resolves.toEqual([]);
+    await expect(readFile(systemPaths.webhookDeliveriesFile, "utf8")).resolves.toBe("[]\n");
+
+    const backups = await readdir(dirname(systemPaths.webhookDeliveriesFile));
+    const backupName = backups.find((entry) => entry.startsWith("webhook-deliveries.json.corrupt-"));
+    expect(backupName).toBeDefined();
+    await expect(readFile(join(dirname(systemPaths.webhookDeliveriesFile), backupName!), "utf8")).resolves.toBe(corrupted);
+  });
+
+  it("recovers a schema-invalid webhook delivery ledger by backing it up and resetting the file", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-repositories-webhook-invalid-schema-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+    const invalidSchema = `[
+  {
+    "deliveryId": 1
+  }
+]
+`;
+
+    await mkdir(dirname(systemPaths.webhookDeliveriesFile), { recursive: true });
+    await writeFile(systemPaths.webhookDeliveriesFile, invalidSchema, "utf8");
+
+    await expect(repositories.webhookDeliveries.load()).resolves.toEqual([]);
+    await expect(readFile(systemPaths.webhookDeliveriesFile, "utf8")).resolves.toBe("[]\n");
+
+    const backups = await readdir(dirname(systemPaths.webhookDeliveriesFile));
+    const backupName = backups.find((entry) => entry.startsWith("webhook-deliveries.json.corrupt-"));
+    expect(backupName).toBeDefined();
+    await expect(readFile(join(dirname(systemPaths.webhookDeliveriesFile), backupName!), "utf8")).resolves.toBe(invalidSchema);
   });
 });

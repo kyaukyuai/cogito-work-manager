@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { SystemPaths } from "../../lib/system-workspace.js";
+import { writeJsonFileAtomic } from "../json-file-store.js";
 import {
   createWorkgraphEvent,
   workgraphEventSchema,
@@ -56,8 +57,7 @@ export function createFileBackedWorkgraphRepository(paths: SystemPaths): Workgra
   };
 
   const writeSnapshot = async (snapshot: WorkgraphSnapshot): Promise<void> => {
-    await mkdir(dirname(paths.workgraphSnapshotFile), { recursive: true });
-    await writeFile(paths.workgraphSnapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+    await writeJsonFileAtomic(paths.workgraphSnapshotFile, snapshot);
   };
 
   const projectFromStoredState = async (): Promise<{

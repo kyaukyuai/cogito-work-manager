@@ -15,6 +15,7 @@ import {
 } from "../state/manager-state-contract.js";
 import { createFileBackedManagerRepositories } from "../state/repositories/file-backed-manager-repositories.js";
 import { EMPTY_WORKGRAPH_SNAPSHOT } from "../state/workgraph/snapshot.js";
+import { writeJsonFileAtomic } from "../state/json-file-store.js";
 import type { SystemPaths } from "./system-workspace.js";
 import { ensureSystemWorkspace } from "./system-workspace.js";
 
@@ -28,8 +29,7 @@ export type {
 } from "../state/manager-state-contract.js";
 
 async function writeJsonFile(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(path, value);
 }
 
 async function ensureJsonFile<T>(path: string, defaultValue: T): Promise<void> {
