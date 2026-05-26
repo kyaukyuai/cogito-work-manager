@@ -43,6 +43,7 @@ export interface JsonFileRecoveryDetails {
   backupPath?: string;
   errorType: "syntax" | "schema";
   errorMessage: string;
+  parsedValue?: unknown;
 }
 
 async function backupInvalidJsonFile(path: string, raw: string): Promise<string> {
@@ -106,7 +107,15 @@ export async function loadJsonFile<S extends z.ZodTypeAny>({
     }
     const backupPath = await backupInvalidJsonFile(path, raw).catch(() => undefined);
     await writeJsonFileAtomic(path, defaultValue);
-    await onRecoverInvalid?.(buildRecoveryDetails(path, error, backupPath));
+    const recoveryDetails = buildRecoveryDetails(path, error, backupPath);
+    if (error instanceof ZodError) {
+      try {
+        recoveryDetails.parsedValue = JSON.parse(raw) as unknown;
+      } catch {
+        recoveryDetails.parsedValue = undefined;
+      }
+    }
+    await onRecoverInvalid?.(recoveryDetails);
     return defaultValue;
   }
 }

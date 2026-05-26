@@ -38,16 +38,32 @@ describe("state recovery notifier", () => {
       backupPath: "/workspace/system/policy.json.corrupt-1",
       errorType: "schema",
       errorMessage: "expected string, received number",
+      parsedValue: {
+        controlRoomChannelId: 1,
+      },
     });
 
-    expect(logger.warn).toHaveBeenCalledWith("Recovered invalid manager state file", expect.objectContaining({
+    expect(logger.error).toHaveBeenCalledWith("Recovered invalid manager state file", expect.objectContaining({
       repositoryKey: "policy",
       path: "/workspace/system/policy.json",
       errorType: "schema",
+      policyResetDiff: expect.arrayContaining([
+        expect.objectContaining({
+          path: "controlRoomChannelId",
+          previous: "1",
+          restored: "\"C0ALAMDRB9V\"",
+        }),
+      ]),
     }));
     expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
       channel: "CROOM",
       text: expect.stringContaining("system state を自動復旧しました。"),
+    }));
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("default へ戻した差分:"),
+    }));
+    expect(webClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("controlRoomChannelId: 1 -> \"C0ALAMDRB9V\""),
       blocks: expect.any(Array),
     }));
     expect(logger.info).toHaveBeenCalledWith("Posted state recovery notice to control room", expect.objectContaining({
@@ -77,6 +93,10 @@ describe("state recovery notifier", () => {
     });
 
     expect(webClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith("Recovered invalid manager state file", expect.objectContaining({
+      repositoryKey: "followups",
+      errorType: "syntax",
+    }));
     expect(logger.warn).toHaveBeenCalledWith("Skipped state recovery control-room notification", expect.objectContaining({
       repositoryKey: "followups",
       reason: "missing-control-room-channel",
