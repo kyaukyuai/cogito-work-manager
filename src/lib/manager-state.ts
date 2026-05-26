@@ -76,7 +76,7 @@ export async function loadManagerPolicy(paths: SystemPaths): Promise<ManagerPoli
 }
 
 export async function saveManagerPolicy(paths: SystemPaths, policy: ManagerPolicy): Promise<void> {
-  await writeJsonFile(paths.policyFile, policy);
+  await createFileBackedManagerRepositories(paths).policy.save(policy);
 }
 
 export async function loadOwnerMap(paths: SystemPaths): Promise<OwnerMap> {

@@ -25,6 +25,7 @@ import {
   emitJsonStateRecoveryWarning,
   type JsonFileRecoveryDetails,
   loadJsonFile,
+  pruneJsonStateArtifacts,
   readValidatedJsonFile,
   type RecoveredJsonValue,
   writeJsonFileAtomic,
@@ -77,6 +78,7 @@ async function writeJsonFile(path: string, value: unknown): Promise<void> {
 
 async function persistLastKnownGoodJson(path: string, value: unknown): Promise<void> {
   await writeJsonFileAtomic(buildLastKnownGoodJsonPath(path), value);
+  await pruneJsonStateArtifacts(path).catch(() => undefined);
 }
 
 async function findLatestValidBackup<S extends z.ZodTypeAny>(

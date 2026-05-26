@@ -193,5 +193,6 @@ describe("system workspace helpers", () => {
 
     const jobs = JSON.parse(await readFile(paths.jobsFile, "utf8")) as Array<{ id: string }>;
     expect(jobs).toEqual([]);
+    await expect(readFile(`${paths.policyFile}.last-known-good`, "utf8")).resolves.toContain("\"eveningEnabled\": false");
   });
 });

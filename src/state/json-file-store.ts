@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { ZodError, z } from "zod";
+
+const CORRUPT_STATE_ARTIFACT_RETENTION_DAYS = 14;
+const CORRUPT_STATE_ARTIFACT_MAX_FILES = 5;
+const NAMED_BACKUP_STATE_ARTIFACT_RETENTION_DAYS = 30;
+const NAMED_BACKUP_STATE_ARTIFACT_MAX_FILES = 10;
 
 function buildStateTimestamp(): string {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
@@ -18,6 +23,16 @@ function buildCorruptBackupPath(path: string): string {
   return `${path}.corrupt-${buildStateTimestamp()}-${randomUUID()}`;
 }
 
+interface StateArtifactCandidate {
+  path: string;
+  mtimeMs: number;
+}
+
+interface StateArtifactRetentionPolicy {
+  maxFiles: number;
+  maxAgeDays: number;
+}
+
 export async function writeJsonFileAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tempPath = buildAtomicTempPath(path);
@@ -32,6 +47,74 @@ export async function writeJsonFileAtomic(path: string, value: unknown): Promise
 
 export function buildLastKnownGoodJsonPath(path: string): string {
   return `${path}.last-known-good`;
+}
+
+function shouldRetainStateArtifact(
+  candidateIndex: number,
+  candidate: StateArtifactCandidate,
+  policy: StateArtifactRetentionPolicy,
+  now = Date.now(),
+): boolean {
+  if (candidateIndex === 0) {
+    return true;
+  }
+  if (candidateIndex >= policy.maxFiles) {
+    return false;
+  }
+  const cutoff = now - (policy.maxAgeDays * 24 * 60 * 60 * 1000);
+  return candidate.mtimeMs >= cutoff;
+}
+
+async function pruneStateArtifactGroup(
+  path: string,
+  prefix: string,
+  policy: StateArtifactRetentionPolicy,
+): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(dirname(path));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  const candidates: StateArtifactCandidate[] = [];
+  for (const entry of entries.filter((candidate) => candidate.startsWith(prefix))) {
+    const fullPath = join(dirname(path), entry);
+    try {
+      const metadata = await stat(fullPath);
+      if (!metadata.isFile()) {
+        continue;
+      }
+      candidates.push({
+        path: fullPath,
+        mtimeMs: metadata.mtimeMs,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const sortedCandidates = candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  const staleCandidates = sortedCandidates.filter((candidate, index) => !shouldRetainStateArtifact(index, candidate, policy));
+  await Promise.all(staleCandidates.map((candidate) => rm(candidate.path, { force: true }).catch(() => undefined)));
+}
+
+export async function pruneJsonStateArtifacts(path: string): Promise<void> {
+  const filename = basename(path);
+  await pruneStateArtifactGroup(path, `${filename}.corrupt-`, {
+    maxFiles: CORRUPT_STATE_ARTIFACT_MAX_FILES,
+    maxAgeDays: CORRUPT_STATE_ARTIFACT_RETENTION_DAYS,
+  });
+  await pruneStateArtifactGroup(path, `${filename}.bak-`, {
+    maxFiles: NAMED_BACKUP_STATE_ARTIFACT_MAX_FILES,
+    maxAgeDays: NAMED_BACKUP_STATE_ARTIFACT_RETENTION_DAYS,
+  });
 }
 
 export async function readValidatedJsonFile<S extends z.ZodTypeAny>(
@@ -87,6 +170,7 @@ async function backupInvalidJsonFile(path: string, raw: string): Promise<string>
   await mkdir(dirname(path), { recursive: true });
   const backupPath = buildCorruptBackupPath(path);
   await writeFile(backupPath, raw, "utf8");
+  await pruneJsonStateArtifacts(path).catch(() => undefined);
   return backupPath;
 }
 

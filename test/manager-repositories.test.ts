@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -500,5 +500,42 @@ trailing-fragment`;
     expect(lastKnownGood).toHaveLength(1000);
     expect(lastKnownGood[0]?.deliveryId).toBe("delivery-2");
     expect(lastKnownGood.some((entry) => entry.deliveryId === "delivery-stale")).toBe(false);
+  });
+
+  it("prunes stale corrupt and overflow backup artifacts when saving policy state", async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), "cogito-work-manager-policy-artifact-retention-"));
+    const systemPaths = buildSystemPaths(workspaceDir);
+    const repositories = createFileBackedManagerRepositories(systemPaths);
+    const now = Date.now();
+
+    await mkdir(dirname(systemPaths.policyFile), { recursive: true });
+    for (let index = 0; index < 7; index += 1) {
+      const corruptPath = `${systemPaths.policyFile}.corrupt-old-${index}`;
+      await writeFile(corruptPath, `corrupt-${index}\n`, "utf8");
+      const oldDate = new Date(now - ((60 + index) * 24 * 60 * 60 * 1000));
+      await utimes(corruptPath, oldDate, oldDate);
+    }
+    for (let index = 0; index < 12; index += 1) {
+      const backupPath = `${systemPaths.policyFile}.bak-retention-${index}`;
+      await writeFile(backupPath, `backup-${index}\n`, "utf8");
+      const recentDate = new Date(now - (index * 60 * 60 * 1000));
+      await utimes(backupPath, recentDate, recentDate);
+    }
+
+    await repositories.policy.save({
+      ...DEFAULT_POLICY,
+      heartbeatEnabled: false,
+    });
+
+    const entries = await readdir(dirname(systemPaths.policyFile));
+    const corruptEntries = entries.filter((entry) => entry.startsWith("policy.json.corrupt-old-")).sort();
+    const backupEntries = entries.filter((entry) => entry.startsWith("policy.json.bak-retention-")).sort();
+
+    expect(corruptEntries).toEqual(["policy.json.corrupt-old-0"]);
+    expect(backupEntries).toHaveLength(10);
+    expect(backupEntries).not.toContain("policy.json.bak-retention-10");
+    expect(backupEntries).not.toContain("policy.json.bak-retention-11");
+    expect(backupEntries).toContain("policy.json.bak-retention-0");
+    await expect(readFile(`${systemPaths.policyFile}.last-known-good`, "utf8")).resolves.toContain("\"heartbeatEnabled\": false");
   });
 });
